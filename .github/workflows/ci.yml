@@ -1,0 +1,37 @@
+name: CI - Test, Lint & Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: TypeScript type check
+        run: npm run lint
+
+      - name: Run domain logic unit tests
+        run: npx tsx --test src/lib/attendanceEngine.test.ts
+
+      - name: Build production frontend bundle
+        run: npm run build
+
+      - name: Check Python syntax
+        run: python3 -m py_compile services/face-service/tracker.py services/face-service/main.py
+
+      - name: Test Rust cosine matcher
+        run: cargo test --manifest-path services/rust-accel/Cargo.toml

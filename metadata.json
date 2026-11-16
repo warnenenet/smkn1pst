@@ -1,0 +1,8 @@
+{
+  "name": "Absensi SMK Face AI",
+  "description": "Sistem absensi sekolah menengah kejuruan berbasis pengenalan wajah, multi-gerbang, multi-kamera RTSP, kiosk panggil TTS, notifikasi WhatsApp, dan portal guest.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
