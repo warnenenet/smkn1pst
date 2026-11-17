@@ -494,5 +494,144 @@ export function parseFfmpegStreamOutput(stderrText: string): {
   };
 }
 
+export function extractJpegFramesFromChunk(
+  existingBuf: Uint8Array,
+  incomingChunk: Uint8Array
+): { frames: Uint8Array[]; remainder: Uint8Array } {
+  const combined = new Uint8Array(existingBuf.length + incomingChunk.length);
+  combined.set(existingBuf, 0);
+  combined.set(incomingChunk, existingBuf.length);
+
+  const frames: Uint8Array[] = [];
+  let offset = 0;
+
+  while (offset < combined.length - 1) {
+    let soi = -1;
+    for (let i = offset; i < combined.length - 1; i++) {
+      if (combined[i] === 0xff && combined[i + 1] === 0xd8) {
+        soi = i;
+        break;
+      }
+    }
+    if (soi === -1) {
+      return { frames, remainder: new Uint8Array(0) };
+    }
+
+    let eoi = -1;
+    for (let i = soi + 2; i < combined.length - 1; i++) {
+      if (combined[i] === 0xff && combined[i + 1] === 0xd9) {
+        eoi = i;
+        break;
+      }
+    }
+    if (eoi === -1) {
+      return { frames, remainder: combined.slice(soi) };
+    }
+
+    frames.push(combined.slice(soi, eoi + 2));
+    offset = eoi + 2;
+  }
+
+  return { frames, remainder: combined.slice(offset) };
+}
+
+function normalizeTimeHhMmSs(raw: string): string | null {
+  const clean = String(raw || '').trim();
+  const m = clean.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  const ss = Number(m[3] ?? '0');
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59 || ss < 0 || ss > 59) return null;
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+
+export function validateAndNormalizeScheduleTimes(params: {
+  jam_masuk_mulai: string;
+  jam_masuk_selesai: string;
+  jam_keluar_mulai: string;
+  jam_keluar_selesai: string;
+}):
+  | {
+      ok: true;
+      jam_masuk_mulai: string;
+      jam_masuk_selesai: string;
+      jam_keluar_mulai: string;
+      jam_keluar_selesai: string;
+    }
+  | { ok: false; error: string } {
+  const m1 = normalizeTimeHhMmSs(params.jam_masuk_mulai);
+  const m2 = normalizeTimeHhMmSs(params.jam_masuk_selesai);
+  const k1 = normalizeTimeHhMmSs(params.jam_keluar_mulai);
+  const k2 = normalizeTimeHhMmSs(params.jam_keluar_selesai);
+  if (!m1 || !m2 || !k1 || !k2) {
+    return { ok: false, error: 'Format jam jadwal harus HH:MM atau HH:MM:SS yang valid.' };
+  }
+  if (m1 >= m2) {
+    return { ok: false, error: 'Jam masuk mulai harus lebih awal dari jam masuk selesai.' };
+  }
+  if (k1 >= k2) {
+    return { ok: false, error: 'Jam keluar mulai harus lebih awal dari jam keluar selesai.' };
+  }
+  return {
+    ok: true,
+    jam_masuk_mulai: m1,
+    jam_masuk_selesai: m2,
+    jam_keluar_mulai: k1,
+    jam_keluar_selesai: k2,
+  };
+}
+
+export function isDemoPlaceholderCameraUrl(rtspUrl: string): boolean {
+  const clean = String(rtspUrl || '').trim();
+  if (!clean || clean.startsWith('dummy://')) return true;
+  return /^rtsp:\/\/admin:smk2026@192\.168\.10\.(21|22):554\/Streaming\/Channels\/101$/i.test(clean);
+}
+
+export function stripDemoRecordsForProduction<
+  T extends {
+    students: Array<{ nisn: string }>;
+    cameras: Array<{ rtsp_url: string }>;
+    daily_attendance: unknown[];
+    attendance_logs: unknown[];
+    anonymous_clusters: unknown[];
+    face_update_history: unknown[];
+    face_update_reviews: unknown[];
+    wa_queue: unknown[];
+    notifications: unknown[];
+    guest_access_logs: unknown[];
+    settings: { production_mode?: boolean };
+    storage_bytes_simulated: number;
+  },
+>(db: T): T {
+  const demoNisnSet = new Set([
+    '0081122001',
+    '0081122002',
+    '0081122003',
+    '0081122004',
+    '0081122005',
+    '0081122006',
+    '0081122007',
+    '0081122008',
+  ]);
+  const onlyDemoStudents = db.students.every((s) => demoNisnSet.has(s.nisn));
+  return {
+    ...db,
+    students: onlyDemoStudents ? [] : db.students.filter((s) => !demoNisnSet.has(s.nisn)),
+    cameras: db.cameras.filter((c) => !isDemoPlaceholderCameraUrl(c.rtsp_url)),
+    daily_attendance: onlyDemoStudents ? [] : db.daily_attendance,
+    attendance_logs: onlyDemoStudents ? [] : db.attendance_logs,
+    anonymous_clusters: [],
+    face_update_history: onlyDemoStudents ? [] : db.face_update_history,
+    face_update_reviews: onlyDemoStudents ? [] : db.face_update_reviews,
+    wa_queue: [],
+    notifications: [],
+    guest_access_logs: [],
+    settings: { ...db.settings, production_mode: true },
+    storage_bytes_simulated: 12 * 1024 * 1024,
+  };
+}
+
+
 
 

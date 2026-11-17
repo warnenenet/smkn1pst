@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { ExternalLink, Eye, RefreshCw, Trash2, X } from 'lucide-react';
+import { Activity, ExternalLink, Eye, RefreshCw, Trash2, X } from 'lucide-react';
 import { maskRtspCredentials } from '../lib/attendanceEngine';
-import type { AppDatabase, GateType } from '../types';
+import type { AppDatabase, GateType, WorkerStatusResponse } from '../types';
 
 export interface RtspProbeResult {
   ok: boolean;
@@ -19,6 +19,7 @@ export interface RtspProbeResult {
 
 interface CamerasGatesViewProps {
   db: AppDatabase;
+  workerStatus?: WorkerStatusResponse | null;
   onAddGate: (payload: { nama_gerbang: string; lokasi: string; tipe: GateType }) => Promise<void>;
   onDeleteGate: (id: number) => Promise<void>;
   onAddCamera: (payload: { nama_kamera: string; gate_id: number; rtsp_url: string; resolusi: string; fps: number }) => Promise<void>;
@@ -30,6 +31,7 @@ interface CamerasGatesViewProps {
 
 export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
   db,
+  workerStatus,
   onAddGate,
   onDeleteGate,
   onAddCamera,
@@ -245,15 +247,27 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
               <p className="text-[11px] text-slate-500">
                 {previewData.face_service_online
                   ? 'Engine InsightFace aktif dan terhubung ke kamera ini.'
-                  : 'Preview FFmpeg RTSP berhasil langsung dari kamera. Engine pengenalan wajah InsightFace otomatis berjalan saat dijalankan dalam Docker all-in-one.'}
+                  : workerStatus?.engine === 'NODE_WASM_LIVE'
+                    ? 'Preview FFmpeg RTSP berhasil & Worker Face AI Node (WASM) aktif memantau deteksi wajah anonim/siswa secara live dari stream kamera ini.'
+                    : 'Preview FFmpeg RTSP berhasil langsung dari kamera.'}
               </p>
             </div>
           )}
         </section>
       )}
 
-      <section className="bg-white border border-slate-200 rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-slate-900 mb-3">Daftar Kamera Aktif &amp; Link Halaman Panggil</h2>
+      <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">Daftar Kamera Aktif &amp; Link Halaman Panggil</h2>
+          {workerStatus && (
+            <div className="inline-flex items-center gap-2 text-xs font-mono text-slate-600">
+              <Activity className="w-3.5 h-3.5 text-emerald-700" />
+              <span>Engine: <strong className="text-slate-900">{workerStatus.engine}</strong></span>
+              <span>· Worker Aktif: <strong className="text-slate-900">{workerStatus.active_workers}</strong></span>
+            </div>
+          )}
+        </div>
+
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
@@ -261,7 +275,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                 <th className="py-2 font-medium">Nama Kamera</th>
                 <th className="py-2 font-medium">Gerbang</th>
                 <th className="py-2 font-medium">URL RTSP &amp; Spec</th>
-                <th className="py-2 font-medium">Status</th>
+                <th className="py-2 font-medium">Status &amp; Statistik AI Live</th>
                 <th className="py-2 font-medium">Kiosk Panggil</th>
                 <th className="py-2 font-medium text-right">Kontrol</th>
               </tr>
@@ -270,6 +284,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
               {db.cameras.map((c) => {
                 const gate = db.gates.find((g) => g.id === c.gate_id);
                 const isDummy = !c.rtsp_url || c.rtsp_url.startsWith('dummy://');
+                const stat = workerStatus?.cameras.find((wc) => wc.camera_id === c.id);
                 return (
                   <tr key={c.id}>
                     <td className="py-2.5 font-medium text-slate-900">{c.nama_kamera}</td>
@@ -280,6 +295,12 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                     </td>
                     <td className="py-2.5">
                       <span className={`font-semibold ${c.status === 'ONLINE' ? 'text-emerald-700' : 'text-red-700'}`}>{c.status}</span>
+                      {stat && (
+                        <div className="text-[11px] font-mono text-slate-600 tabular-nums">
+                          Frame: <strong>{stat.frames_decoded}</strong> · Wajah: <strong>{stat.faces_detected_total}</strong>
+                          {stat.last_frame_at ? ` · Last ${stat.last_frame_at.slice(11, 19)}` : ''}
+                        </div>
+                      )}
                       {c.last_error && <div className="text-[11px] text-slate-400 max-w-xs truncate">{c.last_error}</div>}
                     </td>
                     <td className="py-2.5">
@@ -310,6 +331,13 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                   </tr>
                 );
               })}
+              {db.cameras.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="py-4 text-center text-slate-500">
+                    Belum ada kamera RTSP terdaftar.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

@@ -64,3 +64,34 @@ Atau di **Portainer**:
 3. **Ports**: `80` → `80` (`TCP`)
 4. **Volumes**: `/app/data` → volume `absensi_data`
 5. **Restart policy**: `Unless stopped` → **Deploy the container**.
+
+---
+
+## Deploy Produksi di Website / VPS (Node.js + Reverse Proxy Nginx)
+> **Penting:** Jangan mengarahkan web root Nginx/Apache ke folder utama repositori (`/`) karena `index.html` sumber memuat `/src/main.tsx` yang akan ditolak browser dengan error MIME `application/octet-stream`. Selalu jalankan build Vite (`npm run build`) dan teruskan traffic ke server Node (`server.ts`).
+
+```bash
+npm install
+npm run build
+NODE_ENV=production PORT=3000 npm start
+```
+
+Contoh konfigurasi **Nginx** reverse proxy (lengkap dengan WebSocket `/ws` dan dukungan MIME `.js`/`.mjs`/`.wasm`):
+```nginx
+server {
+  listen 80;
+  server_name domain-sekolah.sch.id;
+
+  location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}
+```
+

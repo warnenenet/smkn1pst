@@ -857,7 +857,7 @@ export function createInitialSeed(): AppDatabase {
       threshold_clustering: 0.50,
       min_face_size: 60,
       cluster_ready_hits: 5,
-      cluster_ready_days: 2,
+      cluster_ready_days: 1,
       cluster_sighting_interval_min: 30,
       cluster_archive_days: 90,
       cluster_delete_days: 180,
@@ -877,6 +877,7 @@ export function createInitialSeed(): AppDatabase {
       face_maintenance_target: 0.80,
       auto_backup_enabled: true,
       backup_retention_count: 2,
+      production_mode: false,
     },
     storage_bytes_simulated: 685 * 1024 * 1024,
   };

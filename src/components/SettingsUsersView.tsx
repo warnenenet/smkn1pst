@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Download, HardDriveUpload, RefreshCw } from 'lucide-react';
-import type { AppDatabase, BackupEntry, SettingsMap, TTSMode, UserRole } from '../types';
+import { Download, HardDriveUpload, RefreshCw, ShieldCheck } from 'lucide-react';
+import type { AppDatabase, BackupEntry, SettingsMap, TTSMode, UserRole, WorkerStatusResponse } from '../types';
 
 interface SettingsUsersViewProps {
   db: AppDatabase;
+  workerStatus?: WorkerStatusResponse | null;
   onSaveSettings: (patch: Partial<SettingsMap>) => Promise<void>;
+  onActivateProduction: (opts: { cleanDemoData: boolean; production_mode: boolean }) => Promise<void>;
   onAddUser: (payload: { name: string; email: string; role: UserRole; password: string }) => Promise<void>;
   onToggleUser: (id: number) => Promise<void>;
   onMarkRead: (id: number) => Promise<void>;
@@ -14,7 +16,9 @@ interface SettingsUsersViewProps {
 
 export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
   db,
+  workerStatus,
   onSaveSettings,
+  onActivateProduction,
   onAddUser,
   onToggleUser,
   onMarkRead,
@@ -22,6 +26,9 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
   onBackupFinished,
 }) => {
   const [form, setForm] = useState<SettingsMap>(db.settings);
+  const [confirmProd, setConfirmProd] = useState(false);
+  const [prodBusy, setProdBusy] = useState(false);
+
   const [uName, setUName] = useState('');
   const [uEmail, setUEmail] = useState('');
   const [uRole, setURole] = useState<UserRole>('BK');
@@ -33,6 +40,10 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
   const [backupTotalBytes, setBackupTotalBytes] = useState(0);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupMsg, setBackupMsg] = useState('');
+
+  useEffect(() => {
+    setForm(db.settings);
+  }, [db.settings]);
 
   const loadBackups = async () => {
     try {
@@ -104,8 +115,94 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
     return `${(b / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const isProd = Boolean(db.settings.production_mode);
+
   return (
     <div className="space-y-6">
+      {/* Mode Produksi Sekolah */}
+      <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+              <ShieldCheck className="w-4 h-4 text-emerald-700" />
+              Mode Produksi Sekolah
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Mengaktifkan mode produksi akan membersihkan data siswa contoh, log simulasi, dan kamera dummy sambil tetap menyimpan kamera RTSP nyata (<span className="font-mono">rtsp://</span>), gerbang, jurusan, kelas, jadwal, template WhatsApp, serta akun user.
+            </p>
+          </div>
+          <span className={`text-xs font-mono font-semibold px-2.5 py-1 rounded border ${isProd ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+            {isProd ? 'PRODUKSI AKTIF' : 'MODE UJI / DEMO'}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 text-xs">
+          <div className="font-mono text-slate-600">
+            Engine AI Live: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong> · Kamera Aktif:{' '}
+            <strong className="text-slate-900">{db.cameras.filter((c) => c.aktif).length}</strong> · Siswa Terdaftar:{' '}
+            <strong className="text-slate-900">{db.students.length}</strong>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {!confirmProd ? (
+              <button
+                type="button"
+                disabled={prodBusy}
+                onClick={() => setConfirmProd(true)}
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded-md"
+              >
+                {isProd ? 'Bersihkan Ulang Data Contoh' : 'Aktifkan Mode Produksi & Bersihkan Data Contoh'}
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-md">
+                <span className="text-amber-900 font-medium">Yakin hapus data contoh &amp; aktifkan produksi?</span>
+                <button
+                  type="button"
+                  disabled={prodBusy}
+                  onClick={async () => {
+                    setProdBusy(true);
+                    try {
+                      await onActivateProduction({ cleanDemoData: true, production_mode: true });
+                      setConfirmProd(false);
+                    } finally {
+                      setProdBusy(false);
+                    }
+                  }}
+                  className="px-2.5 py-1 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded"
+                >
+                  {prodBusy ? 'Memproses...' : 'Ya, Aktifkan'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmProd(false)}
+                  className="px-2 py-1 text-xs text-slate-700 bg-white border border-slate-300 rounded"
+                >
+                  Batal
+                </button>
+              </div>
+            )}
+
+            {isProd && (
+              <button
+                type="button"
+                disabled={prodBusy}
+                onClick={async () => {
+                  setProdBusy(true);
+                  try {
+                    await onActivateProduction({ cleanDemoData: false, production_mode: false });
+                  } finally {
+                    setProdBusy(false);
+                  }
+                }}
+                className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md"
+              >
+                Tampilkan Tombol Simulasi
+              </button>
+            )}
+          </div>
+        </div>
+      </section>
+
       <section className="bg-white border border-slate-200 rounded-lg p-5">
         <h2 className="text-sm font-semibold text-slate-900 mb-4">Pengaturan Threshold AI, Maintenance 80%, Backup &amp; Audio Gerbang</h2>
         <form
@@ -430,6 +527,9 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
                 )}
               </li>
             ))}
+            {db.notifications.length === 0 && (
+              <li className="py-4 text-center text-slate-500">Belum ada notifikasi.</li>
+            )}
           </ul>
         </section>
       </div>

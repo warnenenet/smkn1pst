@@ -277,12 +277,33 @@ export interface SettingsMap {
   face_maintenance_target: number;
   auto_backup_enabled: boolean;
   backup_retention_count: number;
+  production_mode?: boolean;
 }
 
 export interface BackupEntry {
   filename: string;
   bytes: number;
   created_at: string;
+}
+
+export interface WorkerCameraStat {
+  camera_id: number;
+  nama_kamera: string;
+  connected: boolean;
+  frames_decoded: number;
+  faces_detected_total: number;
+  last_frame_at: string | null;
+  last_face_at: string | null;
+  last_error: string | null;
+}
+
+export interface WorkerStatusResponse {
+  engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE';
+  node_env: string;
+  production_mode: boolean;
+  model_loaded: boolean;
+  active_workers: number;
+  cameras: WorkerCameraStat[];
 }
 
 export interface AppDatabase {

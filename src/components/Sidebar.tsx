@@ -41,6 +41,7 @@ interface SidebarProps {
   onOpenGuest: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  defaultCameraId?: number;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -55,6 +56,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenGuest,
   mobileOpen,
   onCloseMobile,
+  defaultCameraId = 1,
 }) => {
   const role = currentUser.role;
   const allItems: Array<{
@@ -141,10 +143,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="p-3 border-t border-slate-800 space-y-1.5">
           <button
             type="button"
-            onClick={() => onOpenPanggil(1)}
+            onClick={() => onOpenPanggil(defaultCameraId)}
             className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
           >
-            <span>Buka Kiosk Panggil #1</span>
+            <span>Buka Kiosk Panggil #{defaultCameraId}</span>
             <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
           </button>
           <button

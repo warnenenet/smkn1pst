@@ -1,22 +1,29 @@
-import React from 'react';
-import { HardDrive, Trash2, ExternalLink, CheckCheck } from 'lucide-react';
-import type { AppDatabase } from '../types';
+import React, { useState } from 'react';
+import { Activity, CheckCheck, ExternalLink, HardDrive, ShieldCheck, Trash2 } from 'lucide-react';
+import type { AppDatabase, WorkerStatusResponse } from '../types';
 
 interface DashboardViewProps {
   db: AppDatabase;
+  workerStatus?: WorkerStatusResponse | null;
   onCleanupStorage: () => Promise<void>;
   onMarkAllRead: () => Promise<void>;
+  onActivateProduction?: () => Promise<void>;
   onOpenPanggil: (cameraId: number) => void;
-  onNavigateTab: (tab: 'clusters' | 'reviews' | 'cameras' | 'whatsapp') => void;
+  onNavigateTab: (tab: 'clusters' | 'reviews' | 'cameras' | 'whatsapp' | 'settings') => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   db,
+  workerStatus,
   onCleanupStorage,
   onMarkAllRead,
+  onActivateProduction,
   onOpenPanggil,
   onNavigateTab,
 }) => {
+  const [confirmProd, setConfirmProd] = useState(false);
+  const [activatingProd, setActivatingProd] = useState(false);
+
   const today = new Date().toISOString().slice(0, 10);
   const todayRecords = db.daily_attendance.filter((d) => d.tanggal === today);
 
@@ -24,6 +31,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const totalAktif = db.students.filter((s) => s.status === 'AKTIF').length;
   const totalPkl = db.students.filter((s) => s.status === 'PKL').length;
   const readyClusters = db.anonymous_clusters.filter((c) => c.status === 'READY').length;
+  const pendingClusters = db.anonymous_clusters.filter((c) => c.status === 'PENDING').length;
 
   const storageGb = Math.round((db.storage_bytes_simulated / (1024 * 1024 * 1024)) * 100) / 100;
   const storagePct = Math.min(100, Math.round((storageGb / 10) * 1000) / 10);
@@ -45,11 +53,71 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     { label: 'Tidak Keluar', value: countStatus('TIDAK_KELUAR'), note: 'Cutoff 18:00', tone: 'text-amber-700' },
     { label: 'Izin / Sakit', value: countStatus('IZIN') + countStatus('SAKIT'), note: 'Dikelola Guru BK' },
     { label: 'Siswa PKL', value: totalPkl, note: 'Bebas hitung Alpa' },
-    { label: 'Cluster Siap Dinamai', value: readyClusters, note: '>=5 hit, >=2 hari', tone: readyClusters > 0 ? 'text-blue-700' : undefined },
+    {
+      label: 'Cluster Anonim',
+      value: readyClusters,
+      note: `Siap dinamai (>=${db.settings.cluster_ready_hits} hit, ${db.settings.cluster_ready_days} hr) · ${pendingClusters} dilatih`,
+      tone: readyClusters > 0 ? 'text-blue-700' : undefined,
+    },
   ];
+
+  const isProd = Boolean(db.settings.production_mode);
+  const totalFacesLive = workerStatus?.cameras.reduce((acc, c) => acc + c.faces_detected_total, 0) ?? 0;
 
   return (
     <div className="space-y-6">
+      {/* Production mode banner if still in Demo/Test mode */}
+      {!isProd && onActivateProduction && (
+        <section className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-amber-900">
+            <div className="font-semibold flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-amber-700" />
+              Sistem masih dalam Mode Uji / Demo (berisi data contoh)
+            </div>
+            <p className="text-amber-800 mt-0.5">
+              Aktifkan Mode Produksi untuk menghapus data siswa &amp; kamera dummy sambil tetap mempertahankan kamera RTSP asli, gerbang, jurusan, dan jadwal Anda.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {!confirmProd ? (
+              <button
+                type="button"
+                onClick={() => setConfirmProd(true)}
+                className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-md whitespace-nowrap"
+              >
+                Aktifkan Mode Produksi
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={activatingProd}
+                  onClick={async () => {
+                    setActivatingProd(true);
+                    try {
+                      await onActivateProduction();
+                      setConfirmProd(false);
+                    } finally {
+                      setActivatingProd(false);
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 rounded"
+                >
+                  {activatingProd ? 'Memproses...' : 'Ya, Bersihkan Data Demo'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmProd(false)}
+                  className="px-2.5 py-1.5 text-xs text-slate-700 bg-white border border-slate-300 rounded"
+                >
+                  Batal
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* KPI Summary Grid */}
       <section aria-label="Ringkasan Kehadiran Hari Ini">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -63,6 +131,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           ))}
         </div>
+      </section>
+
+      {/* Live Face AI & RTSP Worker Monitor */}
+      <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <Activity className="w-4 h-4 text-emerald-700" />
+            <h2 className="text-sm font-semibold text-slate-900">
+              Monitor Engine Face AI &amp; Worker RTSP Live
+            </h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+            <span className={isProd ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>
+              {isProd ? 'MODE PRODUKSI' : 'MODE UJI / DEMO'}
+            </span>
+            <span className="text-slate-600">
+              Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong>
+            </span>
+            <span className="text-slate-600">
+              Model AI:{' '}
+              <strong className={workerStatus?.model_loaded ? 'text-emerald-700' : 'text-amber-700'}>
+                {workerStatus?.model_loaded ? 'SIAP' : 'INISIALISASI'}
+              </strong>
+            </span>
+            <span className="text-slate-600">
+              Wajah Terdeteksi: <strong className="text-slate-900 tabular-nums">{totalFacesLive}</strong>
+            </span>
+          </div>
+        </div>
+
+        {workerStatus && workerStatus.cameras.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500">
+                  <th className="py-2 pr-3 font-medium">Kamera RTSP</th>
+                  <th className="py-2 px-3 font-medium">Koneksi Stream</th>
+                  <th className="py-2 px-3 font-medium text-right">Frame Didekode</th>
+                  <th className="py-2 px-3 font-medium text-right">Wajah Terdeteksi</th>
+                  <th className="py-2 px-3 font-medium">Frame Terakhir</th>
+                  <th className="py-2 pl-3 font-medium">Wajah Terakhir</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {workerStatus.cameras.map((wc) => (
+                  <tr key={wc.camera_id}>
+                    <td className="py-2 pr-3 font-medium text-slate-900">
+                      {wc.nama_kamera}
+                      {wc.last_error && (
+                        <div className="text-[11px] font-normal text-red-600 truncate max-w-xs">{wc.last_error}</div>
+                      )}
+                    </td>
+                    <td className="py-2 px-3">
+                      <span className={`font-semibold ${wc.connected ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {wc.connected ? 'TERHUBUNG LIVE' : 'MENYAMBUNG / OFFLINE'}
+                      </span>
+                    </td>
+                    <td className="py-2 px-3 text-right font-mono tabular-nums">{wc.frames_decoded}</td>
+                    <td className="py-2 px-3 text-right font-mono tabular-nums font-semibold">{wc.faces_detected_total}</td>
+                    <td className="py-2 px-3 font-mono text-slate-500">{wc.last_frame_at ? wc.last_frame_at.slice(11, 19) : '-'}</td>
+                    <td className="py-2 pl-3 font-mono text-slate-500">{wc.last_face_at ? wc.last_face_at.slice(11, 19) : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500">
+            Belum ada kamera RTSP aktif. Tambahkan URL kamera <span className="font-mono">rtsp://...</span> di menu Gerbang &amp; Kamera agar worker AI memproses video secara real-time.
+          </p>
+        )}
       </section>
 
       {/* Storage + WhatsApp Status */}
@@ -193,6 +332,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </tr>
                   );
                 })}
+                {db.cameras.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="py-4 text-center text-slate-500">
+                      Belum ada kamera terdaftar.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -230,7 +376,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
           <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-4 text-xs">
             <button type="button" onClick={() => onNavigateTab('clusters')} className="text-blue-700 hover:underline font-medium">
-              Tinjau Cluster Anonim ({readyClusters})
+              Tinjau Cluster Anonim ({readyClusters} ready / {pendingClusters} dilatih)
             </button>
             <button type="button" onClick={() => onNavigateTab('reviews')} className="text-blue-700 hover:underline font-medium">
               Review Update Wajah ({db.face_update_reviews.filter((r) => r.status === 'PENDING').length})

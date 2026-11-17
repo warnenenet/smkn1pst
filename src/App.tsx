@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Menu } from 'lucide-react';
 import { Sidebar, type NavTab } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
@@ -8,7 +8,12 @@ import { StudentsView } from './components/StudentsView';
 import { ClustersView } from './components/ClustersView';
 import { FaceReviewView } from './components/FaceReviewView';
 import { CamerasGatesView } from './components/CamerasGatesView';
-import { SchedulesView } from './components/SchedulesView';
+import {
+  SchedulesView,
+  type ExceptionPayload,
+  type OverridePayload,
+  type SchedulePayload,
+} from './components/SchedulesView';
 import { WhatsAppView } from './components/WhatsAppView';
 import { SettingsUsersView } from './components/SettingsUsersView';
 import { CallPageView } from './components/CallPageView';
@@ -17,17 +22,16 @@ import { LoginView } from './components/LoginView';
 import type {
   AppDatabase,
   AttendanceStatus,
-  ExceptionScope,
-  ExceptionType,
   GateType,
   SettingsMap,
   StudentStatus,
   User,
+  WorkerStatusResponse,
 } from './types';
 
 const TAB_TITLES: Record<NavTab, string> = {
   dashboard: 'Dashboard Utama',
-  attendance: 'Absensi Harian & Simulasi Kamera',
+  attendance: 'Absensi Harian & Koreksi BK',
   reports: 'Laporan & Export CSV / PDF',
   students: 'Manajemen Siswa, Jurusan & Excel',
   clusters: 'Penamaan Wajah Anonim (Guru BK)',
@@ -63,19 +67,23 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [schoolName, setSchoolName] = useState('SMK Negeri Unggulan');
+  const [productionMode, setProductionMode] = useState(false);
   const [db, setDb] = useState<AppDatabase | null>(null);
+  const [workerStatus, setWorkerStatus] = useState<WorkerStatusResponse | null>(null);
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
   const [mobileOpen, setMobileOpen] = useState(false);
   const [toast, setToast] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   const [routeView, setRouteView] = useState<{ mode: RouteMode; cameraId: number }>(() =>
     parseRoute(window.location.pathname)
   );
 
-  const notify = (text: string, type: 'ok' | 'err' = 'ok') => {
+  const notify = useCallback((text: string, type: 'ok' | 'err' = 'ok') => {
     setToast({ text, type });
-    window.setTimeout(() => setToast(null), 4500);
-  };
+    if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 4500);
+  }, []);
 
   const navigateRoute = (mode: RouteMode, cameraId = 1) => {
     const target =
@@ -103,6 +111,18 @@ export default function App() {
     const data: AppDatabase = await res.json();
     setDb(data);
     if (data.settings?.school_name) setSchoolName(data.settings.school_name);
+    setProductionMode(Boolean(data.settings?.production_mode));
+  }, []);
+
+  const fetchWorkerStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/worker/status');
+      if (!res.ok) return;
+      const data: WorkerStatusResponse = await res.json();
+      setWorkerStatus(data);
+    } catch {
+      // ignore transient poll error
+    }
   }, []);
 
   useEffect(() => {
@@ -112,9 +132,10 @@ export default function App() {
       .then(async (data) => {
         if (!active) return;
         if (data.school_name) setSchoolName(data.school_name);
+        setProductionMode(Boolean(data.production_mode));
         if (data.authenticated && data.user) {
           setAuthUser(data.user);
-          await fetchBootstrap();
+          await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
         } else {
           setAuthUser(null);
           setDb(null);
@@ -135,13 +156,66 @@ export default function App() {
       active = false;
       window.removeEventListener('popstate', onPop);
     };
-  }, [fetchBootstrap]);
+  }, [fetchBootstrap, fetchWorkerStatus]);
 
   useEffect(() => {
     if (authUser && !ROLE_ALLOWED_TABS[authUser.role].includes(activeTab)) {
       setActiveTab('dashboard');
     }
   }, [authUser, activeTab]);
+
+  // Poll live worker status & subscribe to live WebSocket face detection events when logged in
+  useEffect(() => {
+    if (!authUser || routeView.mode !== 'home') return;
+
+    fetchWorkerStatus();
+    const poll = window.setInterval(() => {
+      fetchWorkerStatus();
+    }, 4000);
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          const evName = msg.event ?? msg.type;
+          if (evName === 'face_detected' || evName === 'student_recognized') {
+            fetchBootstrap();
+            fetchWorkerStatus();
+            if (msg.nama || msg.studentName) {
+              notify(`Terdeteksi: ${msg.nama ?? msg.studentName} (${msg.kelas ?? 'CCTV'})`);
+            } else if (msg.message) {
+              notify(String(msg.message));
+            } else if (msg.cluster_id ?? msg.clusterId) {
+              notify(`Wajah anonim terdeteksi — Cluster #${msg.cluster_id ?? msg.clusterId}`);
+            }
+          } else if (evName === 'cluster_ready' || evName === 'anonymous_cluster_ready') {
+            fetchBootstrap();
+            notify(`Cluster Anonim #${msg.cluster_id ?? msg.clusterId ?? ''} siap dinamai oleh Guru BK!`);
+          } else if (evName === 'face_update_approved') {
+            fetchBootstrap();
+          }
+        } catch {
+          // ignore non-json message
+        }
+      };
+    } catch {
+      // ignore ws init failure
+    }
+
+    return () => {
+      window.clearInterval(poll);
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+    };
+  }, [authUser, routeView.mode, fetchBootstrap, fetchWorkerStatus, notify]);
 
   const apiPost = async (url: string, body: unknown = {}, method: 'POST' | 'PUT' | 'DELETE' = 'POST') => {
     const res = await fetch(url, {
@@ -160,14 +234,28 @@ export default function App() {
       notify(data.error || 'Terjadi kesalahan permintaan.', 'err');
       throw new Error(data.error || 'Request failed');
     }
-    await fetchBootstrap();
+    await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
     return data;
+  };
+
+  const handleActivateProduction = async (
+    opts: { cleanDemoData: boolean; production_mode: boolean } = { cleanDemoData: true, production_mode: true }
+  ) => {
+    const res = await apiPost('/api/system/activate-production', opts);
+    if (opts.production_mode) {
+      notify(
+        `Mode Produksi aktif (${res.remaining_cameras} kamera RTSP dipertahankan, ${res.remaining_students} siswa tersisa).`
+      );
+    } else {
+      notify('Tombol simulasi uji diaktifkan kembali.');
+    }
   };
 
   const handleLogout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
     setAuthUser(null);
     setDb(null);
+    setWorkerStatus(null);
     setActiveTab('dashboard');
     navigateRoute('ortu');
   };
@@ -215,7 +303,7 @@ export default function App() {
           setAuthUser(user);
           setActiveTab('dashboard');
           navigateRoute('home');
-          await fetchBootstrap();
+          await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
         }}
         onBackToPortal={() => navigateRoute('ortu')}
       />
@@ -228,6 +316,7 @@ export default function App() {
       <GuestPortalView
         schoolName={schoolName}
         isAuthenticated={Boolean(authUser)}
+        productionMode={productionMode}
         onBack={() => navigateRoute('home')}
         onLoginClick={() => navigateRoute('login')}
       />
@@ -245,6 +334,8 @@ export default function App() {
   const readyClustersCount = db.anonymous_clusters.filter((c) => c.status === 'READY').length;
   const pendingReviewsCount = db.face_update_reviews.filter((r) => r.status === 'PENDING').length;
   const unreadNotifsCount = db.notifications.filter((n) => !n.is_read).length;
+  const isProduction = Boolean(db.settings.production_mode);
+  const defaultCameraId = db.cameras.find((c) => c.aktif)?.id ?? db.cameras[0]?.id ?? 1;
 
   return (
     <div className="min-h-screen flex bg-slate-50 text-slate-900">
@@ -260,6 +351,7 @@ export default function App() {
         onOpenGuest={() => navigateRoute('ortu')}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
+        defaultCameraId={defaultCameraId}
       />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -273,20 +365,30 @@ export default function App() {
             >
               <Menu className="w-4 h-4" />
             </button>
-            <h1 className="text-base font-bold text-slate-900 truncate">{TAB_TITLES[activeTab]}</h1>
+            <h1 className="text-base font-bold text-slate-900 truncate">
+              {activeTab === 'attendance' && !isProduction
+                ? 'Absensi Harian & Simulasi Kamera'
+                : TAB_TITLES[activeTab]}
+            </h1>
           </div>
 
           <div className="flex items-center gap-4 shrink-0">
             <span className="hidden sm:inline text-xs text-slate-500">
               {db.settings.school_name} · <span className="font-mono">{authUser.role}</span>
             </span>
-            <button
-              type="button"
-              onClick={() => setActiveTab('attendance')}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md whitespace-nowrap shrink-0"
-            >
-              Simulasi Kamera
-            </button>
+            {isProduction ? (
+              <span className="px-3 py-1 text-[11px] font-mono font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md whitespace-nowrap">
+                MODE PRODUKSI
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setActiveTab('attendance')}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md whitespace-nowrap shrink-0"
+              >
+                Simulasi Kamera
+              </button>
+            )}
           </div>
         </header>
 
@@ -307,6 +409,7 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <DashboardView
               db={db}
+              workerStatus={workerStatus}
               onCleanupStorage={async () => {
                 const res = await apiPost('/api/storage/cleanup');
                 notify(`Pembersihan storage selesai (${res.freed_mb} MB dibebaskan).`);
@@ -315,6 +418,13 @@ export default function App() {
                 await apiPost('/api/notifications/read-all');
                 notify('Semua notifikasi ditandai sudah dibaca.');
               }}
+              onActivateProduction={
+                authUser.role === 'ADMIN'
+                  ? async () => {
+                      await handleActivateProduction({ cleanDemoData: true, production_mode: true });
+                    }
+                  : undefined
+              }
               onOpenPanggil={(camId) => navigateRoute('panggil', camId)}
               onNavigateTab={(tab) => setActiveTab(tab)}
             />
@@ -413,6 +523,7 @@ export default function App() {
           {activeTab === 'clusters' && (
             <ClustersView
               db={db}
+              workerStatus={workerStatus}
               onAssignCluster={async (cid, sid) => {
                 await apiPost(`/api/clusters/${cid}/assign`, { student_id: sid });
                 notify('Cluster anonim berhasil ditautkan ke siswa.');
@@ -449,6 +560,7 @@ export default function App() {
           {activeTab === 'cameras' && (
             <CamerasGatesView
               db={db}
+              workerStatus={workerStatus}
               onAddGate={async (payload: { nama_gerbang: string; lokasi: string; tipe: GateType }) => {
                 await apiPost('/api/gates', payload);
                 notify('Gerbang ditambahkan.');
@@ -481,23 +593,41 @@ export default function App() {
           {activeTab === 'schedules' && (
             <SchedulesView
               db={db}
-              onAddSchedule={async (payload) => {
+              onAddSchedule={async (payload: SchedulePayload) => {
                 await apiPost('/api/schedules', payload);
                 notify('Jadwal berhasil ditambahkan.');
               }}
-              onAddOverride={async (payload) => {
+              onUpdateSchedule={async (id: number, payload: SchedulePayload) => {
+                await apiPost(`/api/schedules/${id}`, payload, 'PUT');
+                notify(`Jadwal #${id} berhasil diperbarui.`);
+              }}
+              onDeleteSchedule={async (id: number) => {
+                await apiPost(`/api/schedules/${id}`, {}, 'DELETE');
+                notify('Jadwal berhasil dihapus.');
+              }}
+              onAddOverride={async (payload: OverridePayload) => {
                 await apiPost('/api/schedules/override', payload);
                 notify('Override jadwal kelas disimpan.');
               }}
-              onAddException={async (payload: {
-                tanggal: string;
-                scope: ExceptionScope;
-                ref_id: number | null;
-                tipe: ExceptionType;
-                catatan: string;
-              }) => {
+              onUpdateOverride={async (id: number, payload: OverridePayload) => {
+                await apiPost(`/api/schedules/override/${id}`, payload, 'PUT');
+                notify(`Override kelas #${id} diperbarui.`);
+              }}
+              onDeleteOverride={async (id: number) => {
+                await apiPost(`/api/schedules/override/${id}`, {}, 'DELETE');
+                notify('Override jadwal kelas dihapus.');
+              }}
+              onAddException={async (payload: ExceptionPayload) => {
                 await apiPost('/api/schedules/exception', payload);
                 notify('Exception tanggal disimpan.');
+              }}
+              onUpdateException={async (id: number, payload: ExceptionPayload) => {
+                await apiPost(`/api/schedules/exception/${id}`, payload, 'PUT');
+                notify(`Exception tanggal #${id} diperbarui.`);
+              }}
+              onDeleteException={async (id: number) => {
+                await apiPost(`/api/schedules/exception/${id}`, {}, 'DELETE');
+                notify('Exception tanggal dihapus.');
               }}
             />
           )}
@@ -541,10 +671,12 @@ export default function App() {
           {activeTab === 'settings' && (
             <SettingsUsersView
               db={db}
+              workerStatus={workerStatus}
               onSaveSettings={async (patch) => {
                 await apiPost('/api/settings', patch);
                 notify('Pengaturan sistem disimpan.');
               }}
+              onActivateProduction={handleActivateProduction}
               onAddUser={async (payload) => {
                 await apiPost('/api/users', payload);
                 notify('User baru ditambahkan.');

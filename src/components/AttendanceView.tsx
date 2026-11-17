@@ -80,75 +80,77 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Live Camera Event Simulator */}
-      <section className="bg-white border border-slate-200 rounded-lg p-5">
-        <div className="flex items-center gap-2 mb-3">
-          <ScanEye className="w-4 h-4 text-blue-700" />
-          <h2 className="text-sm font-semibold text-slate-900">Simulasi Deteksi Kamera RTSP (Uji Real-Time ke Kiosk &amp; Log)</h2>
-        </div>
-        <form onSubmit={handleSimSubmit} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
-          <div>
-            <label htmlFor="sim-cam" className="block text-xs text-slate-600 mb-1">Kamera Gerbang</label>
-            <select
-              id="sim-cam"
-              value={simCameraId}
-              onChange={(e) => setSimCameraId(e.target.value)}
-              className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
+      {/* Live Camera Event Simulator (hidden in Production Mode) */}
+      {!db.settings.production_mode && (
+        <section className="bg-white border border-slate-200 rounded-lg p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ScanEye className="w-4 h-4 text-blue-700" />
+            <h2 className="text-sm font-semibold text-slate-900">Simulasi Deteksi Kamera RTSP (Uji Real-Time ke Kiosk &amp; Log)</h2>
+          </div>
+          <form onSubmit={handleSimSubmit} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
+            <div>
+              <label htmlFor="sim-cam" className="block text-xs text-slate-600 mb-1">Kamera Gerbang</label>
+              <select
+                id="sim-cam"
+                value={simCameraId}
+                onChange={(e) => setSimCameraId(e.target.value)}
+                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
+              >
+                {db.cameras.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nama_kamera}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="sim-target" className="block text-xs text-slate-600 mb-1">Subjek Wajah</label>
+              <select
+                id="sim-target"
+                value={simTarget}
+                onChange={(e) => setSimTarget(e.target.value)}
+                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
+              >
+                {(filteredStudents.length > 0 ? filteredStudents : db.students).slice(0, 100).map((s) => (
+                  <option key={s.id} value={s.id}>{s.nama} ({s.nisn})</option>
+                ))}
+                <option value="ANONIM">Wajah Anonim (Tak Dikenal)</option>
+              </select>
+            </div>
+            <div>
+              <label htmlFor="sim-conf" className="block text-xs text-slate-600 mb-1">Confidence (Min 0.80)</label>
+              <input
+                id="sim-conf"
+                type="number"
+                step="0.01"
+                min="0.1"
+                max="1"
+                value={simConf}
+                onChange={(e) => setSimConf(e.target.value)}
+                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs font-mono tabular-nums"
+              />
+            </div>
+            <div>
+              <label htmlFor="sim-time" className="block text-xs text-slate-600 mb-1">Jam Deteksi</label>
+              <input
+                id="sim-time"
+                type="time"
+                step="1"
+                value={simTime}
+                onChange={(e) => setSimTime(e.target.value)}
+                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs font-mono tabular-nums"
+              />
+            </div>
+            <button
+              type="submit"
+              className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md transition-colors whitespace-nowrap"
             >
-              {db.cameras.map((c) => (
-                <option key={c.id} value={c.id}>{c.nama_kamera}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="sim-target" className="block text-xs text-slate-600 mb-1">Subjek Wajah</label>
-            <select
-              id="sim-target"
-              value={simTarget}
-              onChange={(e) => setSimTarget(e.target.value)}
-              className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
-            >
-              {(filteredStudents.length > 0 ? filteredStudents : db.students).slice(0, 100).map((s) => (
-                <option key={s.id} value={s.id}>{s.nama} ({s.nisn})</option>
-              ))}
-              <option value="ANONIM">Wajah Anonim (Tak Dikenal)</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="sim-conf" className="block text-xs text-slate-600 mb-1">Confidence (Min 0.80)</label>
-            <input
-              id="sim-conf"
-              type="number"
-              step="0.01"
-              min="0.1"
-              max="1"
-              value={simConf}
-              onChange={(e) => setSimConf(e.target.value)}
-              className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs font-mono tabular-nums"
-            />
-          </div>
-          <div>
-            <label htmlFor="sim-time" className="block text-xs text-slate-600 mb-1">Jam Deteksi</label>
-            <input
-              id="sim-time"
-              type="time"
-              step="1"
-              value={simTime}
-              onChange={(e) => setSimTime(e.target.value)}
-              className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs font-mono tabular-nums"
-            />
-          </div>
-          <button
-            type="submit"
-            className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md transition-colors whitespace-nowrap"
-          >
-            Kirim Event Wajah
-          </button>
-        </form>
-        {simFeedback && (
-          <p className="mt-2.5 text-xs text-slate-700 font-medium">{simFeedback}</p>
-        )}
-      </section>
+              Kirim Event Wajah
+            </button>
+          </form>
+          {simFeedback && (
+            <p className="mt-2.5 text-xs text-slate-700 font-medium">{simFeedback}</p>
+          )}
+        </section>
+      )}
 
       {/* Panel Input Izin & Sakit Khusus Guru BK */}
       {canManageIzinSakit ? (

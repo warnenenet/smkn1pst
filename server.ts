@@ -2,7 +2,6 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { execFile } from 'child_process';
-import { createRequire } from 'module';
 import { promisify } from 'util';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -25,6 +24,13 @@ import {
   saveDb,
   verifyPassword,
 } from './src/server/store.ts';
+import {
+  analyzePhotoWithNodeAi,
+  getNodeWorkerStatus,
+  refreshNodeRtspWorkers,
+  resolveFfmpegBinary,
+  startNodeRtspWorkers,
+} from './src/server/nodeFaceWorker.ts';
 import { isPiperAvailable, prewarmStudentNamesTts, synthesizeIndonesianWav } from './src/server/ttsService.ts';
 import {
   dispatchWaMessage,
@@ -51,26 +57,19 @@ import {
   parseFfmpegStreamOutput,
   parseKelasHierarchy,
   resolveScheduleForStudent,
+  stripDemoRecordsForProduction,
+  validateAndNormalizeScheduleTimes,
 } from './src/lib/attendanceEngine.ts';
+import {
+  getStaticAssetContentType,
+  getStaticCacheControl,
+  isNonSpaResourcePath,
+  shouldServeProductionBuild,
+} from './src/lib/staticConfig.ts';
 import type { AcademicTransitionType, AppDatabase, AttendanceStatus, Student, User, UserRole } from './src/types';
 
 const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001';
 const execFileAsync = promisify(execFile);
-const requireCjs = createRequire(import.meta.url);
-
-function resolveFfmpegBinary(): string {
-  try {
-    const mod = requireCjs('@ffmpeg-installer/ffmpeg') as { path?: string };
-    if (mod?.path && fs.existsSync(mod.path)) {
-      return mod.path;
-    }
-  } catch {
-    // fallback to system ffmpeg
-  }
-  if (fs.existsSync('/usr/bin/ffmpeg')) return '/usr/bin/ffmpeg';
-  if (fs.existsSync('/usr/local/bin/ffmpeg')) return '/usr/local/bin/ffmpeg';
-  return 'ffmpeg';
-}
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -297,12 +296,18 @@ function requireAuth(allowedRoles?: UserRole[]): express.RequestHandler {
 
 app.get('/api/health', async (_req, res) => {
   const faceHealth = await callFaceService<Record<string, unknown>>('/health');
+  const nodeWorker = getNodeWorkerStatus(loadDb());
   res.json({
     ok: true,
     sqlite: true,
     piper_offline: isPiperAvailable(),
-    face_service: faceHealth ?? { ok: false, mode: 'node-fallback' },
+    face_service: faceHealth ?? { ok: false, mode: nodeWorker.engine },
+    node_worker: nodeWorker,
   });
+});
+
+app.get('/api/worker/status', requireAuth(), (_req, res) => {
+  res.json(getNodeWorkerStatus(loadDb()));
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -312,6 +317,7 @@ app.get('/api/auth/me', (req, res) => {
     authenticated: Boolean(auth),
     user: auth?.user ?? null,
     school_name: db.settings.school_name,
+    production_mode: Boolean(db.settings.production_mode),
   });
 });
 
@@ -861,7 +867,8 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
   let qScore: number;
   let emb: number[];
   const aiRes = photoDataUrl
-    ? await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl })
+    ? (await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl })) ??
+      (await analyzePhotoWithNodeAi(String(photoDataUrl), db.settings))
     : null;
 
   if (aiRes?.embedding) {
@@ -921,9 +928,9 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
     }
 
     const aiRes = item.photoDataUrl
-      ? await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', {
+      ? (await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', {
           photoDataUrl: item.photoDataUrl,
-        })
+        })) ?? (await analyzePhotoWithNodeAi(String(item.photoDataUrl), db.settings))
       : null;
 
     const qScore =
@@ -958,6 +965,22 @@ app.post('/api/compare-face', requireAuth(), async (req, res) => {
     }>('/compare', { photo1DataUrl, photo2DataUrl });
     if (aiCompare) {
       res.json(aiCompare);
+      return;
+    }
+    const [n1, n2] = await Promise.all([
+      analyzePhotoWithNodeAi(String(photo1DataUrl), db.settings),
+      analyzePhotoWithNodeAi(String(photo2DataUrl), db.settings),
+    ]);
+    if (n1 && n2) {
+      const sim = cosineSimilarity(n1.embedding, n2.embedding);
+      const threshold = db.settings.threshold_recognition;
+      const match = sim >= threshold;
+      res.json({
+        similarity: sim,
+        threshold,
+        match,
+        status: match ? 'COCOK (IDENTITAS SAMA)' : 'TIDAK COCOK (BERBEDA)',
+      });
       return;
     }
   }
@@ -1237,28 +1260,38 @@ app.get('/api/internal/gallery', (_req, res) => {
   res.json({ students, settings: db.settings });
 });
 
-app.post('/api/internal/cameras/:id/heartbeat', (req, res) => {
+function updateCameraHeartbeat(cameraId: number, online: boolean, error: string | null): void {
   const db = loadDb();
-  const cam = db.cameras.find((c) => c.id === Number(req.params.id));
+  const cam = db.cameras.find((c) => c.id === Number(cameraId));
   if (cam) {
-    const online = Boolean(req.body.online);
     cam.status = online ? 'ONLINE' : 'OFFLINE';
-    cam.last_error = req.body.error ? String(req.body.error) : null;
+    cam.last_error = error ? String(error) : null;
     if (online) {
       cam.last_online_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
     }
     saveDb(db);
   }
+}
+
+app.post('/api/internal/cameras/:id/heartbeat', (req, res) => {
+  updateCameraHeartbeat(Number(req.params.id), Boolean(req.body.online), req.body.error ? String(req.body.error) : null);
   res.json({ ok: true });
 });
 
-app.post('/api/internal/face-event', (req, res) => {
+function processFaceEvent(payload: {
+  camera_id: number;
+  student_id?: number | null;
+  similarity?: number;
+  confidence?: number;
+  quality_score?: number;
+  embedding?: number[];
+  snapshot_rel_path?: string;
+}): { statusCode: number; body: Record<string, unknown> } {
   const db = loadDb();
-  const { camera_id, student_id, similarity = 0, confidence = 0.9, quality_score = 0.8, embedding, snapshot_rel_path } = req.body;
+  const { camera_id, student_id, similarity = 0, confidence = 0.9, quality_score = 0.8, embedding, snapshot_rel_path } = payload;
   const cam = db.cameras.find((c) => c.id === Number(camera_id));
   if (!cam) {
-    res.status(404).json({ error: 'Kamera tidak ditemukan.' });
-    return;
+    return { statusCode: 404, body: { error: 'Kamera tidak ditemukan.' } };
   }
   const gate = db.gates.find((g) => g.id === cam.gate_id);
   const now = new Date();
@@ -1268,7 +1301,6 @@ app.post('/api/internal/face-event', (req, res) => {
   const dayIso = now.getDay() === 0 ? 7 : now.getDay();
 
   if (!student_id) {
-    // Cluster anonim dengan pencocokan cosine similarity + centroid blending lintas CCTV + replace-if-better snapshot
     let bestCluster = null as (typeof db.anonymous_clusters)[number] | null;
     let bestClusterSim = -1;
     for (const c of db.anonymous_clusters) {
@@ -1349,18 +1381,18 @@ app.post('/api/internal/face-event', (req, res) => {
       event: 'face_detected',
       camera_id: cam.id,
       anonymous: true,
-      message: 'Wajah baru terdeteksi. Menunggu verifikasi.',
+      cluster_id: bestCluster?.id ?? null,
+      hit_count: bestCluster?.hit_count ?? 1,
+      message: `Wajah anonim #${bestCluster?.id ?? ''} terdeteksi (${bestCluster?.hit_count ?? 1}/${db.settings.cluster_ready_hits} hit).`,
       timestamp: timeNow,
     });
-    res.json({ ok: true, anonymous: true, cluster_id: bestCluster?.id ?? null });
-    return;
+    return { statusCode: 200, body: { ok: true, anonymous: true, cluster_id: bestCluster?.id ?? null } };
   }
 
   const student = db.students.find((s) => s.id === Number(student_id));
   if (!student) {
     removeSnapshotIfLocal(snapshot_rel_path);
-    res.status(404).json({ error: 'Siswa tidak ditemukan.' });
-    return;
+    return { statusCode: 404, body: { error: 'Siswa tidak ditemukan.' } };
   }
 
   const kelas = db.kelas.find((k) => k.id === student.kelas_id);
@@ -1458,7 +1490,12 @@ app.post('/api/internal/face-event', (req, res) => {
       timestamp: timeNow,
     });
   }
-  res.json({ ok: true, deduplicated: evalRes.deduplicated, embeddingUpdated });
+  return { statusCode: 200, body: { ok: true, deduplicated: evalRes.deduplicated, embeddingUpdated } };
+}
+
+app.post('/api/internal/face-event', (req, res) => {
+  const result = processFaceEvent(req.body ?? {});
+  res.status(result.statusCode).json(result.body);
 });
 
 app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
@@ -1480,6 +1517,7 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
   db.cameras.push(cam);
   saveDb(db);
   triggerPythonCameraReload();
+  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, camera: cam });
 });
 
@@ -1597,6 +1635,7 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
   cam.last_error = isDummy ? 'Dummy / URL RTSP belum dikonfigurasi' : null;
   saveDb(db);
   triggerPythonCameraReload();
+  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, camera: cam });
 });
 
@@ -1605,6 +1644,7 @@ app.delete('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
   db.cameras = db.cameras.filter((c) => c.id !== Number(req.params.id));
   saveDb(db);
   triggerPythonCameraReload();
+  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true });
 });
 
@@ -1782,33 +1822,130 @@ app.post('/api/face-reviews/approve-all', requireAuth(['ADMIN', 'BK']), (_req, r
 
 // Schedules & Exceptions
 app.post('/api/schedules', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const validated = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: String(req.body?.jam_masuk_mulai ?? ''),
+    jam_masuk_selesai: String(req.body?.jam_masuk_selesai ?? ''),
+    jam_keluar_mulai: String(req.body?.jam_keluar_mulai ?? ''),
+    jam_keluar_selesai: String(req.body?.jam_keluar_selesai ?? ''),
+  });
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error });
+    return;
+  }
   const db = loadDb();
   db.schedules.push({
     id: nextId(db.schedules),
     jurusan_id: req.body.jurusan_id ? Number(req.body.jurusan_id) : null,
     hari: Number(req.body.hari),
-    jam_masuk_mulai: String(req.body.jam_masuk_mulai),
-    jam_masuk_selesai: String(req.body.jam_masuk_selesai),
-    jam_keluar_mulai: String(req.body.jam_keluar_mulai),
-    jam_keluar_selesai: String(req.body.jam_keluar_selesai),
-    toleransi_terlambat_menit: Number(req.body.toleransi_terlambat_menit ?? 5),
+    jam_masuk_mulai: validated.jam_masuk_mulai,
+    jam_masuk_selesai: validated.jam_masuk_selesai,
+    jam_keluar_mulai: validated.jam_keluar_mulai,
+    jam_keluar_selesai: validated.jam_keluar_selesai,
+    toleransi_terlambat_menit: Math.max(0, Number(req.body.toleransi_terlambat_menit ?? 5)),
   });
   saveDb(db);
   res.json({ ok: true });
 });
 
+app.put('/api/schedules/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const validated = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: String(req.body?.jam_masuk_mulai ?? ''),
+    jam_masuk_selesai: String(req.body?.jam_masuk_selesai ?? ''),
+    jam_keluar_mulai: String(req.body?.jam_keluar_mulai ?? ''),
+    jam_keluar_selesai: String(req.body?.jam_keluar_selesai ?? ''),
+  });
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error });
+    return;
+  }
+  const db = loadDb();
+  const sc = db.schedules.find((s) => s.id === Number(req.params.id));
+  if (!sc) {
+    res.status(404).json({ error: 'Jadwal tidak ditemukan.' });
+    return;
+  }
+  sc.jurusan_id = req.body.jurusan_id ? Number(req.body.jurusan_id) : null;
+  sc.hari = Number(req.body.hari ?? sc.hari);
+  sc.jam_masuk_mulai = validated.jam_masuk_mulai;
+  sc.jam_masuk_selesai = validated.jam_masuk_selesai;
+  sc.jam_keluar_mulai = validated.jam_keluar_mulai;
+  sc.jam_keluar_selesai = validated.jam_keluar_selesai;
+  sc.toleransi_terlambat_menit = Math.max(0, Number(req.body.toleransi_terlambat_menit ?? sc.toleransi_terlambat_menit));
+  saveDb(db);
+  res.json({ ok: true, schedule: sc });
+});
+
+app.delete('/api/schedules/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const id = Number(req.params.id);
+  const before = db.schedules.length;
+  db.schedules = db.schedules.filter((s) => s.id !== id);
+  if (db.schedules.length === before) {
+    res.status(404).json({ error: 'Jadwal tidak ditemukan.' });
+    return;
+  }
+  saveDb(db);
+  res.json({ ok: true });
+});
+
 app.post('/api/schedules/override', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const validated = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: String(req.body?.jam_masuk_mulai ?? ''),
+    jam_masuk_selesai: String(req.body?.jam_masuk_selesai ?? ''),
+    jam_keluar_mulai: String(req.body?.jam_keluar_mulai ?? ''),
+    jam_keluar_selesai: String(req.body?.jam_keluar_selesai ?? ''),
+  });
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error });
+    return;
+  }
   const db = loadDb();
   db.kelas_overrides.push({
     id: nextId(db.kelas_overrides),
     kelas_id: Number(req.body.kelas_id),
     hari: Number(req.body.hari),
-    jam_masuk_mulai: String(req.body.jam_masuk_mulai),
-    jam_masuk_selesai: String(req.body.jam_masuk_selesai),
-    jam_keluar_mulai: String(req.body.jam_keluar_mulai),
-    jam_keluar_selesai: String(req.body.jam_keluar_selesai),
+    jam_masuk_mulai: validated.jam_masuk_mulai,
+    jam_masuk_selesai: validated.jam_masuk_selesai,
+    jam_keluar_mulai: validated.jam_keluar_mulai,
+    jam_keluar_selesai: validated.jam_keluar_selesai,
     alasan: String(req.body.alasan || ''),
   });
+  saveDb(db);
+  res.json({ ok: true });
+});
+
+app.put('/api/schedules/override/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const validated = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: String(req.body?.jam_masuk_mulai ?? ''),
+    jam_masuk_selesai: String(req.body?.jam_masuk_selesai ?? ''),
+    jam_keluar_mulai: String(req.body?.jam_keluar_mulai ?? ''),
+    jam_keluar_selesai: String(req.body?.jam_keluar_selesai ?? ''),
+  });
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error });
+    return;
+  }
+  const db = loadDb();
+  const ov = db.kelas_overrides.find((o) => o.id === Number(req.params.id));
+  if (!ov) {
+    res.status(404).json({ error: 'Override jadwal kelas tidak ditemukan.' });
+    return;
+  }
+  ov.kelas_id = Number(req.body.kelas_id ?? ov.kelas_id);
+  ov.hari = Number(req.body.hari ?? ov.hari);
+  ov.jam_masuk_mulai = validated.jam_masuk_mulai;
+  ov.jam_masuk_selesai = validated.jam_masuk_selesai;
+  ov.jam_keluar_mulai = validated.jam_keluar_mulai;
+  ov.jam_keluar_selesai = validated.jam_keluar_selesai;
+  ov.alasan = String(req.body.alasan ?? ov.alasan);
+  saveDb(db);
+  res.json({ ok: true, override: ov });
+});
+
+app.delete('/api/schedules/override/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const id = Number(req.params.id);
+  db.kelas_overrides = db.kelas_overrides.filter((o) => o.id !== id);
   saveDb(db);
   res.json({ ok: true });
 });
@@ -1829,13 +1966,59 @@ app.post('/api/schedules/exception', requireAuth(['ADMIN', 'BK']), (req, res) =>
   res.json({ ok: true });
 });
 
-// Settings, Storage Cleanup & Compact Rotating Backup
+app.put('/api/schedules/exception/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const ex = db.schedule_exceptions.find((x) => x.id === Number(req.params.id));
+  if (!ex) {
+    res.status(404).json({ error: 'Exception tanggal tidak ditemukan.' });
+    return;
+  }
+  ex.tanggal = String(req.body.tanggal ?? ex.tanggal);
+  ex.scope = req.body.scope === 'JURUSAN' ? 'JURUSAN' : 'GLOBAL';
+  ex.ref_id = ex.scope === 'JURUSAN' && req.body.ref_id ? Number(req.body.ref_id) : null;
+  ex.tipe = req.body.tipe ?? ex.tipe;
+  ex.catatan = String(req.body.catatan ?? ex.catatan);
+  ex.jam_masuk_override = req.body.jam_masuk_override || null;
+  ex.jam_keluar_override = req.body.jam_keluar_override || null;
+  saveDb(db);
+  res.json({ ok: true, exception: ex });
+});
+
+app.delete('/api/schedules/exception/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const id = Number(req.params.id);
+  db.schedule_exceptions = db.schedule_exceptions.filter((x) => x.id !== id);
+  saveDb(db);
+  res.json({ ok: true });
+});
+
+// Settings, Production Cutover, Storage Cleanup & Compact Rotating Backup
 app.post('/api/settings', requireAuth(['ADMIN']), (req, res) => {
   const db = loadDb();
   db.settings = { ...db.settings, ...req.body };
   saveDb(db);
   triggerPythonCameraReload();
+  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, settings: db.settings });
+});
+
+app.post('/api/system/activate-production', requireAuth(['ADMIN']), (req, res) => {
+  const { cleanDemoData = true, production_mode = true } = req.body ?? {};
+  let db = loadDb();
+  if (production_mode && cleanDemoData) {
+    db = stripDemoRecordsForProduction(db);
+  } else {
+    db.settings.production_mode = Boolean(production_mode);
+  }
+  saveDb(db);
+  triggerPythonCameraReload();
+  refreshNodeRtspWorkers().catch(() => {});
+  res.json({
+    ok: true,
+    production_mode: Boolean(db.settings.production_mode),
+    remaining_students: db.students.length,
+    remaining_cameras: db.cameras.length,
+  });
 });
 
 app.post('/api/storage/cleanup', requireAuth(['ADMIN']), (_req, res) => {
@@ -2253,19 +2436,87 @@ app.get('/api/wa/export', requireAuth(['ADMIN', 'BK']), (_req, res) => {
 // VITE MIDDLEWARE / STATIC DIST & SPA FALLBACK
 // ============================================================================
 async function start() {
-  if (process.env.NODE_ENV !== 'production') {
+  const appRoot = typeof import.meta.dirname === 'string' ? import.meta.dirname : process.cwd();
+  const distDir = path.resolve(appRoot, 'dist');
+  const distIndexPath = path.join(distDir, 'index.html');
+  const distIndexExists = fs.existsSync(distIndexPath);
+
+  const useProductionDist = shouldServeProductionBuild({
+    nodeEnv: process.env.NODE_ENV,
+    npmLifecycleEvent: process.env.npm_lifecycle_event,
+    execArgv: process.execArgv,
+    argv: process.argv,
+    distIndexExists,
+  });
+
+  if (!useProductionDist) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
+    console.log('[Absensi SMK Server] Frontend mode: DEV (Vite middleware)');
+  } else if (!distIndexExists) {
+    console.error(
+      `[Absensi SMK Server] ERROR: File build produksi "${distIndexPath}" tidak ditemukan. Jalankan "npm run build" terlebih dahulu sebelum menjalankan server produksi.`
+    );
+    let viteAttached = false;
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      viteAttached = true;
+      console.warn('[Absensi SMK Server] Fallback sementara ke Vite middleware karena folder dist/ belum dibuat.');
+    } catch {
+      // vite not installed in --omit=dev image without dist
+    }
+    if (!viteAttached) {
+      app.get('*', (_req, res) => {
+        res
+          .status(503)
+          .type('text/html; charset=utf-8')
+          .send(
+            '<!doctype html><html lang="id"><body style="font-family:sans-serif;padding:2rem"><h1>Build Produksi Belum Tersedia</h1><p>Folder <code>dist/</code> belum dibuat. Jalankan <code>npm run build</code> lalu mulai ulang server.</p></body></html>'
+          );
+      });
+    }
   } else {
-    const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    app.use(
+      express.static(distDir, {
+        index: false,
+        setHeaders: (res, filePath) => {
+          const contentType = getStaticAssetContentType(filePath);
+          if (contentType) {
+            res.setHeader('Content-Type', contentType);
+          }
+          res.setHeader('Cache-Control', getStaticCacheControl(filePath));
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+        },
+      })
+    );
+
+    app.use((req, res, next) => {
+      if (req.method === 'GET' && !isNonSpaResourcePath(req.path)) {
+        next();
+        return;
+      }
+      if (req.method === 'GET' && isNonSpaResourcePath(req.path)) {
+        res.status(404).type('text/plain; charset=utf-8').send('Asset atau endpoint tidak ditemukan.');
+        return;
+      }
+      next();
     });
+
+    app.get('*', (_req, res) => {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.sendFile(distIndexPath);
+    });
+    console.log(`[Absensi SMK Server] Frontend mode: PRODUCTION (${distDir})`);
   }
 
   // Jalankan worker antrean WA, restore sesi Baileys tersimpan, scheduler harian + pembersihan storage otomatis
@@ -2297,6 +2548,20 @@ async function start() {
   const port = Number(process.env.PORT) || 3000;
   server.listen(port, '0.0.0.0', () => {
     console.log(`[Absensi SMK Server] Running on http://0.0.0.0:${port}`);
+    startNodeRtspWorkers({
+      loadDb,
+      snapshotsDir: SNAPSHOTS_DIR,
+      isPythonFaceServiceOnline: async () => {
+        const health = await callFaceService<{ ok?: boolean }>('/health');
+        return Boolean(health?.ok);
+      },
+      onHeartbeat: (cameraId, online, error) => {
+        updateCameraHeartbeat(cameraId, online, error);
+      },
+      onFaceEvent: (payload) => {
+        processFaceEvent(payload);
+      },
+    });
   });
 }
 

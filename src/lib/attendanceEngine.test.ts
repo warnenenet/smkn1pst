@@ -18,10 +18,13 @@ import {
   buildKioskSpeechSentence,
   blendFaceEmbeddings,
   evaluateFaceMaintenanceProgress,
+  extractJpegFramesFromChunk,
   maskRtspCredentials,
   parseFfmpegStreamOutput,
   parseRtspProbeOutput,
   resolveScheduleForStudent,
+  stripDemoRecordsForProduction,
+  validateAndNormalizeScheduleTimes,
 } from './attendanceEngine';
 import type { Kelas, KelasScheduleOverride, Schedule, ScheduleException, Student } from '../types';
 
@@ -331,6 +334,72 @@ test('maskRtspCredentials hides password and parseRtspProbeOutput extracts HEVC/
     fps: 25,
   });
 });
+
+test('extractJpegFramesFromChunk handles partial chunks and multiple frames cleanly', () => {
+  const f1 = new Uint8Array([0xff, 0xd8, 0x01, 0x02, 0xff, 0xd9]);
+  const f2a = new Uint8Array([0xff, 0xd8, 0xaa, 0xbb]);
+  const f2b = new Uint8Array([0xcc, 0xff, 0xd9]);
+
+  const combined1 = new Uint8Array([0x00, 0x11, ...f1, ...f2a]);
+  const res1 = extractJpegFramesFromChunk(new Uint8Array(0), combined1);
+  assert.equal(res1.frames.length, 1);
+  assert.deepEqual(Array.from(res1.frames[0]), Array.from(f1));
+  assert.deepEqual(Array.from(res1.remainder), Array.from(f2a));
+
+  const res2 = extractJpegFramesFromChunk(res1.remainder, f2b);
+  assert.equal(res2.frames.length, 1);
+  assert.deepEqual(Array.from(res2.frames[0]), [0xff, 0xd8, 0xaa, 0xbb, 0xcc, 0xff, 0xd9]);
+  assert.equal(res2.remainder.length, 0);
+});
+
+test('validateAndNormalizeScheduleTimes and stripDemoRecordsForProduction enforce rules accurately', () => {
+  const ok = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: '06:00',
+    jam_masuk_selesai: '07:15:00',
+    jam_keluar_mulai: '15:00',
+    jam_keluar_selesai: '17:00',
+  });
+  assert.equal(ok.ok, true);
+  if (ok.ok) {
+    assert.equal(ok.jam_masuk_mulai, '06:00:00');
+    assert.equal(ok.jam_keluar_selesai, '17:00:00');
+  }
+
+  const bad = validateAndNormalizeScheduleTimes({
+    jam_masuk_mulai: '08:00:00',
+    jam_masuk_selesai: '07:00:00',
+    jam_keluar_mulai: '15:00:00',
+    jam_keluar_selesai: '17:00:00',
+  });
+  assert.equal(bad.ok, false);
+
+  const cleaned = stripDemoRecordsForProduction({
+    students: [{ nisn: '0081122001' }, { nisn: '9999999999' }],
+    cameras: [
+      { rtsp_url: 'dummy://ganti-dengan-rtsp-kamera' },
+      { rtsp_url: 'rtsp://admin:smk2026@192.168.10.21:554/Streaming/Channels/101' },
+      { rtsp_url: 'rtsp://admin:pass@103.166.36.59/cam/realmonitor?channel=1&subtype=0' },
+    ],
+    daily_attendance: [{ id: 1 }],
+    attendance_logs: [{ id: 1 }],
+    anonymous_clusters: [{ id: 101 }],
+    face_update_history: [{ id: 1 }],
+    face_update_reviews: [{ id: 1 }],
+    wa_queue: [{ id: 1 }],
+    notifications: [{ id: 1 }],
+    guest_access_logs: [{ id: 1 }],
+    settings: { production_mode: false },
+    storage_bytes_simulated: 685 * 1024 * 1024,
+  });
+
+  assert.equal(cleaned.settings.production_mode, true);
+  assert.equal(cleaned.students.length, 1);
+  assert.equal(cleaned.students[0].nisn, '9999999999');
+  assert.equal(cleaned.cameras.length, 1);
+  assert.ok(cleaned.cameras[0].rtsp_url.includes('103.166.36.59'));
+  assert.equal(cleaned.anonymous_clusters.length, 0);
+});
+
 
 
 
