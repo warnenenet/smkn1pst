@@ -28,42 +28,50 @@ npm run build
 
 ---
 
-## Upload ke GitHub & Auto-Publish Docker Image
-Repositori ini dilengkapi GitHub Actions:
-- `.github/workflows/ci.yml`: Menguji TypeScript, unit test Node, Vite build, Python syntax, dan `cargo test` Rust.
-- `.github/workflows/docker-publish.yml`: Mem-build image all-in-one `linux/amd64` (lengkap dengan model `buffalo_l`, Piper `id_ID`, Rust binary, dan `supervisord`) lalu mem-publish otomatis ke **GitHub Container Registry (`ghcr.io`)**.
+## Publish Langsung ke Docker Hub (All-in-One Image)
 
-### Langkah Push ke GitHub
+### Cara A: Otomatis via GitHub Actions (Disarankan — Tanpa Build di Server)
+Repositori sudah menyiapkan `.github/workflows/docker-publish.yml` untuk mem-build image `linux/amd64` (Node 22 + Vite `dist/` + InsightFace `buffalo_l` + Rust + Piper TTS + Supervisord) dan langsung mem-publish ke **Docker Hub**:
+
+1. Buat Access Token di Docker Hub: **hub.docker.com → Account Settings → Personal Access Tokens → Generate New Token** (izin `Read & Write`).
+2. Upload proyek ini ke repository GitHub Anda, lalu masuk ke **Settings → Secrets and variables → Actions → Repository secrets** dan tambahkan:
+   - `DOCKERHUB_USERNAME`: username Docker Hub Anda (misal `smkpercut`)
+   - `DOCKERHUB_TOKEN`: token dari langkah 1
+   *(Opsional)* Di tab **Variables**, tambahkan `DOCKERHUB_REPO` jika ingin mengganti nama image (default: `absensi-smk-face-ai`).
+3. Push ke branch `main` (atau klik **Actions → Build & Publish Docker Hub → Run workflow**). Image akan otomatis ter-publish sebagai:
+   `<username-dockerhub>/absensi-smk-face-ai:latest`
+
+### Cara B: Build & Push Langsung dari Terminal PC / VPS ke Docker Hub
 ```bash
-git init
-git add .
-git commit -m "Initial commit: Absensi SMK Face AI All-in-One"
-git branch -M main
-git remote add origin https://github.com/<username-github>/<nama-repo>.git
-git push -u origin main
+docker login
+docker build --platform linux/amd64 -t <username-dockerhub>/absensi-smk-face-ai:latest .
+docker push <username-dockerhub>/absensi-smk-face-ai:latest
 ```
-*(Opsional)* Untuk ikut mem-publish ke Docker Hub, tambahkan `DOCKERHUB_USERNAME` dan `DOCKERHUB_TOKEN` di **Repository Settings → Secrets and variables → Actions**.
 
 ---
 
-## Deploy di Server / Portainer (1 Container)
-Setelah workflow `Build & Publish Docker Image` selesai hijau di tab **Actions** GitHub:
+## Deploy Image Docker Hub di aaPanel / VPS / Portainer
+Jika server memakai **aaPanel** (Nginx sudah memakai port 80), jalankan container di port `3080:80` lalu arahkan Reverse Proxy domain (misal `hadir.smkpercut.store`) ke `http://127.0.0.1:3080`:
 
 ```bash
 docker run -d \
-  --name absensi-sekolah \
+  --name absensi-smk-face-ai \
   --restart unless-stopped \
-  -p 80:80 \
+  -p 3080:80 \
+  -e TZ=Asia/Jakarta \
   -v absensi_data:/app/data \
-  ghcr.io/<username-github>/<nama-repo>:latest
+  <username-dockerhub>/absensi-smk-face-ai:latest
 ```
 
-Atau di **Portainer**:
-1. **Containers → Add Container**
-2. **Image**: `ghcr.io/<username-github>/<nama-repo>:latest`
-3. **Ports**: `80` → `80` (`TCP`)
-4. **Volumes**: `/app/data` → volume `absensi_data`
-5. **Restart policy**: `Unless stopped` → **Deploy the container**.
+Atau gunakan file `docker-compose.yml` yang sudah tersedia:
+```bash
+DOCKERHUB_IMAGE=<username-dockerhub>/absensi-smk-face-ai:latest docker compose up -d
+```
+
+Di **aaPanel → Website**:
+1. Buat site domain `hadir.smkpercut.store` (Static/HTML cukup, pasang SSL Let's Encrypt).
+2. Buka **Site Settings → Reverse Proxy → Add Reverse Proxy** ke `http://127.0.0.1:3080`.
+3. Pastikan blok statis `location ~ .*\.(js|css)?$` di config Nginx site dihapus/dikomentari agar semua aset `/assets/*.js` dan WebSocket `/ws` diteruskan ke container Docker.
 
 ---
 
@@ -94,4 +102,27 @@ server {
   }
 }
 ```
+
+### Khusus Deploy di **aaPanel** (Agar Tidak Terkena Error MIME `application/octet-stream`)
+Error `Failed to load module script ... MIME type of "application/octet-stream"` di aaPanel terjadi bila Nginx masih membaca `index.html` mentah (yang berisi `/src/main.tsx`) atau ada blok cache statis aaPanel yang mencegat request `/assets/*.js`.
+
+1. **Install Node.js v22 LTS** di aaPanel (**App Store → Node.js Version Manager**), karena `node server.ts` membutuhkan Node `>= 22.6` (jika terpaksa memakai Node 20, ubah command start menjadi `npx tsx server.ts`).
+2. Masuk ke terminal folder proyek (misal `/www/wwwroot/hadir.smkpercut.store`) lalu jalankan:
+   ```bash
+   npm install
+   npm run build
+   ```
+   Pastikan folder `dist/` dan file `dist/index.html` sudah terbentuk.
+3. Di aaPanel → **Website → Node project → Add Node project**:
+   - **Project dir**: `/www/wwwroot/hadir.smkpercut.store`
+   - **Run opt**: `start` (atau custom: `NODE_ENV=production PORT=3000 node server.ts`)
+   - **Port**: `3000`
+   - Isi domain `hadir.smkpercut.store`, centang **Mapping**, lalu pasang **SSL**.
+4. **Jika memakai Reverse Proxy manual pada Website Nginx aaPanel**:
+   Buka **Site Settings → Config** di aaPanel dan **hapus/komentari** blok bawaan aaPanel seperti:
+   ```nginx
+   # location ~ .*\.(js|css)?$ { ... }
+   ```
+   agar seluruh request (termasuk `/assets/*.js`, `/assets/*.css`, dan WebSocket `/ws`) benar-benar masuk ke `proxy_pass http://127.0.0.1:3000;` dan tidak dilayani sebagai file mentah dari folder root.
+
 

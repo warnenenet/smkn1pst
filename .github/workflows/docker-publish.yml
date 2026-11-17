@@ -1,10 +1,15 @@
-name: Build & Publish Docker Image
+name: Build & Publish Docker Hub
 
 on:
   push:
     branches: [main, master]
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag tambahan image Docker (opsional, misal v1.0.0)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -20,28 +25,40 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub (opsional jika secrets diisi)
+      - name: Login to Docker Hub (Primary)
         if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Login to GitHub Container Registry (Fallback jika Docker Hub belum diset)
+        if: ${{ secrets.DOCKERHUB_USERNAME == '' || secrets.DOCKERHUB_TOKEN == '' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Prepare image tags
         id: meta
         run: |
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          TAGS="ghcr.io/${REPO_LOWER}:latest,ghcr.io/${REPO_LOWER}:${{ github.sha }}"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           if [ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && [ -n "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
             DH_USER=$(echo "${{ secrets.DOCKERHUB_USERNAME }}" | tr '[:upper:]' '[:lower:]')
-            TAGS="${TAGS},${DH_USER}/absensi-sekolah:latest"
+            DH_REPO="${{ vars.DOCKERHUB_REPO }}"
+            if [ -z "${DH_REPO}" ]; then
+              DH_REPO="absensi-smk-face-ai"
+            fi
+            TAGS="${DH_USER}/${DH_REPO}:latest,${DH_USER}/${DH_REPO}:${SHORT_SHA}"
+            if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+              TAGS="${TAGS},${DH_USER}/${DH_REPO}:${{ github.event.inputs.image_tag }}"
+            fi
+            echo "Registry target: Docker Hub (${DH_USER}/${DH_REPO})"
+          else
+            REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            TAGS="ghcr.io/${REPO_LOWER}:latest,ghcr.io/${REPO_LOWER}:${SHORT_SHA}"
+            echo "WARNING: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN belum diset di Repository Secrets; publish dialihkan ke GHCR (${REPO_LOWER})."
           fi
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 

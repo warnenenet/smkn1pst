@@ -25,6 +25,7 @@ RUN npm run build
 FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Jakarta \
     NODE_ENV=production \
     PORT=80 \
     DATA_DIR=/app/data \
@@ -40,17 +41,18 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# 1. Install runtime dependencies (Python, FFmpeg RTSP, OpenCV libs, Supervisor)
+# 1. Install runtime dependencies (Python, FFmpeg RTSP, OpenCV libs, Supervisor, tzdata)
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-dev g++ \
       ffmpeg libgl1 libglib2.0-0 libgomp1 \
-      supervisor curl ca-certificates tar \
+      supervisor curl ca-certificates tar tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Setup Python virtualenv & install InsightFace + ONNXRuntime + OpenCV + FastAPI
 COPY services/face-service/requirements.txt /app/services/face-service/requirements.txt
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/venv/bin/pip install --no-cache-dir numpy==1.26.4 cython \
     && /opt/venv/bin/pip install --no-cache-dir -r /app/services/face-service/requirements.txt \
     && apt-get purge -y --auto-remove g++ python3-dev \
     && rm -rf /var/lib/apt/lists/*

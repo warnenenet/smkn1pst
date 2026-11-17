@@ -1,0 +1,17 @@
+services:
+  absensi-smk:
+    image: ${DOCKERHUB_IMAGE:-username/absensi-smk-face-ai:latest}
+    container_name: absensi-smk-face-ai
+    restart: unless-stopped
+    ports:
+      # Gunakan 3080:80 agar tidak bentrok dengan Nginx aaPanel di port 80,
+      # lalu arahkan Reverse Proxy domain (misal hadir.smkpercut.store) ke http://127.0.0.1:3080
+      - "3080:80"
+    environment:
+      TZ: Asia/Jakarta
+      NODE_ENV: production
+    volumes:
+      - absensi_data:/app/data
+
+volumes:
+  absensi_data:
