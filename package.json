@@ -9,7 +9,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "update": "bash scripts/auto-update.sh",
+    "update:check": "bash scripts/auto-update.sh --dry-run",
+    "update:cron": "bash scripts/auto-update.sh --install-cron"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

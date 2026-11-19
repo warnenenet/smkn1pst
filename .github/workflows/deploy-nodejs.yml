@@ -1,0 +1,94 @@
+name: Auto-Deploy Node.js VPS / aaPanel
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      force_update:
+        description: "Paksa install/build/restart walaupun commit tidak berubah"
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Run unit tests
+        run: npx tsx --test src/lib/attendanceEngine.test.ts src/lib/staticConfig.test.ts
+
+      - name: Build production bundle
+        run: npm run build
+
+      - name: Validate auto-update.sh syntax
+        run: bash -n scripts/auto-update.sh
+
+  deploy-vps:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check VPS SSH secrets
+        id: check_secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          if [ -n "$VPS_HOST" ] && [ -n "$VPS_USER" ] && [ -n "$VPS_SSH_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Secret SSH VPS (VPS_HOST, VPS_USER, VPS_SSH_KEY) belum diisi; langkah SSH auto-deploy dilewati."
+            {
+              echo "### SSH Auto-Deploy Dilewati (Belum Dikonfigurasi)"
+              echo "Jika ingin mengaktifkan auto-deploy otomatis saat \`git push\`, tambahkan di **Settings -> Secrets and variables -> Actions**:"
+              echo "- **Secrets**: \`VPS_HOST\`, \`VPS_USER\`, \`VPS_SSH_KEY\`, (opsional) \`VPS_PORT\`"
+              echo "- **Variables**: \`VPS_APP_DIR\` (misal \`/www/wwwroot/smkn1pst\`), (opsional) \`APP_MANAGER\`, \`AAPANEL_PROJECT_NAME\`, \`PM2_APP_NAME\`, \`SYSTEMD_SERVICE\`, \`RESTART_CMD\`"
+              echo ""
+              echo "Atau gunakan mode pull otomatis langsung dari aaPanel Cron/Webhook: \`bash scripts/auto-update.sh\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Deploy via SSH & jalankan scripts/auto-update.sh
+        if: steps.check_secrets.outputs.configured == 'true'
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_APP_DIR: ${{ vars.VPS_APP_DIR || '/www/wwwroot/smkn1pst' }}
+          APP_MANAGER: ${{ vars.APP_MANAGER || 'auto' }}
+          AAPANEL_PROJECT_NAME: ${{ vars.AAPANEL_PROJECT_NAME || '' }}
+          PM2_APP_NAME: ${{ vars.PM2_APP_NAME || '' }}
+          SYSTEMD_SERVICE: ${{ vars.SYSTEMD_SERVICE || '' }}
+          RESTART_CMD: ${{ vars.RESTART_CMD || '' }}
+          GIT_BRANCH: ${{ github.ref_name }}
+          FORCE_FLAG: ${{ github.event.inputs.force_update == 'true' && '--force' || '' }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          ssh -i ~/.ssh/deploy_key \
+            -p "$VPS_PORT" \
+            -o StrictHostKeyChecking=accept-new \
+            -o BatchMode=yes \
+            "${VPS_USER}@${VPS_HOST}" \
+            "AAPANEL_PROJECT_NAME='${AAPANEL_PROJECT_NAME}' PM2_APP_NAME='${PM2_APP_NAME}' SYSTEMD_SERVICE='${SYSTEMD_SERVICE}' RESTART_CMD='${RESTART_CMD}' bash '${VPS_APP_DIR}/scripts/auto-update.sh' --app-dir '${VPS_APP_DIR}' --manager '${APP_MANAGER}' --branch '${GIT_BRANCH}' ${FORCE_FLAG}"
+
+          rm -f ~/.ssh/deploy_key

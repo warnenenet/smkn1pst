@@ -453,7 +453,49 @@ test('applyWaQuotaResetIfDue resets hourly_count per WIB hour and daily_count pe
   assert.equal(acc.daily_count, 0);
 });
 
+test('appendClusterHitSnapshot preserves hit gallery up to limit and returns pruned paths except best_snapshot_path', async () => {
+  const { appendClusterHitSnapshot } = await import('./attendanceEngine');
+  const h1 = { snapshot_path: '/data/snapshots/h1.jpg', quality_score: 0.72, similarity: 0.81, camera_id: 1, detected_at: '2026-11-19 07:00:00' };
+  const h2 = { snapshot_path: '/data/snapshots/h2.jpg', quality_score: 0.91, similarity: 0.88, camera_id: 1, detected_at: '2026-11-19 07:01:00' };
+  const h3 = { snapshot_path: '/data/snapshots/h3.jpg', quality_score: 0.80, similarity: 0.84, camera_id: 2, detected_at: '2026-11-19 07:02:00' };
+  const h4 = { snapshot_path: '/data/snapshots/h4.jpg', quality_score: 0.78, similarity: 0.82, camera_id: 2, detected_at: '2026-11-19 07:03:00' };
 
+  const step1 = appendClusterHitSnapshot([h2, h1], h3, '/data/snapshots/h2.jpg', 3);
+  assert.equal(step1.hits.length, 3);
+  assert.equal(step1.removedPaths.length, 0);
 
+  // Pushing h4 with maxHits=3 drops h1 (not best) while never removing best_snapshot_path
+  const step2 = appendClusterHitSnapshot(step1.hits, h4, '/data/snapshots/h1.jpg', 3);
+  assert.equal(step2.hits.length, 3);
+  assert.deepEqual(step2.removedPaths, []);
 
+  const step3 = appendClusterHitSnapshot(step1.hits, h4, '/data/snapshots/h2.jpg', 3);
+  assert.deepEqual(step3.removedPaths, ['/data/snapshots/h1.jpg']);
+});
 
+test('passesSnapshotQualityThreshold enforces minimum 70% quality gate and calibrates realistic CCTV faces', async () => {
+  const { normalizeMinSnapshotQuality, passesSnapshotQualityThreshold } = await import('./attendanceEngine');
+  const weights = { weight_confidence: 0.3, weight_size: 0.25, weight_sharpness: 0.25, weight_frontal: 0.2 };
+
+  // Threshold floor always stays >= 0.70 (70%)
+  assert.equal(normalizeMinSnapshotQuality(undefined), 0.7);
+  assert.equal(normalizeMinSnapshotQuality(0.55), 0.7);
+  assert.equal(normalizeMinSnapshotQuality(0.86), 0.86);
+
+  // < 70% is rejected, >= 70% passes
+  assert.equal(passesSnapshotQualityThreshold(0.699, 0.7).passed, false);
+  assert.equal(passesSnapshotQualityThreshold(0.7, 0.7).passed, true);
+  assert.equal(passesSnapshotQualityThreshold(0.74, 0.75).passed, false);
+
+  // Realistic CCTV gate crop achieves >= 0.70, very blurry/small crop stays < 0.70
+  const clearGateScore = computeQualityScore(
+    { confidence: 0.92, faceSizePx: 112, sharpnessNorm: 0.84, frontalScore: 0.91 },
+    weights
+  );
+  const blurrySmallScore = computeQualityScore(
+    { confidence: 0.65, faceSizePx: 64, sharpnessNorm: 0.35, frontalScore: 0.55 },
+    weights
+  );
+  assert.ok(clearGateScore >= 0.7, `Expected clear CCTV score >= 0.70, got ${clearGateScore}`);
+  assert.ok(blurrySmallScore < 0.7, `Expected blurry CCTV score < 0.70, got ${blurrySmallScore}`);
+});

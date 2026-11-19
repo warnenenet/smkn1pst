@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
-import { ScanEye, FileText } from 'lucide-react';
+import { ScanEye, FileText, ZoomIn } from 'lucide-react';
 import type { AppDatabase, AttendanceStatus, UserRole } from '../types';
+import { getJakartaNowParts } from '../lib/attendanceEngine';
+import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
 
 interface AttendanceViewProps {
   db: AppDatabase;
@@ -23,7 +25,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   onSimulateRecognition,
 }) => {
   const canManageIzinSakit = currentUserRole === 'BK' || currentUserRole === 'ADMIN';
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getJakartaNowParts().dateStr;
   const [tanggal, setTanggal] = useState(today);
   const [jurusanId, setJurusanId] = useState('');
   const [kelasId, setKelasId] = useState('');
@@ -31,6 +33,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const [overrideDraft, setOverrideDraft] = useState<Record<number, AttendanceStatus>>({});
+  const [lightboxState, setLightboxState] = useState<{
+    title: string;
+    subtitle: string;
+    referenceItem: FaceGalleryItem | null;
+    items: FaceGalleryItem[];
+    initialIndex: number;
+  } | null>(null);
 
   // Quick Input Izin / Sakit Khusus Guru BK
   const [bkStudentId, setBkStudentId] = useState(String(db.students[0]?.id ?? ''));
@@ -302,6 +311,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">
+                <th className="py-2.5 font-medium">Foto &amp; Hit Kamera</th>
                 <th className="py-2.5 font-medium">NISN</th>
                 <th className="py-2.5 font-medium">Nama Siswa</th>
                 <th className="py-2.5 font-medium">Kelas</th>
@@ -317,8 +327,109 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 const rec = db.daily_attendance.find((d) => d.student_id === s.id && d.tanggal === tanggal);
                 const currentStatus = rec?.status ?? (s.status === 'PKL' ? 'PKL' : 'BELUM_ABSEN');
                 const draftVal = overrideDraft[s.id] ?? (rec?.status ?? 'HADIR');
+                const dayHitLogs = db.attendance_logs.filter(
+                  (l) => l.student_id === s.id && l.timestamp.startsWith(tanggal) && Boolean(l.snapshot_path)
+                );
+                const galleryHits: FaceGalleryItem[] = dayHitLogs.map((l) => ({
+                  src: String(l.snapshot_path),
+                  label: `Hit ${l.tipe} (${l.status})`,
+                  similarity: l.similarity_score ?? null,
+                  timestamp: l.timestamp.replace('T', ' '),
+                  cameraName: db.cameras.find((cm) => cm.id === l.camera_id)?.nama_kamera ?? null,
+                }));
+                if (galleryHits.length === 0 && s.foto_ref) {
+                  galleryHits.push({
+                    src: s.foto_ref,
+                    label: 'Foto Profil Siswa',
+                    qualityScore: s.embedding_quality_score || null,
+                    timestamp: s.embedding_updated_at ?? null,
+                  });
+                }
+                const referenceItem: FaceGalleryItem | null = s.foto_ref
+                  ? {
+                      src: s.foto_ref,
+                      label: `Foto Profil Referensi (${s.nama})`,
+                      meta: `NISN ${s.nisn} · Skor ${(s.embedding_quality_score || 0).toFixed(3)}`,
+                    }
+                  : null;
+                const primaryHit = dayHitLogs[0];
+
                 return (
                   <tr key={s.id} className="hover:bg-slate-50">
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-1.5">
+                        {s.foto_ref && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLightboxState({
+                                title: `Crosscheck Foto Absensi — ${s.nama}`,
+                                subtitle: `${kelas?.nama ?? '-'} · Tanggal ${tanggal}`,
+                                referenceItem,
+                                items: galleryHits,
+                                initialIndex: 0,
+                              })
+                            }
+                            aria-label={`Perbesar foto profil ${s.nama}`}
+                            className="relative rounded overflow-hidden border border-slate-200 hover:border-blue-500 shrink-0"
+                          >
+                            <img
+                              src={s.foto_ref}
+                              alt={s.nama}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 object-cover bg-slate-100"
+                            />
+                          </button>
+                        )}
+                        {primaryHit?.snapshot_path && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLightboxState({
+                                title: `Crosscheck Foto Absensi — ${s.nama}`,
+                                subtitle: `${kelas?.nama ?? '-'} · ${dayHitLogs.length} hit kamera pada ${tanggal}`,
+                                referenceItem,
+                                items: galleryHits,
+                                initialIndex: 0,
+                              })
+                            }
+                            aria-label={`Lihat ${dayHitLogs.length} foto hit kamera ${s.nama}`}
+                            className="group relative rounded overflow-hidden border border-emerald-300 hover:border-blue-600 shrink-0"
+                          >
+                            <img
+                              src={primaryHit.snapshot_path}
+                              alt={`Hit kamera ${s.nama}`}
+                              referrerPolicy="no-referrer"
+                              className="w-10 h-10 object-cover bg-slate-100"
+                            />
+                            <span className="absolute bottom-0 inset-x-0 bg-emerald-800/85 text-white text-[9px] font-mono text-center">
+                              {typeof primaryHit.similarity_score === 'number'
+                                ? `${Math.round(primaryHit.similarity_score * 100)}%`
+                                : `${dayHitLogs.length}x`}
+                            </span>
+                          </button>
+                        )}
+                        {galleryHits.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setLightboxState({
+                                title: `Crosscheck Foto Absensi — ${s.nama}`,
+                                subtitle: `${kelas?.nama ?? '-'} · Tanggal ${tanggal}`,
+                                referenceItem,
+                                items: galleryHits,
+                                initialIndex: 0,
+                              })
+                            }
+                            aria-label={`Buka crosscheck foto ${s.nama}`}
+                            className="p-1 text-blue-700 hover:bg-blue-50 rounded"
+                            title="Perbesar & Crosscheck"
+                          >
+                            <ZoomIn className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td className="py-2.5 font-mono tabular-nums text-slate-600">{s.nisn}</td>
                     <td className="py-2.5 font-medium text-slate-900">{s.nama}</td>
                     <td className="py-2.5 text-slate-600">{kelas?.nama ?? '-'}</td>
@@ -361,7 +472,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               })}
               {filteredStudents.length === 0 && (
                 <tr>
-                  <td colSpan={canManageIzinSakit ? 7 : 6} className="py-6 text-center text-slate-500">
+                  <td colSpan={canManageIzinSakit ? 8 : 7} className="py-6 text-center text-slate-500">
                     Tidak ada siswa yang sesuai filter.
                   </td>
                 </tr>
@@ -370,6 +481,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </table>
         </div>
       </section>
+
+      <FaceLightboxModal
+        isOpen={Boolean(lightboxState)}
+        onClose={() => setLightboxState(null)}
+        title={lightboxState?.title ?? ''}
+        subtitle={lightboxState?.subtitle}
+        referenceItem={lightboxState?.referenceItem}
+        items={lightboxState?.items ?? []}
+        initialIndex={lightboxState?.initialIndex ?? 0}
+      />
     </div>
   );
 };

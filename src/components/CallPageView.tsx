@@ -30,6 +30,7 @@ interface KioskInfo {
   tts_max_age_sec: number;
   tts_burst_threshold: number;
   demo_student_id: number | null;
+  production_mode?: boolean;
 }
 
 export const CallPageView: React.FC<CallPageViewProps> = ({
@@ -46,6 +47,7 @@ export const CallPageView: React.FC<CallPageViewProps> = ({
     tts_max_age_sec: 3,
     tts_burst_threshold: 3,
     demo_student_id: 1,
+    production_mode: true,
   });
   const [wsConnected, setWsConnected] = useState(false);
   const [clock, setClock] = useState(new Date().toLocaleTimeString('id-ID'));
@@ -592,47 +594,49 @@ export const CallPageView: React.FC<CallPageViewProps> = ({
         )}
       </main>
 
-      {/* Footer / Demo Controls */}
+      {/* Footer / Demo Controls (disembunyikan otomatis saat Mode Produksi aktif) */}
       <footer className="border-t border-slate-800 pt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-400">
         <span>
           URL Lajur Terisolasi: <code className="font-mono text-slate-200">/panggil/{cameraId}</code> · Engine Suara:{' '}
           <strong className="text-slate-200">{audioEngineLabel}</strong>
         </span>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              void handleLocalBurstTest();
-            }}
-            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-medium"
-          >
-            Simulasi Burst Jam Sibuk (4 Siswa)
-          </button>
-          {isAuthenticated && onTriggerDemoEvent && (
-            <>
-              <button
-                type="button"
-                onClick={() => {
-                  void unlockAudio();
-                  void onTriggerDemoEvent(kioskInfo.demo_student_id ?? 1);
-                }}
-                className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded font-medium"
-              >
-                Simulasikan Siswa Terdeteksi
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void unlockAudio();
-                  void onTriggerDemoEvent(undefined);
-                }}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-medium"
-              >
-                Simulasikan Wajah Anonim
-              </button>
-            </>
-          )}
-        </div>
+        {!kioskInfo.production_mode && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                void handleLocalBurstTest();
+              }}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded font-medium"
+            >
+              Simulasi Burst Jam Sibuk (4 Siswa)
+            </button>
+            {isAuthenticated && onTriggerDemoEvent && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void unlockAudio();
+                    void onTriggerDemoEvent(kioskInfo.demo_student_id ?? 1);
+                  }}
+                  className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded font-medium"
+                >
+                  Simulasikan Siswa Terdeteksi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void unlockAudio();
+                    void onTriggerDemoEvent(undefined);
+                  }}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded font-medium"
+                >
+                  Simulasikan Wajah Anonim
+                </button>
+              </>
+            )}
+          </div>
+        )}
       </footer>
     </div>
   );

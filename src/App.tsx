@@ -67,7 +67,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
   const [schoolName, setSchoolName] = useState('SMK Negeri Unggulan');
-  const [productionMode, setProductionMode] = useState(false);
+  const [productionMode, setProductionMode] = useState(true);
   const [db, setDb] = useState<AppDatabase | null>(null);
   const [workerStatus, setWorkerStatus] = useState<WorkerStatusResponse | null>(null);
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
@@ -590,6 +590,10 @@ export default function App() {
               onMarkVisitor={async (cid, payload) => {
                 await apiPost(`/api/clusters/${cid}/visitor`, payload);
                 notify('Wajah ditandai sebagai Tamu/Staf.');
+              }}
+              onDeleteCluster={async (cid) => {
+                await apiPost(`/api/clusters/${cid}`, {}, 'DELETE');
+                notify(`Cluster anonim #${cid} dihapus.`);
               }}
             />
           )}

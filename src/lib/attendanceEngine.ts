@@ -165,7 +165,7 @@ export function computeQualityScore(
   weights: Pick<SettingsMap, 'weight_confidence' | 'weight_size' | 'weight_sharpness' | 'weight_frontal'>
 ): number {
   const conf = Math.min(1, Math.max(0, metrics.confidence));
-  const sizeNorm = Math.min(1, Math.max(0, (metrics.faceSizePx - 60) / 180));
+  const sizeNorm = Math.min(1, Math.max(0, metrics.faceSizePx / 160));
   const sharp = Math.min(1, Math.max(0, metrics.sharpnessNorm));
   const frontal = Math.min(1, Math.max(0, metrics.frontalScore));
 
@@ -740,7 +740,59 @@ export function summarizeEmbeddingDimensions(
   };
 }
 
+export interface HitSnapshotRecord {
+  snapshot_path: string;
+  quality_score: number;
+  similarity: number;
+  camera_id: number | null;
+  detected_at: string;
+}
 
+export function appendClusterHitSnapshot(
+  existingHits: HitSnapshotRecord[] | undefined,
+  newHit: HitSnapshotRecord,
+  bestSnapshotPath: string,
+  maxHits = 12
+): { hits: HitSnapshotRecord[]; removedPaths: string[] } {
+  const list = Array.isArray(existingHits) ? [...existingHits] : [];
+  if (!newHit.snapshot_path) {
+    return { hits: list, removedPaths: [] };
+  }
+  const deduped = list.filter((item) => item.snapshot_path !== newHit.snapshot_path);
+  const combined = [newHit, ...deduped];
+  if (combined.length <= maxHits) {
+    return { hits: combined, removedPaths: [] };
+  }
+  const kept = combined.slice(0, maxHits);
+  const keptSet = new Set(kept.map((item) => item.snapshot_path));
+  const removedPaths: string[] = [];
+  for (const dropped of combined.slice(maxHits)) {
+    if (
+      dropped.snapshot_path &&
+      dropped.snapshot_path !== bestSnapshotPath &&
+      !keptSet.has(dropped.snapshot_path)
+    ) {
+      removedPaths.push(dropped.snapshot_path);
+    }
+  }
+  return { hits: kept, removedPaths };
+}
 
+export function normalizeMinSnapshotQuality(rawValue: unknown): number {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return 0.7;
+  return Math.min(0.99, Math.max(0.7, Math.round(num * 100) / 100));
+}
 
-
+export function passesSnapshotQualityThreshold(
+  qualityScore: number,
+  minQuality = 0.7
+): { passed: boolean; threshold: number; score: number } {
+  const threshold = normalizeMinSnapshotQuality(minQuality);
+  const score = Number.isFinite(Number(qualityScore)) ? Number(qualityScore) : 0;
+  return {
+    passed: score >= threshold,
+    threshold,
+    score,
+  };
+}

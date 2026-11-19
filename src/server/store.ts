@@ -28,6 +28,7 @@ import type {
   WaQueue,
   WaTemplate,
 } from '../types';
+import { normalizeMinSnapshotQuality, stripDemoRecordsForProduction } from '../lib/attendanceEngine.ts';
 
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
 export const SQLITE_FILE = path.join(DATA_DIR, 'absensi.sqlite');
@@ -215,7 +216,8 @@ function getSqlite(): DatabaseSync {
         tipe TEXT NOT NULL,
         status TEXT NOT NULL,
         is_manual_override INTEGER NOT NULL DEFAULT 0,
-        similarity_score REAL
+        similarity_score REAL,
+        snapshot_path TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_att_logs_student_tipe ON attendance_logs(student_id, tipe, timestamp DESC);
       CREATE INDEX IF NOT EXISTS idx_att_logs_ts ON attendance_logs(timestamp DESC);
@@ -244,6 +246,7 @@ function getSqlite(): DatabaseSync {
         best_snapshot_path TEXT NOT NULL,
         best_quality_score REAL NOT NULL,
         best_embedding BLOB,
+        hit_snapshots_json TEXT NOT NULL DEFAULT '[]',
         status TEXT NOT NULL,
         named_student_id INTEGER,
         last_camera_id INTEGER
@@ -343,6 +346,14 @@ function getSqlite(): DatabaseSync {
         value_json TEXT NOT NULL
       );
     `);
+    const ensureColumn = (table: string, column: string, ddl: string) => {
+      const cols = sqliteDb!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === column)) {
+        sqliteDb!.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+      }
+    };
+    ensureColumn('attendance_logs', 'snapshot_path', 'TEXT');
+    ensureColumn('anonymous_clusters', 'hit_snapshots_json', "TEXT NOT NULL DEFAULT '[]'");
     schemaInitialized = true;
   }
   return sqliteDb;
@@ -402,19 +413,7 @@ export function getDirectorySizeBytes(dirPath: string): number {
   return total;
 }
 
-function makeVec(seed: number): number[] {
-  const vec: number[] = [];
-  for (let i = 0; i < 16; i++) {
-    vec.push(Math.round(Math.sin(seed * (i + 1)) * 1000) / 1000);
-  }
-  return vec;
-}
-
 export function createInitialSeed(): AppDatabase {
-  const today = new Date().toISOString().slice(0, 10);
-  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
-  const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
-
   return {
     users: [
       { id: 1, name: 'Administrator Sekolah', email: 'admin@sekolah.local', role: 'ADMIN', is_active: true, password_hash: hashPassword('admin123') },
@@ -432,178 +431,12 @@ export function createInitialSeed(): AppDatabase {
       { id: 3, jurusan_id: 2, tingkat: 'XI', nama: 'XI RPL 2', shift: 'SIANG' },
       { id: 4, jurusan_id: 3, tingkat: 'XII', nama: 'XII MM 1', shift: 'PAGI' },
     ],
-    students: [
-      {
-        id: 1,
-        nis: '2401001',
-        nisn: '0081122001',
-        nama: 'Raka Pratama',
-        nickname: 'Raka',
-        kelas_id: 2,
-        tanggal_lahir: '2008-05-14',
-        status: 'AKTIF',
-        embedding: makeVec(1.1),
-        embedding_quality_score: 0.914,
-        embedding_updated_at: `${today}T06:55:00`,
-        foto_ref: '/src/assets/images/student_portrait_one_1794810213963.jpg',
-        wa_ortu: '6281234560001',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 2,
-        nis: '2401002',
-        nisn: '0081122002',
-        nama: 'Siti Nurhayati',
-        nickname: 'Siti',
-        kelas_id: 1,
-        tanggal_lahir: '2009-02-20',
-        status: 'AKTIF',
-        embedding: makeVec(2.3),
-        embedding_quality_score: 0.892,
-        embedding_updated_at: `${today}T07:02:00`,
-        foto_ref: '/src/assets/images/student_portrait_two_1794810215808.jpg',
-        wa_ortu: '6281234560002',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 3,
-        nis: '2401003',
-        nisn: '0081122003',
-        nama: 'Dimas Aditya Putra',
-        nickname: 'Dimas',
-        kelas_id: 2,
-        tanggal_lahir: '2008-08-11',
-        status: 'AKTIF',
-        embedding: makeVec(3.7),
-        embedding_quality_score: 0.742,
-        embedding_updated_at: '2026-07-15T07:00:00Z',
-        foto_ref: '/src/assets/images/student_portrait_three_1794810216084.jpg',
-        wa_ortu: '6281234560003',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 4,
-        nis: '2401004',
-        nisn: '0081122004',
-        nama: 'Nadia Kusuma Dewi',
-        nickname: 'Nadia',
-        kelas_id: 4,
-        tanggal_lahir: '2007-11-04',
-        status: 'PKL',
-        embedding: makeVec(4.9),
-        embedding_quality_score: 0.845,
-        embedding_updated_at: '2026-09-01T07:00:00Z',
-        foto_ref: '/src/assets/images/student_portrait_four_1794810215936.jpg',
-        wa_ortu: '6281234560004',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 5,
-        nis: '2401005',
-        nisn: '0081122005',
-        nama: 'Fajar Ramadhan',
-        nickname: 'Fajar',
-        kelas_id: 1,
-        tanggal_lahir: '2009-01-19',
-        status: 'AKTIF',
-        embedding: makeVec(5.5),
-        embedding_quality_score: 0.765,
-        embedding_updated_at: '2026-07-20T07:00:00Z',
-        foto_ref: null,
-        wa_ortu: '6281234560005',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 6,
-        nis: '2401006',
-        nisn: '0081122006',
-        nama: 'Aulia Putri Maharani',
-        nickname: 'Aulia',
-        kelas_id: 3,
-        tanggal_lahir: '2008-06-30',
-        status: 'AKTIF',
-        embedding: null,
-        embedding_quality_score: 0,
-        embedding_updated_at: null,
-        foto_ref: null,
-        wa_ortu: '6281234560006',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 7,
-        nis: '2401007',
-        nisn: '0081122007',
-        nama: 'Bagas Wijaya',
-        nickname: 'Bagas',
-        kelas_id: 2,
-        tanggal_lahir: '2008-04-22',
-        status: 'AKTIF',
-        embedding: makeVec(7.2),
-        embedding_quality_score: 0.812,
-        embedding_updated_at: '2026-10-12T07:00:00Z',
-        foto_ref: null,
-        wa_ortu: '6281234560007',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-      {
-        id: 8,
-        nis: '2401008',
-        nisn: '0081122008',
-        nama: 'Citra Lestari',
-        nickname: 'Citra',
-        kelas_id: 4,
-        tanggal_lahir: '2007-09-09',
-        status: 'PKL',
-        embedding: makeVec(8.1),
-        embedding_quality_score: 0.87,
-        embedding_updated_at: '2026-10-20T07:00:00Z',
-        foto_ref: null,
-        wa_ortu: '6281234560008',
-        created_at: '2026-07-10T07:00:00Z',
-      },
-    ],
+    students: [],
     gates: [
       { id: 1, nama_gerbang: 'Gerbang Utama', lokasi: 'Pos Satpam Depan', tipe: 'BOTH' },
       { id: 2, nama_gerbang: 'Gerbang Bengkel Utara', lokasi: 'Gedung Praktik TKJ/RPL', tipe: 'MASUK' },
     ],
-    cameras: [
-      {
-        id: 1,
-        nama_kamera: 'Kamera Gerbang Utama A',
-        gate_id: 1,
-        rtsp_url: 'rtsp://admin:smk2026@192.168.10.21:554/Streaming/Channels/101',
-        resolusi: '1920x1080',
-        fps: 5,
-        aktif: true,
-        status: 'ONLINE',
-        last_error: null,
-        last_online_at: `${today} 07:14:22`,
-      },
-      {
-        id: 2,
-        nama_kamera: 'Kamera Gerbang Utama B',
-        gate_id: 1,
-        rtsp_url: 'rtsp://admin:smk2026@192.168.10.22:554/Streaming/Channels/101',
-        resolusi: '1920x1080',
-        fps: 5,
-        aktif: true,
-        status: 'ONLINE',
-        last_error: null,
-        last_online_at: `${today} 07:14:19`,
-      },
-      {
-        id: 3,
-        nama_kamera: 'Kamera Bengkel Utara',
-        gate_id: 2,
-        rtsp_url: 'dummy://ganti-dengan-rtsp-kamera',
-        resolusi: '1920x1080',
-        fps: 5,
-        aktif: true,
-        status: 'OFFLINE',
-        last_error: 'Dummy / URL RTSP belum dikonfigurasi',
-        last_online_at: null,
-      },
-    ],
+    cameras: [],
     schedules: [
       ...[1, 2, 3, 4, 5, 6].map((hari) => ({
         id: hari,
@@ -616,171 +449,16 @@ export function createInitialSeed(): AppDatabase {
         toleransi_terlambat_menit: 5,
       })),
     ],
-    kelas_overrides: [
-      {
-        id: 1,
-        kelas_id: 3,
-        hari: 1,
-        jam_masuk_mulai: '12:00:00',
-        jam_masuk_selesai: '13:00:00',
-        jam_keluar_mulai: '17:00:00',
-        jam_keluar_selesai: '18:00:00',
-        alasan: 'Shift Siang Praktik Lab RPL',
-      },
-    ],
-    schedule_exceptions: [
-      {
-        id: 1,
-        tanggal: '2026-11-25',
-        scope: 'GLOBAL',
-        ref_id: null,
-        tipe: 'PULANG_CEPAT',
-        catatan: 'Upacara Hari Guru Nasional',
-        jam_masuk_override: null,
-        jam_keluar_override: '12:30:00',
-      },
-    ],
-    attendance_logs: [
-      { id: 1, student_id: 1, gate_id: 1, camera_id: 1, timestamp: `${today}T06:54:12`, tipe: 'MASUK', status: 'HADIR', is_manual_override: false, similarity_score: 0.842 },
-      { id: 2, student_id: 2, gate_id: 1, camera_id: 1, timestamp: `${today}T07:03:44`, tipe: 'MASUK', status: 'HADIR', is_manual_override: false, similarity_score: 0.816 },
-      { id: 3, student_id: 3, gate_id: 1, camera_id: 2, timestamp: `${today}T07:26:10`, tipe: 'MASUK', status: 'TERLAMBAT', is_manual_override: false, similarity_score: 0.684 },
-    ],
-    daily_attendance: [
-      { id: 1, student_id: 1, tanggal: today, jam_masuk: '06:54:12', jam_keluar: null, status: 'HADIR', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 2, student_id: 2, tanggal: today, jam_masuk: '07:03:44', jam_keluar: null, status: 'HADIR', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 3, student_id: 3, tanggal: today, jam_masuk: '07:26:10', jam_keluar: null, status: 'TERLAMBAT', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 4, student_id: 5, tanggal: today, jam_masuk: null, jam_keluar: null, status: 'ALPA', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 5, student_id: 7, tanggal: today, jam_masuk: null, jam_keluar: null, status: 'SAKIT', manual_override_by: 2, manual_override_at: `${today} 07:35:00`, catatan: 'Surat keterangan dokter' },
-      { id: 6, student_id: 1, tanggal: yesterday, jam_masuk: '06:51:04', jam_keluar: '15:18:20', status: 'HADIR', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 7, student_id: 1, tanggal: twoDaysAgo, jam_masuk: '07:08:30', jam_keluar: '15:12:44', status: 'HADIR', manual_override_by: null, manual_override_at: null, catatan: null },
-      { id: 8, student_id: 2, tanggal: yesterday, jam_masuk: '07:02:15', jam_keluar: '15:10:02', status: 'HADIR', manual_override_by: null, manual_override_at: null, catatan: null },
-    ],
-    anonymous_clusters: [
-      {
-        id: 101,
-        centroid: makeVec(6.1),
-        hit_count: 7,
-        distinct_days: 3,
-        first_seen: `${twoDaysAgo} 06:58:12`,
-        last_seen: `${today} 07:04:18`,
-        best_snapshot_path: '/src/assets/images/student_portrait_four_1794810215936.jpg',
-        best_quality_score: 0.903,
-        best_embedding: makeVec(6.1),
-        status: 'READY',
-        named_student_id: null,
-        last_camera_id: 1,
-      },
-      {
-        id: 102,
-        centroid: makeVec(9.4),
-        hit_count: 5,
-        distinct_days: 2,
-        first_seen: `${yesterday} 07:11:05`,
-        last_seen: `${today} 07:09:44`,
-        best_snapshot_path: '/src/assets/images/student_portrait_three_1794810216084.jpg',
-        best_quality_score: 0.876,
-        best_embedding: makeVec(9.4),
-        status: 'READY',
-        named_student_id: null,
-        last_camera_id: 2,
-      },
-    ],
+    kelas_overrides: [],
+    schedule_exceptions: [],
+    attendance_logs: [],
+    daily_attendance: [],
+    anonymous_clusters: [],
     visitors: [],
-    face_update_history: [
-      {
-        id: 1,
-        student_id: 1,
-        version: 1,
-        embedding: makeVec(1.0),
-        quality_score: 0.832,
-        snapshot_path: '/src/assets/images/student_portrait_one_1794810213963.jpg',
-        created_at: `${twoDaysAgo} 06:52:00`,
-        approved_by: 2,
-        approved_at: `${twoDaysAgo} 08:00:00`,
-        is_canonical: true,
-      },
-      {
-        id: 2,
-        student_id: 1,
-        version: 2,
-        embedding: makeVec(1.1),
-        quality_score: 0.914,
-        snapshot_path: '/src/assets/images/student_portrait_one_1794810213963.jpg',
-        created_at: `${yesterday} 06:55:00`,
-        approved_by: null,
-        approved_at: null,
-        is_canonical: false,
-      },
-      {
-        id: 3,
-        student_id: 2,
-        version: 2,
-        embedding: makeVec(2.3),
-        quality_score: 0.892,
-        snapshot_path: '/src/assets/images/student_portrait_two_1794810215808.jpg',
-        created_at: `${yesterday} 07:01:00`,
-        approved_by: null,
-        approved_at: null,
-        is_canonical: false,
-      },
-    ],
-    face_update_reviews: [
-      {
-        id: 1,
-        student_id: 1,
-        month: 10,
-        year: 2026,
-        candidate_snapshots: [
-          { history_id: 2, snapshot_path: '/src/assets/images/student_portrait_one_1794810213963.jpg', quality_score: 0.914, created_at: `${yesterday} 06:55:00` },
-          { history_id: 1, snapshot_path: '/src/assets/images/student_portrait_one_1794810213963.jpg', quality_score: 0.832, created_at: `${twoDaysAgo} 06:52:00` },
-        ],
-        current_quality: 0.832,
-        best_new_quality: 0.914,
-        status: 'PENDING',
-        reviewed_by: null,
-        reviewed_at: null,
-      },
-      {
-        id: 2,
-        student_id: 2,
-        month: 10,
-        year: 2026,
-        candidate_snapshots: [
-          { history_id: 3, snapshot_path: '/src/assets/images/student_portrait_two_1794810215808.jpg', quality_score: 0.892, created_at: `${yesterday} 07:01:00` },
-        ],
-        current_quality: 0.815,
-        best_new_quality: 0.892,
-        status: 'PENDING',
-        reviewed_by: null,
-        reviewed_at: null,
-      },
-    ],
-    wa_accounts: [
-      {
-        id: 1,
-        provider: 'BAILEYS',
-        phone_number: '6281122334455',
-        api_key: '',
-        status: 'ACTIVE',
-        daily_count: 142,
-        hourly_count: 18,
-        last_reset_at: `${today} 00:01:00`,
-        created_at: '2026-09-01T00:00:00Z',
-        qr_connected: true,
-      },
-      {
-        id: 2,
-        provider: 'BAILEYS',
-        phone_number: '6281998877665',
-        api_key: '',
-        status: 'WARMUP',
-        daily_count: 8,
-        hourly_count: 3,
-        last_reset_at: `${today} 00:01:00`,
-        created_at: `${twoDaysAgo}T08:00:00Z`,
-        qr_connected: true,
-      },
-    ],
+    face_update_history: [],
+    face_update_reviews: [],
+    wa_queue: [],
+    wa_accounts: [],
     wa_templates: [
       { id: 1, code: 'TPL_1', name: 'Variasi 1 - Formal', template_text: 'Yth. Bapak/Ibu Wali Murid dari {nama} ({kelas}), absensi tanggal {tanggal}: Masuk {jam_masuk}, Keluar {jam_keluar}, Status: *{status}*.', is_active: true },
       { id: 2, code: 'TPL_2', name: 'Variasi 2 - Sore', template_text: 'Selamat sore Bapak/Ibu, laporan kehadiran {nama} ({kelas}) tgl {tanggal}. Masuk: {jam_masuk} | Pulang: {jam_keluar} | Status: *{status}*.', is_active: true },
@@ -793,69 +471,15 @@ export function createInitialSeed(): AppDatabase {
       { id: 9, code: 'TPL_9', name: 'Variasi 9 - Rekap', template_text: 'Rekapitulasi Kehadiran Ananda {nama} kelas {kelas} tgl {tanggal}: Masuk {jam_masuk}, Keluar {jam_keluar}, Status: *{status}*.', is_active: true },
       { id: 10, code: 'TPL_10', name: 'Variasi 10 - Resmi', template_text: 'Informasi Orang Tua: Pada {tanggal}, siswa a.n. {nama} ({kelas}) berstatus *{status}* (Masuk: {jam_masuk}, Pulang: {jam_keluar}).', is_active: true },
     ],
-    wa_queue: [
-      {
-        id: 1,
-        student_id: 1,
-        phone: '6281234560001',
-        payload: { nama: 'Raka Pratama', kelas: 'XI RPL 1', tanggal: yesterday, jam_masuk: '06:51:04', jam_keluar: '15:18:20', status: 'HADIR' },
-        status: 'SENT',
-        retry_count: 0,
-        scheduled_at: `${yesterday} 18:00:00`,
-        sent_at: `${yesterday} 18:02:14`,
-        error_msg: null,
-      },
-      {
-        id: 2,
-        student_id: 5,
-        phone: '6281234560005',
-        payload: { nama: 'Fajar Ramadhan', kelas: 'X TKJ 1', tanggal: today, jam_masuk: '-', jam_keluar: '-', status: 'ALPA' },
-        status: 'PENDING',
-        retry_count: 0,
-        scheduled_at: `${today} 18:00:00`,
-        sent_at: null,
-        error_msg: null,
-      },
-    ],
-    notifications: [
-      {
-        id: 1,
-        user_id: null,
-        role_target: 'BK',
-        type: 'FACE_REVIEW_MONTHLY',
-        title: 'Review Update Wajah Bulanan',
-        message: 'Ada 2 siswa dengan kandidat update wajah bulan ini siap ditinjau.',
-        is_read: false,
-        created_at: `${today} 02:00:00`,
-      },
-      {
-        id: 2,
-        user_id: null,
-        role_target: 'BK',
-        type: 'FACE_STALE_3M',
-        title: 'Wajah Belum Update 3 Bulan',
-        message: 'Siswa Dimas Aditya Putra (NISN: 0081122003) belum mencapai target optimal >= 80%, sistem terus melatih otomatis.',
-        is_read: false,
-        created_at: `${today} 02:00:00`,
-      },
-      {
-        id: 3,
-        user_id: null,
-        role_target: 'BK',
-        type: 'CLUSTER_READY',
-        title: 'Cluster Anonim Siap Dinamai',
-        message: '2 cluster wajah anonim telah memenuhi syarat >=5 hit dan >=2 hari berbeda.',
-        is_read: false,
-        created_at: `${today} 07:10:00`,
-      },
-    ],
+    notifications: [],
     guest_access_logs: [],
     settings: {
       school_name: 'SMK Negeri Unggulan',
       threshold_confidence: 0.80,
-      threshold_recognition: 0.40,
-      threshold_clustering: 0.50,
+      threshold_recognition: 0.70,
+      threshold_clustering: 0.70,
       min_face_size: 60,
+      min_snapshot_quality: 0.70,
       cluster_ready_hits: 5,
       cluster_ready_days: 1,
       cluster_sighting_interval_min: 30,
@@ -877,9 +501,9 @@ export function createInitialSeed(): AppDatabase {
       face_maintenance_target: 0.80,
       auto_backup_enabled: true,
       backup_retention_count: 2,
-      production_mode: false,
+      production_mode: true,
     },
-    storage_bytes_simulated: 685 * 1024 * 1024,
+    storage_bytes_simulated: 12 * 1024 * 1024,
   };
 }
 
@@ -890,6 +514,7 @@ function hydrateDefaults(parsed: AppDatabase): AppDatabase {
   } else {
     parsed.settings = { ...defaults, ...parsed.settings };
   }
+  parsed.settings.min_snapshot_quality = normalizeMinSnapshotQuality(parsed.settings.min_snapshot_quality);
   for (const u of parsed.users) {
     if (!u.password_hash) {
       const fallbackPwd = u.role === 'ADMIN' ? 'admin123' : u.role === 'BK' ? 'bk123' : 'guru123';
@@ -1007,6 +632,7 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     status: r.status as AttendanceLog['status'],
     is_manual_override: Boolean(r.is_manual_override),
     similarity_score: r.similarity_score !== null && r.similarity_score !== undefined ? Number(r.similarity_score) : undefined,
+    snapshot_path: r.snapshot_path ? String(r.snapshot_path) : null,
   }));
 
   const cutoffDaily = dailyWindowCutoffDate();
@@ -1026,20 +652,45 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     catatan: r.catatan ? String(r.catatan) : null,
   }));
 
-  const anonymous_clusters = (sqlite.prepare('SELECT * FROM anonymous_clusters ORDER BY last_seen DESC, id DESC').all() as Array<Record<string, unknown>>).map((r) => ({
-    id: Number(r.id),
-    centroid: decodeEmbeddingBlob(r.centroid) ?? [],
-    hit_count: Number(r.hit_count),
-    distinct_days: Number(r.distinct_days),
-    first_seen: String(r.first_seen),
-    last_seen: String(r.last_seen),
-    best_snapshot_path: String(r.best_snapshot_path),
-    best_quality_score: Number(r.best_quality_score),
-    best_embedding: decodeEmbeddingBlob(r.best_embedding) ?? [],
-    status: r.status as AnonymousCluster['status'],
-    named_student_id: r.named_student_id !== null && r.named_student_id !== undefined ? Number(r.named_student_id) : null,
-    last_camera_id: r.last_camera_id !== null && r.last_camera_id !== undefined ? Number(r.last_camera_id) : null,
-  }));
+  const anonymous_clusters = (sqlite.prepare('SELECT * FROM anonymous_clusters ORDER BY last_seen DESC, id DESC').all() as Array<Record<string, unknown>>).map((r) => {
+    const bestSnap = String(r.best_snapshot_path);
+    const bestQ = Number(r.best_quality_score);
+    const lastCam = r.last_camera_id !== null && r.last_camera_id !== undefined ? Number(r.last_camera_id) : null;
+    const lastSeen = String(r.last_seen);
+    let hitSnaps: AnonymousCluster['hit_snapshots'] = [];
+    try {
+      const parsed = JSON.parse(String(r.hit_snapshots_json || '[]'));
+      if (Array.isArray(parsed)) hitSnaps = parsed;
+    } catch {
+      hitSnaps = [];
+    }
+    if (hitSnaps.length === 0 && bestSnap) {
+      hitSnaps = [
+        {
+          snapshot_path: bestSnap,
+          quality_score: bestQ,
+          similarity: 1,
+          camera_id: lastCam,
+          detected_at: lastSeen,
+        },
+      ];
+    }
+    return {
+      id: Number(r.id),
+      centroid: decodeEmbeddingBlob(r.centroid) ?? [],
+      hit_count: Number(r.hit_count),
+      distinct_days: Number(r.distinct_days),
+      first_seen: String(r.first_seen),
+      last_seen: lastSeen,
+      best_snapshot_path: bestSnap,
+      best_quality_score: bestQ,
+      best_embedding: decodeEmbeddingBlob(r.best_embedding) ?? [],
+      hit_snapshots: hitSnaps,
+      status: r.status as AnonymousCluster['status'],
+      named_student_id: r.named_student_id !== null && r.named_student_id !== undefined ? Number(r.named_student_id) : null,
+      last_camera_id: lastCam,
+    };
+  });
 
   const visitors = (sqlite.prepare('SELECT * FROM visitors ORDER BY id DESC').all() as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
@@ -1132,14 +783,35 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
   const storageRow = sqlite.prepare('SELECT value_json FROM settings WHERE key = ?').get('storage_bytes_simulated') as { value_json: string } | undefined;
 
   const defaultSettings = createInitialSeed().settings;
-  const parsedSettings: SettingsMap = settingsRow
+  let parsedSettings: SettingsMap = settingsRow
     ? { ...defaultSettings, ...(JSON.parse(settingsRow.value_json) as Partial<SettingsMap>) }
     : defaultSettings;
+
+  // One-time idempotent migration for existing SQLite DBs: quality 70%, face similarity 70%
+  const migKey = 'migration_quality70_sim70_v1';
+  const hasMig = sqlite.prepare('SELECT value_json FROM app_state WHERE key = ?').get(migKey) as { value_json: string } | undefined;
+  if (!hasMig) {
+    if (settingsRow) {
+      parsedSettings = {
+        ...parsedSettings,
+        min_snapshot_quality: 0.7,
+        threshold_recognition: 0.7,
+        threshold_clustering: 0.7,
+      };
+      sqlite
+        .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+        .run('app_settings', JSON.stringify(parsedSettings));
+    }
+    sqlite
+      .prepare('INSERT INTO app_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at')
+      .run(migKey, '"done"', new Date().toISOString());
+  }
+  parsedSettings.min_snapshot_quality = normalizeMinSnapshotQuality(parsedSettings.min_snapshot_quality);
 
   const realDiskBytes = getDirectorySizeBytes(DATA_DIR);
   const storedSimBytes = storageRow ? Number(JSON.parse(storageRow.value_json)) : 0;
 
-  return {
+  let loadedDb: AppDatabase = {
     users,
     jurusans,
     kelas,
@@ -1163,6 +835,38 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     settings: parsedSettings,
     storage_bytes_simulated: Math.max(realDiskBytes, Number.isFinite(storedSimBytes) ? storedSimBytes : realDiskBytes),
   };
+
+  // One-time idempotent cutover to Production Mode for existing demo-seeded SQLite DBs
+  const prodMigKey = 'migration_auto_production_v1';
+  const hasProdMig = sqlite.prepare('SELECT value_json FROM app_state WHERE key = ?').get(prodMigKey) as { value_json: string } | undefined;
+  if (!hasProdMig) {
+    const demoNisns = new Set([
+      '0081122001',
+      '0081122002',
+      '0081122003',
+      '0081122004',
+      '0081122005',
+      '0081122006',
+      '0081122007',
+      '0081122008',
+    ]);
+    const removedStudentIds = loadedDb.students.filter((s) => demoNisns.has(s.nisn)).map((s) => s.id);
+    const onlyDemoStudents = loadedDb.students.length > 0 && loadedDb.students.every((s) => demoNisns.has(s.nisn));
+    const realClusters = loadedDb.anonymous_clusters.filter(
+      (c) => Array.isArray(c.centroid) && c.centroid.length !== 16
+    );
+    loadedDb = stripDemoRecordsForProduction(loadedDb);
+    if (realClusters.length > 0) {
+      loadedDb.anonymous_clusters = realClusters;
+    }
+    saveDb(loadedDb);
+    purgeDemoRowsFromSqlite(removedStudentIds, onlyDemoStudents);
+    sqlite
+      .prepare('INSERT INTO app_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at')
+      .run(prodMigKey, '"done"', new Date().toISOString());
+  }
+
+  return loadedDb;
 }
 
 export function loadDb(): AppDatabase {
@@ -1308,8 +1012,8 @@ export function saveDb(db: AppDatabase): void {
 
     // Preserve historical attendance_logs beyond the 3000-row read cap while upserting current window
     const insLog = sqlite.prepare(`
-      INSERT INTO attendance_logs (id, student_id, gate_id, camera_id, timestamp, tipe, status, is_manual_override, similarity_score)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO attendance_logs (id, student_id, gate_id, camera_id, timestamp, tipe, status, is_manual_override, similarity_score, snapshot_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         student_id = excluded.student_id,
         gate_id = excluded.gate_id,
@@ -1318,10 +1022,11 @@ export function saveDb(db: AppDatabase): void {
         tipe = excluded.tipe,
         status = excluded.status,
         is_manual_override = excluded.is_manual_override,
-        similarity_score = excluded.similarity_score
+        similarity_score = excluded.similarity_score,
+        snapshot_path = excluded.snapshot_path
     `);
     for (const l of db.attendance_logs) {
-      insLog.run(l.id, l.student_id, l.gate_id, l.camera_id, l.timestamp, l.tipe, l.status, l.is_manual_override ? 1 : 0, l.similarity_score ?? null);
+      insLog.run(l.id, l.student_id, l.gate_id, l.camera_id, l.timestamp, l.tipe, l.status, l.is_manual_override ? 1 : 0, l.similarity_score ?? null, l.snapshot_path ?? null);
     }
 
     // Preserve daily_attendance older than window while cleanly syncing active 180-day window
@@ -1355,8 +1060,8 @@ export function saveDb(db: AppDatabase): void {
     const insCluster = sqlite.prepare(`
       INSERT INTO anonymous_clusters (
         id, centroid, hit_count, distinct_days, first_seen, last_seen,
-        best_snapshot_path, best_quality_score, best_embedding, status, named_student_id, last_camera_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        best_snapshot_path, best_quality_score, best_embedding, hit_snapshots_json, status, named_student_id, last_camera_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const c of db.anonymous_clusters) {
       insCluster.run(
@@ -1369,6 +1074,7 @@ export function saveDb(db: AppDatabase): void {
         c.best_snapshot_path,
         c.best_quality_score,
         encodeEmbeddingBlob(c.best_embedding),
+        JSON.stringify(c.hit_snapshots ?? []),
         c.status,
         c.named_student_id ?? null,
         c.last_camera_id ?? null
@@ -1455,6 +1161,24 @@ export function saveDb(db: AppDatabase): void {
   }
 }
 
+export function purgeDemoRowsFromSqlite(removedStudentIds: number[], clearAllDemoLogs: boolean): void {
+  const sqlite = getSqlite();
+  if (clearAllDemoLogs) {
+    sqlite.exec(`
+      DELETE FROM attendance_logs;
+      DELETE FROM daily_attendance;
+      DELETE FROM wa_queue;
+      DELETE FROM guest_access_logs;
+    `);
+    return;
+  }
+  for (const sid of removedStudentIds) {
+    sqlite.prepare('DELETE FROM attendance_logs WHERE student_id = ?').run(sid);
+    sqlite.prepare('DELETE FROM daily_attendance WHERE student_id = ?').run(sid);
+    sqlite.prepare('DELETE FROM wa_queue WHERE student_id = ?').run(sid);
+  }
+}
+
 export function deleteStudentFromSqlite(studentId: number): void {
   const sqlite = getSqlite();
   sqlite.prepare('DELETE FROM daily_attendance WHERE student_id = ?').run(studentId);
@@ -1514,6 +1238,38 @@ export function runStorageCleanup(db: AppDatabase): { freedMb: number } {
     sqlite.prepare('DELETE FROM guest_access_logs WHERE timestamp < ?').run(guestCutoff);
   } catch {
     // ignore cleanup query failures
+  }
+
+  // 5. Prune unreferenced or expired (>30 days) local snapshot files to keep storage compact
+  try {
+    if (fs.existsSync(SNAPSHOTS_DIR)) {
+      const keepRel = new Set<string>();
+      const recentAttCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+      for (const s of db.students) if (s.foto_ref) keepRel.add(s.foto_ref);
+      for (const h of db.face_update_history) if (h.snapshot_path) keepRel.add(h.snapshot_path);
+      for (const v of db.visitors) if (v.snapshot_path) keepRel.add(v.snapshot_path);
+      for (const c of db.anonymous_clusters) {
+        if (c.best_snapshot_path) keepRel.add(c.best_snapshot_path);
+        for (const hs of c.hit_snapshots ?? []) {
+          if (hs.snapshot_path) keepRel.add(hs.snapshot_path);
+        }
+      }
+      for (const l of db.attendance_logs) {
+        if (l.snapshot_path && l.timestamp >= recentAttCutoff) keepRel.add(l.snapshot_path);
+      }
+      const expireMs = Date.now() - 7 * 86_400_000;
+      for (const name of fs.readdirSync(SNAPSHOTS_DIR)) {
+        const rel = `/data/snapshots/${name}`;
+        if (keepRel.has(rel)) continue;
+        const full = path.join(SNAPSHOTS_DIR, name);
+        const st = fs.statSync(full);
+        if (st.isFile() && st.mtimeMs < expireMs) {
+          fs.unlinkSync(full);
+        }
+      }
+    }
+  } catch {
+    // ignore snapshot cleanup failures
   }
 
   const realBytes = getDirectorySizeBytes(DATA_DIR);

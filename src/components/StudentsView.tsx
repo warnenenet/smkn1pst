@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Upload, GitCompare, Trash2, UserPlus, FileSpreadsheet, Download, Layers } from 'lucide-react';
-import type { AcademicTransitionType, AppDatabase, StudentStatus } from '../types';
+import { Upload, GitCompare, Trash2, UserPlus, FileSpreadsheet, Download, Layers, ZoomIn } from 'lucide-react';
+import type { AcademicTransitionType, AppDatabase, Student, StudentStatus } from '../types';
+import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
 
 export interface ExcelTransitionItem {
   nisn: string;
@@ -112,6 +113,66 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
     match: boolean;
     status: string;
   } | null>(null);
+  const [lightboxState, setLightboxState] = useState<{
+    title: string;
+    subtitle: string;
+    referenceItem: FaceGalleryItem | null;
+    items: FaceGalleryItem[];
+    initialIndex: number;
+  } | null>(null);
+
+  const openStudentGallery = (s: Student) => {
+    const kelas = db.kelas.find((k) => k.id === s.kelas_id);
+    const historyPhotos: FaceGalleryItem[] = db.face_update_history
+      .filter((h) => h.student_id === s.id && Boolean(h.snapshot_path))
+      .sort((a, b) => b.version - a.version)
+      .map((h) => ({
+        src: h.snapshot_path,
+        label: h.is_canonical ? `Versi #${h.version} (Kanonik)` : `Versi #${h.version}`,
+        qualityScore: h.quality_score,
+        timestamp: h.created_at,
+      }));
+    const hitPhotos: FaceGalleryItem[] = db.attendance_logs
+      .filter((l) => l.student_id === s.id && Boolean(l.snapshot_path))
+      .slice(0, 12)
+      .map((l) => ({
+        src: String(l.snapshot_path),
+        label: `Hit ${l.tipe} (${l.status})`,
+        similarity: l.similarity_score ?? null,
+        timestamp: l.timestamp.replace('T', ' '),
+        cameraName: db.cameras.find((cm) => cm.id === l.camera_id)?.nama_kamera ?? null,
+      }));
+
+    const items: FaceGalleryItem[] = [];
+    if (s.foto_ref) {
+      items.push({
+        src: s.foto_ref,
+        label: 'Foto Profil Utama',
+        qualityScore: s.embedding_quality_score || null,
+        timestamp: s.embedding_updated_at ?? null,
+      });
+    }
+    for (const item of [...hitPhotos, ...historyPhotos]) {
+      if (!items.some((x) => x.src === item.src && x.label === item.label)) {
+        items.push(item);
+      }
+    }
+    if (items.length === 0) return;
+
+    setLightboxState({
+      title: `Galeri Wajah & Hit Kamera — ${s.nama}`,
+      subtitle: `${kelas?.nama ?? '-'} · NISN ${s.nisn} · ${items.length} foto tersimpan`,
+      referenceItem: s.foto_ref
+        ? {
+            src: s.foto_ref,
+            label: 'Foto Profil Utama',
+            meta: `Skor ${(s.embedding_quality_score || 0).toFixed(3)}`,
+          }
+        : null,
+      items,
+      initialIndex: 0,
+    });
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -659,21 +720,46 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {pagedStudents.map((s) => {
                     const kelas = db.kelas.find((k) => k.id === s.kelas_id);
+                    const totalPhotos =
+                      (s.foto_ref ? 1 : 0) +
+                      db.attendance_logs.filter((l) => l.student_id === s.id && Boolean(l.snapshot_path)).length +
+                      db.face_update_history.filter((h) => h.student_id === s.id && Boolean(h.snapshot_path)).length;
                     return (
                       <tr key={s.id}>
                         <td className="py-2">
-                          {s.foto_ref ? (
-                            <img
-                              src={s.foto_ref}
-                              alt={s.nama}
-                              referrerPolicy="no-referrer"
-                              className="w-9 h-9 rounded object-cover border border-slate-200"
-                            />
-                          ) : (
-                            <div className="w-9 h-9 rounded bg-slate-100 flex items-center justify-center text-[10px] font-semibold text-slate-500">
-                              {s.nama.slice(0, 2).toUpperCase()}
-                            </div>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {s.foto_ref ? (
+                              <button
+                                type="button"
+                                onClick={() => openStudentGallery(s)}
+                                aria-label={`Perbesar foto wajah ${s.nama}`}
+                                className="group relative rounded overflow-hidden border border-slate-200 hover:border-blue-500 shrink-0"
+                              >
+                                <img
+                                  src={s.foto_ref}
+                                  alt={s.nama}
+                                  referrerPolicy="no-referrer"
+                                  className="w-12 h-12 object-cover bg-slate-100"
+                                />
+                                <span className="absolute bottom-0.5 right-0.5 bg-slate-900/75 text-white rounded p-0.5">
+                                  <ZoomIn className="w-2.5 h-2.5" />
+                                </span>
+                              </button>
+                            ) : (
+                              <div className="w-12 h-12 rounded bg-slate-100 flex items-center justify-center text-xs font-semibold text-slate-500">
+                                {s.nama.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                            {totalPhotos > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => openStudentGallery(s)}
+                                className="text-[11px] font-medium text-blue-700 hover:underline whitespace-nowrap"
+                              >
+                                {totalPhotos} foto
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2 font-mono tabular-nums text-slate-600">
                           <div>{s.nisn}</div>
@@ -722,6 +808,16 @@ export const StudentsView: React.FC<StudentsViewProps> = ({
           </section>
         </>
       )}
+
+      <FaceLightboxModal
+        isOpen={Boolean(lightboxState)}
+        onClose={() => setLightboxState(null)}
+        title={lightboxState?.title ?? ''}
+        subtitle={lightboxState?.subtitle}
+        referenceItem={lightboxState?.referenceItem}
+        items={lightboxState?.items ?? []}
+        initialIndex={lightboxState?.initialIndex ?? 0}
+      />
     </div>
   );
 };

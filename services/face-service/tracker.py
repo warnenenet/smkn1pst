@@ -84,3 +84,8 @@ class IoUTracker:
                 results.append((tid, True))
 
         return results
+
+    def reset_dispatch_cooldown(self, track_id: int) -> None:
+        tr = self._tracks.get(track_id)
+        if tr is not None:
+            tr.last_dispatched = 0.0

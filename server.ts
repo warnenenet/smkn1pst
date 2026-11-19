@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
@@ -17,6 +18,7 @@ import {
   hashPassword,
   listBackups,
   loadDb,
+  purgeDemoRowsFromSqlite,
   restoreFromBackupBuffer,
   runCompactBackup,
   runStorageCleanup,
@@ -42,6 +44,7 @@ import {
   startWaQueueWorker,
 } from './src/server/waGateway.ts';
 import {
+  appendClusterHitSnapshot,
   blendFaceEmbeddings,
   calculateAttendancePercentage,
   checkClusterReadyStatus,
@@ -55,10 +58,12 @@ import {
   getJakartaNowParts,
   maskRtspCredentials,
   normalizeExcelBirthDate,
+  normalizeMinSnapshotQuality,
   normalizeStudentStatus,
   normalizeWaPhone,
   parseFfmpegStreamOutput,
   parseKelasHierarchy,
+  passesSnapshotQualityThreshold,
   resolveScheduleForStudent,
   stripDemoRecordsForProduction,
   summarizeEmbeddingDimensions,
@@ -79,6 +84,22 @@ const SERVER_START_MS = Date.now();
 const app = express();
 app.use(express.json({ limit: '25mb' }));
 app.use('/data/snapshots', express.static(SNAPSHOTS_DIR));
+app.get('/favicon.ico', (_req, res) => {
+  const appRoot = typeof import.meta.dirname === 'string' ? import.meta.dirname : process.cwd();
+  const candidates = [
+    path.join(appRoot, 'dist', 'favicon.ico'),
+    path.join(appRoot, 'public', 'favicon.ico'),
+    path.join(appRoot, 'favicon.ico'),
+  ];
+  const found = candidates.find((p) => fs.existsSync(p));
+  if (found) {
+    res.setHeader('Content-Type', 'image/x-icon');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(found);
+    return;
+  }
+  res.status(204).end();
+});
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -405,6 +426,7 @@ app.get('/api/kiosk/:cameraId', (req, res) => {
     tts_max_age_sec: db.settings.tts_max_age_sec,
     tts_burst_threshold: db.settings.tts_burst_threshold,
     demo_student_id: db.students[0]?.id ?? null,
+    production_mode: Boolean(db.settings.production_mode),
   });
 });
 
@@ -1100,6 +1122,15 @@ app.post('/api/simulate-recognition', requireAuth(), (req, res) => {
     { confidence: Number(confidence), faceSizePx: Number(faceSizePx), sharpnessNorm: 0.89, frontalScore: 0.92 },
     db.settings
   );
+  const qualityCheck = passesSnapshotQualityThreshold(qScore, db.settings.min_snapshot_quality);
+  if (!qualityCheck.passed) {
+    res.status(200).json({
+      ignored: true,
+      quality_score: qScore,
+      reason: `Kualitas wajah ${(qScore * 100).toFixed(1)}% < minimal ${Math.round(qualityCheck.threshold * 100)}% (hanya mengambil gambar >= ${Math.round(qualityCheck.threshold * 100)}%).`,
+    });
+    return;
+  }
 
   if (anonymous || !student_id) {
     // Cek cluster anonim atau tambah baru / replace-if-better
@@ -1348,10 +1379,28 @@ function processFaceEvent(payload: {
   snapshot_rel_path?: string;
 }): { statusCode: number; body: Record<string, unknown> } {
   const db = loadDb();
-  const { camera_id, student_id, similarity = 0, confidence = 0.9, quality_score = 0.8, embedding, snapshot_rel_path } = payload;
+  const { camera_id, student_id, similarity = 0, confidence = 0.9, quality_score = 0.7, embedding, snapshot_rel_path } = payload;
   const cam = db.cameras.find((c) => c.id === Number(camera_id));
   if (!cam) {
+    removeSnapshotIfLocal(snapshot_rel_path);
     return { statusCode: 404, body: { error: 'Kamera tidak ditemukan.' } };
+  }
+  const qualityCheck = passesSnapshotQualityThreshold(Number(quality_score), db.settings.min_snapshot_quality);
+  if (!qualityCheck.passed) {
+    removeSnapshotIfLocal(snapshot_rel_path);
+    console.log(
+      `[QUALITY][Cam #${cam.id}] Snapshot diabaikan: skor ${(qualityCheck.score * 100).toFixed(1)}% < batas minimal ${Math.round(qualityCheck.threshold * 100)}%`
+    );
+    return {
+      statusCode: 200,
+      body: {
+        ok: true,
+        skipped: true,
+        quality_score: qualityCheck.score,
+        min_snapshot_quality: qualityCheck.threshold,
+        reason: `Kualitas gambar ${(qualityCheck.score * 100).toFixed(1)}% di bawah batas minimal ${Math.round(qualityCheck.threshold * 100)}%.`,
+      },
+    };
   }
   const gate = db.gates.find((g) => g.id === cam.gate_id);
   const jkt = getJakartaNowParts();
@@ -1395,12 +1444,28 @@ function processFaceEvent(payload: {
         );
       }
       if (Number(quality_score) > bestCluster.best_quality_score) {
-        removeSnapshotIfLocal(bestCluster.best_snapshot_path);
         bestCluster.best_quality_score = Number(quality_score);
         if (snapshot_rel_path) bestCluster.best_snapshot_path = String(snapshot_rel_path);
         if (Array.isArray(embedding)) bestCluster.best_embedding = embedding;
-      } else {
-        removeSnapshotIfLocal(snapshot_rel_path);
+      }
+      const incomingSnap = String(snapshot_rel_path || '');
+      if (incomingSnap) {
+        const hitRes = appendClusterHitSnapshot(
+          bestCluster.hit_snapshots,
+          {
+            snapshot_path: incomingSnap,
+            quality_score: Number(quality_score),
+            similarity: Math.round(Math.max(0, bestClusterSim) * 10000) / 10000,
+            camera_id: cam.id,
+            detected_at: nowStr,
+          },
+          bestCluster.best_snapshot_path,
+          12
+        );
+        bestCluster.hit_snapshots = hitRes.hits;
+        for (const droppedPath of hitRes.removedPaths) {
+          removeSnapshotIfLocal(droppedPath);
+        }
       }
       if (
         bestCluster.status === 'PENDING' &&
@@ -1433,6 +1498,7 @@ function processFaceEvent(payload: {
         );
       }
     } else if (Array.isArray(embedding) && embedding.length > 0) {
+      const initSnap = String(snapshot_rel_path || '/src/assets/images/student_portrait_four_1794810215936.jpg');
       bestCluster = {
         id: nextId(db.anonymous_clusters),
         centroid: embedding,
@@ -1440,9 +1506,18 @@ function processFaceEvent(payload: {
         distinct_days: 1,
         first_seen: nowStr,
         last_seen: nowStr,
-        best_snapshot_path: String(snapshot_rel_path || '/src/assets/images/student_portrait_four_1794810215936.jpg'),
+        best_snapshot_path: initSnap,
         best_quality_score: Number(quality_score),
         best_embedding: embedding,
+        hit_snapshots: [
+          {
+            snapshot_path: initSnap,
+            quality_score: Number(quality_score),
+            similarity: 1,
+            camera_id: cam.id,
+            detected_at: nowStr,
+          },
+        ],
         status: 'PENDING',
         named_student_id: null,
         last_camera_id: cam.id,
@@ -1507,6 +1582,7 @@ function processFaceEvent(payload: {
       status: evalRes.logStatus,
       is_manual_override: false,
       similarity_score: Number(similarity) || undefined,
+      snapshot_path: snapshot_rel_path ? String(snapshot_rel_path) : null,
     });
     if (evalRes.updateDaily) {
       if (existingDaily) {
@@ -1531,6 +1607,7 @@ function processFaceEvent(payload: {
   );
 
   let embeddingUpdated = false;
+  let keptForMaintenance = false;
   if (Array.isArray(embedding) && embedding.length > 0) {
     const resMaint = applyContinuousFaceMaintenance({
       db,
@@ -1541,10 +1618,9 @@ function processFaceEvent(payload: {
       nowStr,
     });
     embeddingUpdated = resMaint.updated;
-    if (!resMaint.keptSnapshot) {
-      removeSnapshotIfLocal(snapshot_rel_path);
-    }
-  } else {
+    keptForMaintenance = resMaint.keptSnapshot;
+  }
+  if (evalRes.deduplicated && !keptForMaintenance) {
     removeSnapshotIfLocal(snapshot_rel_path);
   }
 
@@ -1741,6 +1817,21 @@ app.delete('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
 });
 
 // Clusters Anonim (Guru BK)
+function cleanupClusterSnapshotsExcept(
+  cluster: { best_snapshot_path: string; hit_snapshots?: Array<{ snapshot_path: string }> },
+  keepPath: string | null
+): void {
+  const candidates = new Set<string>();
+  if (cluster.best_snapshot_path) candidates.add(cluster.best_snapshot_path);
+  for (const hs of cluster.hit_snapshots ?? []) {
+    if (hs.snapshot_path) candidates.add(hs.snapshot_path);
+  }
+  for (const p of candidates) {
+    if (keepPath && p === keepPath) continue;
+    removeSnapshotIfLocal(p);
+  }
+}
+
 app.post('/api/clusters/:id/assign', requireAuth(['ADMIN', 'BK']), (req, res) => {
   const db = loadDb();
   const cid = Number(req.params.id);
@@ -1762,6 +1853,7 @@ app.post('/api/clusters/:id/assign', requireAuth(['ADMIN', 'BK']), (req, res) =>
   if (!student.foto_ref || cluster.best_quality_score >= student.embedding_quality_score) {
     student.foto_ref = cluster.best_snapshot_path;
   }
+  cleanupClusterSnapshotsExcept(cluster, student.foto_ref);
   db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
   saveDb(db);
   triggerPythonCameraReload();
@@ -1798,6 +1890,7 @@ app.post('/api/clusters/:id/new-student', requireAuth(['ADMIN', 'BK']), (req, re
     created_at: new Date().toISOString(),
   };
   db.students.push(student);
+  cleanupClusterSnapshotsExcept(cluster, student.foto_ref);
   db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
   saveDb(db);
   res.json({ ok: true, student });
@@ -1819,6 +1912,21 @@ app.post('/api/clusters/:id/visitor', requireAuth(['ADMIN', 'BK']), (req, res) =
     catatan: String(req.body.catatan || ''),
     created_at: new Date().toISOString(),
   });
+  cleanupClusterSnapshotsExcept(cluster, cluster.best_snapshot_path);
+  db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
+  saveDb(db);
+  res.json({ ok: true });
+});
+
+app.delete('/api/clusters/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const cid = Number(req.params.id);
+  const cluster = db.anonymous_clusters.find((c) => c.id === cid);
+  if (!cluster) {
+    res.status(404).json({ error: 'Cluster tidak ditemukan.' });
+    return;
+  }
+  cleanupClusterSnapshotsExcept(cluster, null);
   db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
   saveDb(db);
   res.json({ ok: true });
@@ -2087,7 +2195,12 @@ app.delete('/api/schedules/exception/:id', requireAuth(['ADMIN', 'BK']), (req, r
 // Settings, Production Cutover, Storage Cleanup & Compact Rotating Backup
 app.post('/api/settings', requireAuth(['ADMIN']), (req, res) => {
   const db = loadDb();
-  db.settings = { ...db.settings, ...req.body };
+  const patch = { ...(req.body ?? {}) };
+  if (patch.min_snapshot_quality !== undefined) {
+    patch.min_snapshot_quality = normalizeMinSnapshotQuality(patch.min_snapshot_quality);
+  }
+  db.settings = { ...db.settings, ...patch };
+  db.settings.min_snapshot_quality = normalizeMinSnapshotQuality(db.settings.min_snapshot_quality);
   saveDb(db);
   triggerPythonCameraReload();
   refreshNodeRtspWorkers().catch(() => {});
@@ -2097,12 +2210,21 @@ app.post('/api/settings', requireAuth(['ADMIN']), (req, res) => {
 app.post('/api/system/activate-production', requireAuth(['ADMIN']), (req, res) => {
   const { cleanDemoData = true, production_mode = true } = req.body ?? {};
   let db = loadDb();
+  let removedIds: number[] = [];
+  let onlyDemo = false;
   if (production_mode && cleanDemoData) {
+    const beforeStudents = db.students;
     db = stripDemoRecordsForProduction(db);
+    const remainingIds = new Set(db.students.map((s) => s.id));
+    removedIds = beforeStudents.filter((s) => !remainingIds.has(s.id)).map((s) => s.id);
+    onlyDemo = beforeStudents.length > 0 && db.students.length === 0;
   } else {
     db.settings.production_mode = Boolean(production_mode);
   }
   saveDb(db);
+  if (production_mode && cleanDemoData) {
+    purgeDemoRowsFromSqlite(removedIds, onlyDemo);
+  }
   triggerPythonCameraReload();
   refreshNodeRtspWorkers().catch(() => {});
   res.json({
@@ -2760,9 +2882,44 @@ async function start() {
   setTimeout(executeMaintenanceTick, 10_000);
   setInterval(executeMaintenanceTick, 6 * 3600_000);
 
+  // Auto-update GitHub terjadwal opsional (default 60 menit = 1 jam sekali bila AUTO_UPDATE_ENABLED=1)
+  const autoUpdateEnabled =
+    process.env.AUTO_UPDATE_ENABLED === '1' || process.env.AUTO_UPDATE_ENABLED === 'true';
+  if (autoUpdateEnabled) {
+    const intervalMin = Math.max(5, Number(process.env.AUTO_UPDATE_INTERVAL_MINUTES) || 60);
+    const intervalMs = intervalMin * 60_000;
+    const scriptPath = path.resolve(process.cwd(), 'scripts/auto-update.sh');
+    const gitDirPath = path.resolve(process.cwd(), '.git');
+
+    const triggerScheduledAutoUpdate = async () => {
+      if (!fs.existsSync(scriptPath) || !fs.existsSync(gitDirPath)) return;
+      try {
+        const { spawn } = await import('child_process');
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        const logPath = path.join(DATA_DIR, 'auto-update.log');
+        const outFd = fs.openSync(logPath, 'a');
+        const child = spawn('bash', [scriptPath], {
+          cwd: process.cwd(),
+          detached: true,
+          stdio: ['ignore', outFd, outFd],
+          env: process.env,
+        });
+        child.unref();
+        fs.closeSync(outFd);
+      } catch (err) {
+        console.error('[AutoUpdate] Gagal menjadwalkan pemeriksaan update:', err instanceof Error ? err.message : err);
+      }
+    };
+
+    console.log(`[AutoUpdate] Scheduler GitHub aktif setiap ${intervalMin} menit (${scriptPath})`);
+    setTimeout(() => void triggerScheduledAutoUpdate(), 120_000);
+    setInterval(() => void triggerScheduledAutoUpdate(), intervalMs);
+  }
+
   const port = Number(process.env.PORT) || 3000;
-  server.listen(port, '0.0.0.0', () => {
-    console.log(`[Absensi SMK Server] Running on http://0.0.0.0:${port}`);
+  const listenHost = process.env.HOST?.trim();
+  const onListen = () => {
+    console.log(`[Absensi SMK Server] Running on http://${listenHost || '0.0.0.0'}:${port}`);
     startNodeRtspWorkers({
       loadDb,
       snapshotsDir: SNAPSHOTS_DIR,
@@ -2777,7 +2934,19 @@ async function start() {
         processFaceEvent(payload);
       },
     });
-  });
+  };
+  if (listenHost) {
+    server.listen(port, listenHost, onListen);
+  } else {
+    server.listen(port, onListen);
+  }
 }
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Absensi SMK Server] Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Absensi SMK Server] Uncaught exception:', err);
+});
 
 start();

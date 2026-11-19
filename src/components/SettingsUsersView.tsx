@@ -204,7 +204,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
       </section>
 
       <section className="bg-white border border-slate-200 rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-slate-900 mb-4">Pengaturan Threshold AI, Maintenance 80%, Backup &amp; Audio Gerbang</h2>
+        <h2 className="text-sm font-semibold text-slate-900 mb-4">Pengaturan Threshold AI (Kualitas 70% &amp; Kesamaan 70%), Backup &amp; Audio Gerbang</h2>
         <form
           onSubmit={async (e) => {
             e.preventDefault();
@@ -225,12 +225,12 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
             <input type="number" step="0.01" min="0.5" max="0.99" value={form.threshold_confidence} onChange={(e) => setForm({ ...form, threshold_confidence: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Threshold Pengenalan 1:N (Default 0.40)</label>
-            <input type="number" step="0.01" min="0.2" max="0.9" value={form.threshold_recognition} onChange={(e) => setForm({ ...form, threshold_recognition: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label className="block text-xs text-slate-600 mb-1">Threshold Pengenalan 1:N / Kesamaan Wajah (Default 0.70 = 70%)</label>
+            <input type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_recognition} onChange={(e) => setForm({ ...form, threshold_recognition: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Threshold Clustering Anonim (Default 0.50)</label>
-            <input type="number" step="0.01" min="0.2" max="0.9" value={form.threshold_clustering} onChange={(e) => setForm({ ...form, threshold_clustering: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label className="block text-xs text-slate-600 mb-1">Threshold Clustering Anonim (Default 0.70 = 70%)</label>
+            <input type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_clustering} onChange={(e) => setForm({ ...form, threshold_clustering: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
             <label htmlFor="face-maint-target" className="block text-xs text-slate-600 mb-1">Target Maintenance Wajah (Default 0.80 = 80%)</label>
@@ -242,6 +242,19 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               max="0.99"
               value={form.face_maintenance_target ?? 0.80}
               onChange={(e) => setForm({ ...form, face_maintenance_target: Number(e.target.value) })}
+              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
+            />
+          </div>
+          <div>
+            <label htmlFor="min-snapshot-quality" className="block text-xs text-slate-600 mb-1">Kualitas Foto Hit Minimal (Min 0.70 = 70%)</label>
+            <input
+              id="min-snapshot-quality"
+              type="number"
+              step="0.01"
+              min="0.70"
+              max="0.99"
+              value={form.min_snapshot_quality ?? 0.70}
+              onChange={(e) => setForm({ ...form, min_snapshot_quality: Math.max(0.7, Number(e.target.value)) })}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>

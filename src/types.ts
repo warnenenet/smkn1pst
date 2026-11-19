@@ -122,6 +122,7 @@ export interface AttendanceLog {
   status: 'HADIR' | 'TERLAMBAT';
   is_manual_override: boolean;
   similarity_score?: number;
+  snapshot_path?: string | null;
 }
 
 export interface DailyAttendance {
@@ -136,6 +137,14 @@ export interface DailyAttendance {
   catatan?: string | null;
 }
 
+export interface ClusterHitSnapshot {
+  snapshot_path: string;
+  quality_score: number;
+  similarity: number;
+  camera_id: number | null;
+  detected_at: string;
+}
+
 export interface AnonymousCluster {
   id: number;
   centroid: number[];
@@ -146,6 +155,7 @@ export interface AnonymousCluster {
   best_snapshot_path: string;
   best_quality_score: number;
   best_embedding: number[];
+  hit_snapshots?: ClusterHitSnapshot[];
   status: ClusterStatus;
   named_student_id: number | null;
   last_camera_id: number | null;
@@ -256,6 +266,7 @@ export interface SettingsMap {
   threshold_recognition: number;
   threshold_clustering: number;
   min_face_size: number;
+  min_snapshot_quality: number;
   cluster_ready_hits: number;
   cluster_ready_days: number;
   cluster_sighting_interval_min: number;

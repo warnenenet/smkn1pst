@@ -123,6 +123,93 @@ Error `Failed to load module script ... MIME type of "application/octet-stream"`
    ```nginx
    # location ~ .*\.(js|css)?$ { ... }
    ```
-   agar seluruh request (termasuk `/assets/*.js`, `/assets/*.css`, dan WebSocket `/ws`) benar-benar masuk ke `proxy_pass http://127.0.0.1:3000;` dan tidak dilayani sebagai file mentah dari folder root.
+   agar seluruh request (termasuk `/assets/*.js`, `/assets/*.css`, dan WebSocket `/ws`) benar-benar masuk ke `proxy_pass http://127.0.0.1:3000;` (atau `:3080` untuk Docker) dan tidak dilayani sebagai file mentah dari folder root.
+5. **Mengatasi `502 Bad Gateway` & `Permission denied` di aaPanel**:
+   - Jika memakai **Docker** (`docker-compose.yml` port `3080:80`): pastikan target Reverse Proxy adalah `http://127.0.0.1:3080` dan container sedang berjalan (`docker ps` & `curl -s http://127.0.0.1:3080/api/health`).
+   - Jika muncul error `node_modules/.bin/tsx: Permission denied` (biasanya karena `node_modules` di-upload via ZIP/FTP atau di-install sebagai `root` sedangkan Node Project aaPanel berjalan sebagai user `www`), jalankan di terminal proyek:
+     ```bash
+     chmod +x node_modules/.bin/*
+     chown -R www:www /www/wwwroot/smkn1pst
+     npm run build
+     ```
+   - Di **Run opt** Node Project aaPanel, **jangan pilih `dev`** — pilih **`start`** (`node server.ts` untuk Node `>= 22.18`), atau isi custom command `NODE_ENV=production PORT=3000 node --experimental-strip-types server.ts` (jika Node `22.6`–`22.17`) / `NODE_ENV=production PORT=3000 node node_modules/tsx/dist/cli.mjs server.ts`.
+   - Pastikan target Reverse Proxy menunjuk ke `http://127.0.0.1:3000`.
 
+---
+
+## Auto-Update Otomatis dari GitHub (1 Jam Sekali & Universal aaPanel / Node.js)
+
+Repositori menyediakan `scripts/auto-update.sh` dan workflow `.github/workflows/deploy-nodejs.yml` yang dirancang **universal** untuk project Node.js di **aaPanel Node Project, PM2, systemd, Supervisor, maupun Docker Compose**.
+
+Keamanan & fitur bawaan script:
+- **Database SQLite & `.env` aman**: File di `data/` (seperti `data/absensi.sqlite`, `wa_auth/`, `snapshots/`) dan `.env` tidak di-track Git sehingga tidak tertimpa `git pull`. Sebelum menarik commit baru, script juga otomatis membuat cadangan di `data/backups/pre-update-*.bak` (maksimal 5 file terbaru).
+- **Build sebelum restart**: `npm install` (hanya jika `package.json`/lockfile berubah) dan `npm run build` dijalankan sebelum service di-restart. Jika build gagal, aplikasi live tidak ikut mati.
+- **Anti `Permission denied` di aaPanel**: Otomatis menjalankan `chmod +x node_modules/.bin/*` dan `chown -R www:www` bila dieksekusi sebagai `root`.
+- **Auto-deteksi universal**: Otomatis mendeteksi `npm`/`pnpm`/`yarn`/`bun`, script `build` di `package.json`, dan process manager (`RESTART_CMD` → aaPanel vhost script/Supervisor → PM2 → `systemd` → sinyal PID).
+
+### Opsi A: Otomatis 1 Jam Sekali via Cron Linux / aaPanel Cron (Disarankan)
+1. **Lewat terminal proyek (1 perintah saja)**:
+   ```bash
+   cd /www/wwwroot/smkn1pst
+   npm run update:cron
+   ```
+   Perintah ini memasang cron `0 * * * *` (**setiap 1 jam sekali** tepat di menit ke-0) dan menulis log ke `data/auto-update.log`.
+   Untuk menghapus atau mengecek status cron:
+   ```bash
+   bash scripts/auto-update.sh --status
+   bash scripts/auto-update.sh --uninstall-cron
+   ```
+2. **Atau lewat Panel aaPanel → Menu Cron**:
+   - **Type of Task**: `Shell Script`
+   - **Name**: `Auto Update Absensi SMK (1 Jam)`
+   - **Execution Cycle**: `Every Hour` (`1 Hour`, Minute `0`)
+   - **Script content**:
+     ```bash
+     bash /www/wwwroot/smkn1pst/scripts/auto-update.sh
+     ```
+
+### Opsi B: Otomatis 1 Jam Sekali dari Dalam Aplikasi (`.env`)
+Jika server tidak memakai akses `crontab`, tambahkan di file `.env` pada root proyek (`server.ts` sudah memuat `.env` otomatis saat start):
+```env
+AUTO_UPDATE_ENABLED="1"
+AUTO_UPDATE_INTERVAL_MINUTES="60"
+AAPANEL_PROJECT_NAME="absen"
+```
+Lalu restart Node Project sekali saja. Setelah itu, aplikasi akan memeriksa GitHub setiap **60 menit (1 jam)** dan menjalankan `scripts/auto-update.sh` bila ada commit baru.
+
+### Opsi C: Auto-Update Instan saat `git push` via aaPanel Git Manager / Webhook
+Pada **aaPanel → Website → Node Project → Site modification → Git Manager** (atau **Webhook**), tempel skrip eksekusi berikut:
+```bash
+bash /www/wwwroot/smkn1pst/scripts/auto-update.sh
+```
+
+### Opsi D: Auto-Deploy Otomatis saat `git push` via GitHub Actions (SSH)
+Workflow `.github/workflows/deploy-nodejs.yml` otomatis mengecek build/lint/test lalu masuk ke VPS via SSH untuk menjalankan `scripts/auto-update.sh --force`.
+Tambahkan di **Repository Settings → Secrets and variables → Actions**:
+- **Secrets**: `VPS_HOST` (IP/domain VPS), `VPS_USER` (mis. `root`), `VPS_SSH_KEY` (private key SSH), (opsional) `VPS_PORT` (default `22`).
+- **Variables**: `VPS_APP_DIR` (mis. `/www/wwwroot/smkn1pst`), (opsional) `APP_MANAGER` (`auto` / `aapanel` / `pm2` / `systemd` / `docker`), `AAPANEL_PROJECT_NAME` (`absen`), `PM2_APP_NAME`, `SYSTEMD_SERVICE`, `RESTART_CMD`.
+
+### Menjadikan Folder Upload ZIP Tersambung ke GitHub (Tanpa Menghapus `data/` & `.env`)
+Jika folder di aaPanel awalnya di-upload via ZIP/FTP (belum ada `.git`), jalankan sekali di terminal proyek:
+```bash
+cd /www/wwwroot/smkn1pst
+cp -a data data_cadangan_aman
+git init -b main
+git remote add origin https://github.com/<username>/<repo>.git
+git fetch origin
+git reset --mixed origin/main
+git checkout -- .
+chown -R www:www /www/wwwroot/smkn1pst
+```
+Setelah tersambung, cek dry-run:
+```bash
+npm run update:check
+```
+
+### Memakai `scripts/auto-update.sh` untuk Project Node.js / aaPanel Lainnya
+Salin file `scripts/auto-update.sh` ke folder `scripts/` pada project Node.js lain (Express, Next.js, NestJS, Vite, Astro, Fastify, dll.). Script akan otomatis membaca `.env` project tersebut dan menyesuaikan:
+- `PORT` & `HEALTH_URL` (mis. `HEALTH_URL="http://127.0.0.1:4000/"` atau `HEALTH_PATH="/"` bila project lain tidak memiliki `/api/health`)
+- `PKG_MANAGER=auto` (`npm`, `pnpm`, `yarn`, `bun`)
+- `BUILD_SCRIPT=auto` (otomatis melewati build jika `package.json` tidak punya script `build`, atau bisa diisi nama script kustom)
+- `APP_MANAGER=auto` (`aapanel`, `pm2`, `systemd`, `supervisor`, `docker`, atau `RESTART_CMD="..."`)
 

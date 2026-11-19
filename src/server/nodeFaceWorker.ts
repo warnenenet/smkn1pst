@@ -9,6 +9,7 @@ import {
   extractJpegFramesFromChunk,
   getJakartaNowParts,
   maskRtspCredentials,
+  passesSnapshotQualityThreshold,
 } from '../lib/attendanceEngine.ts';
 import type { AppDatabase, Camera, WorkerCameraStat } from '../types';
 
@@ -218,7 +219,7 @@ export async function detectFacesInJpeg(jpegBuffer: Buffer): Promise<DetectedFac
     const frontalScore = Math.max(0.2, Math.min(1, 1 - (yawDeg / 45) * 0.6 - (pitchDeg / 35) * 0.4));
     const sharpnessNorm = computeCropSharpnessNorm(data, width, x1, y1, x2, y2);
 
-    const pad = Math.round(Math.max(x2 - x1, y2 - y1) * 0.25);
+    const pad = Math.round(Math.max(x2 - x1, y2 - y1) * 0.45);
     const cropJpeg = encodeRgbaCropJpeg(data, width, height, x1 - pad, y1 - pad, x2 + pad, y2 + pad);
 
     const emb = Array.from(f.embedding, (v) => Math.round(Number(v) * 100000) / 100000);
@@ -385,6 +386,26 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
                   droppedCount += 1;
                   continue;
                 }
+
+                const qScore = computeQualityScore(
+                  {
+                    confidence: f.confidence,
+                    faceSizePx: f.faceSizePx,
+                    sharpnessNorm: f.sharpnessNorm,
+                    frontalScore: f.frontalScore,
+                  },
+                  db.settings
+                );
+                const qualityCheck = passesSnapshotQualityThreshold(qScore, db.settings.min_snapshot_quality);
+                if (!qualityCheck.passed) {
+                  w.stat.dropped_filter += 1;
+                  droppedCount += 1;
+                  console.log(
+                    `[DETECT][Cam #${cam.id}] Wajah diabaikan kualitas ${(qScore * 100).toFixed(1)}% < ${Math.round(qualityCheck.threshold * 100)}% (conf=${f.confidence.toFixed(2)} px=${f.faceSizePx})`
+                  );
+                  continue;
+                }
+
                 passedCount += 1;
                 w.stat.faces_detected_total += 1;
                 const detectWib = getJakartaNowParts().dateTimeStr;
@@ -424,16 +445,6 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
                 const snapFull = path.join(deps.snapshotsDir, snapName);
                 fs.mkdirSync(deps.snapshotsDir, { recursive: true });
                 fs.writeFileSync(snapFull, f.cropJpeg);
-
-                const qScore = computeQualityScore(
-                  {
-                    confidence: f.confidence,
-                    faceSizePx: f.faceSizePx,
-                    sharpnessNorm: f.sharpnessNorm,
-                    frontalScore: f.frontalScore,
-                  },
-                  db.settings
-                );
 
                 if (bestStudentId) {
                   w.stat.matched_dispatched += 1;

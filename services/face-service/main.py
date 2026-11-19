@@ -46,8 +46,10 @@ gallery_lock = threading.Lock()
 gallery_cache: List[Dict[str, Any]] = []
 settings_cache: Dict[str, Any] = {
     "threshold_confidence": 0.80,
-    "threshold_recognition": 0.40,
+    "threshold_recognition": 0.70,
+    "threshold_clustering": 0.70,
     "min_face_size": 60,
+    "min_snapshot_quality": 0.70,
     "weight_confidence": 0.30,
     "weight_size": 0.25,
     "weight_sharpness": 0.25,
@@ -110,7 +112,7 @@ def compute_quality(conf: float, face_size_px: int, sharpness_norm: float, front
     w_s = float(settings_cache.get("weight_size", 0.25))
     w_sh = float(settings_cache.get("weight_sharpness", 0.25))
     w_f = float(settings_cache.get("weight_frontal", 0.20))
-    size_norm = min(1.0, max(0.0, face_size_px / 220.0))
+    size_norm = min(1.0, max(0.0, face_size_px / 160.0))
     score = w_c * conf + w_s * size_norm + w_sh * sharpness_norm + w_f * frontal_score
     return round(float(min(1.0, max(0.0, score))), 4)
 
@@ -302,7 +304,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
                 min_conf = min(float(settings_cache.get("threshold_confidence", 0.80)), 0.50)
                 min_size = min(int(settings_cache.get("min_face_size", 60)), 24)
-                rec_thresh = float(settings_cache.get("threshold_recognition", 0.40))
+                rec_thresh = float(settings_cache.get("threshold_recognition", 0.70))
 
                 valid_faces = []
                 boxes = []
@@ -343,7 +345,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     if not should_dispatch:
                         continue
                     x1, y1, x2, y2 = [int(v) for v in f.bbox]
-                    pad = int(max(x2 - x1, y2 - y1) * 0.2)
+                    pad = int(max(x2 - x1, y2 - y1) * 0.45)
                     cx1, cy1 = max(0, x1 - pad), max(0, y1 - pad)
                     cx2, cy2 = min(w_img, x2 + pad), min(h_img, y2 + pad)
                     crop = frame[cy1:cy2, cx1:cx2]
@@ -353,6 +355,16 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     sharp = compute_sharpness_norm(crop)
                     frontal = compute_frontal_score(f)
                     q_score = compute_quality(conf, face_px, sharp, frontal)
+
+                    min_quality = max(0.70, min(0.99, float(settings_cache.get("min_snapshot_quality", 0.70))))
+                    if q_score < min_quality:
+                        tel["dropped_filter"] += 1
+                        tracker.reset_dispatch_cooldown(track_id)
+                        print(
+                            f"[DETECT][Cam #{cam_id}] Wajah diabaikan kualitas {(q_score * 100):.1f}% < {(min_quality * 100):.0f}%",
+                            flush=True,
+                        )
+                        continue
 
                     emb = f.normed_embedding.astype(np.float32).tolist()
                     best_id, sim = match_1_to_n(emb, cur_gallery)
@@ -551,7 +563,7 @@ def compare_faces(req: CompareRequest) -> Dict[str, Any]:
     f1 = max(faces1, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
     f2 = max(faces2, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
     sim = cosine_sim(f1.normed_embedding, f2.normed_embedding)
-    threshold = float(settings_cache.get("threshold_recognition", 0.40))
+    threshold = float(settings_cache.get("threshold_recognition", 0.70))
     match = sim >= threshold
     return {
         "similarity": round(sim, 4),
