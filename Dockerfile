@@ -12,7 +12,7 @@ RUN cargo test --release && cargo build --release
 FROM node:22-slim AS web-builder
 WORKDIR /app
 COPY package.json ./
-RUN npm install
+RUN npm install --no-audit --no-fund
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
 COPY public ./public
@@ -72,7 +72,7 @@ RUN curl -fsSL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/p
 
 # 5. Install Node.js production dependencies (Express, ws, Baileys WA, qrcode)
 COPY package.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # 6. Copy built artifacts, server code, Python service, Rust binary, and Supervisord config
 COPY --from=rust-builder /build/target/release/face_accel /app/bin/face_accel
