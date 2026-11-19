@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Activity, CheckCheck, ExternalLink, HardDrive, ShieldCheck, Trash2 } from 'lucide-react';
+import { Activity, CheckCheck, ExternalLink, HardDrive, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { getJakartaNowParts, summarizeEmbeddingDimensions } from '../lib/attendanceEngine';
 import type { AppDatabase, WorkerStatusResponse } from '../types';
 
 interface DashboardViewProps {
@@ -8,6 +9,7 @@ interface DashboardViewProps {
   onCleanupStorage: () => Promise<void>;
   onMarkAllRead: () => Promise<void>;
   onActivateProduction?: () => Promise<void>;
+  onMigrateEmbeddings?: () => Promise<void>;
   onOpenPanggil: (cameraId: number) => void;
   onNavigateTab: (tab: 'clusters' | 'reviews' | 'cameras' | 'whatsapp' | 'settings') => void;
 }
@@ -18,13 +20,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onCleanupStorage,
   onMarkAllRead,
   onActivateProduction,
+  onMigrateEmbeddings,
   onOpenPanggil,
   onNavigateTab,
 }) => {
   const [confirmProd, setConfirmProd] = useState(false);
   const [activatingProd, setActivatingProd] = useState(false);
+  const [migratingEmb, setMigratingEmb] = useState(false);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getJakartaNowParts().dateStr;
   const todayRecords = db.daily_attendance.filter((d) => d.tanggal === today);
 
   const countStatus = (st: string) => todayRecords.filter((d) => d.status === st).length;
@@ -63,6 +67,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const isProd = Boolean(db.settings.production_mode);
   const totalFacesLive = workerStatus?.cameras.reduce((acc, c) => acc + c.faces_detected_total, 0) ?? 0;
+  const expectedDims = workerStatus?.expected_embedding_dims ?? 1024;
+  const dimSummary = summarizeEmbeddingDimensions(
+    db.students.filter((s) => s.status !== 'LULUS'),
+    db.anonymous_clusters.filter((c) => c.status === 'PENDING' || c.status === 'READY')
+  );
+  const mismatchedStudentsCount =
+    (expectedDims !== 16 ? dimSummary.students.dim_16_demo : 0) +
+    (expectedDims !== 512 ? dimSummary.students.dim_512_insightface : 0) +
+    (expectedDims !== 1024 ? dimSummary.students.dim_1024_node_wasm : 0) +
+    dimSummary.students.other;
+  const mismatchedClustersCount =
+    (expectedDims !== 16 ? dimSummary.clusters.dim_16_demo : 0) +
+    (expectedDims !== 512 ? dimSummary.clusters.dim_512_insightface : 0) +
+    (expectedDims !== 1024 ? dimSummary.clusters.dim_1024_node_wasm : 0) +
+    dimSummary.clusters.other;
+  const hasDimMismatch = mismatchedStudentsCount > 0 || mismatchedClustersCount > 0;
 
   return (
     <div className="space-y-6">
@@ -118,6 +138,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
       )}
 
+      {/* Embedding dimension mismatch alert + non-destructive sync action */}
+      {hasDimMismatch && (
+        <section className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-xs text-blue-950">
+            <div className="font-semibold">
+              Terdeteksi Ketidakcocokan Dimensi Embedding (Engine Aktif: {expectedDims}-D)
+            </div>
+            <p className="text-blue-900 mt-0.5">
+              Ada <strong>{mismatchedStudentsCount} siswa</strong> dan <strong>{mismatchedClustersCount} cluster anonim</strong> dengan vektor dimensi berbeda (misal 16-D demo atau antar engine 512/1024-D). Sinkronkan ulang secara non-destruktif agar wajah bisa langsung cocok tanpa menghapus data.
+            </p>
+          </div>
+          {onMigrateEmbeddings && (
+            <button
+              type="button"
+              disabled={migratingEmb}
+              onClick={async () => {
+                setMigratingEmb(true);
+                try {
+                  await onMigrateEmbeddings();
+                } finally {
+                  setMigratingEmb(false);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-50 rounded-md whitespace-nowrap"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${migratingEmb ? 'animate-spin' : ''}`} />
+              {migratingEmb ? 'Menyinkronkan...' : `Sinkronkan ke ${expectedDims}-D`}
+            </button>
+          )}
+        </section>
+      )}
+
       {/* KPI Summary Grid */}
       <section aria-label="Ringkasan Kehadiran Hari Ini">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -147,7 +199,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {isProd ? 'MODE PRODUKSI' : 'MODE UJI / DEMO'}
             </span>
             <span className="text-slate-600">
-              Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong>
+              Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong> ({expectedDims}-D)
+            </span>
+            <span className="text-slate-600">
+              WIB: <strong className="text-slate-900">{workerStatus?.server_time_wib?.slice(11, 19) ?? '-'}</strong>
             </span>
             <span className="text-slate-600">
               Model AI:{' '}
@@ -167,33 +222,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
                   <th className="py-2 pr-3 font-medium">Kamera RTSP</th>
-                  <th className="py-2 px-3 font-medium">Koneksi Stream</th>
-                  <th className="py-2 px-3 font-medium text-right">Frame Didekode</th>
-                  <th className="py-2 px-3 font-medium text-right">Wajah Terdeteksi</th>
+                  <th className="py-2 px-3 font-medium">Stream</th>
+                  <th className="py-2 px-3 font-medium text-right">FPS</th>
+                  <th className="py-2 px-3 font-medium text-right">Frame</th>
+                  <th className="py-2 px-3 font-medium text-right">Lolos / Ditolak</th>
+                  <th className="py-2 px-3 font-medium text-right">Watchdog</th>
                   <th className="py-2 px-3 font-medium">Frame Terakhir</th>
-                  <th className="py-2 pl-3 font-medium">Wajah Terakhir</th>
+                  <th className="py-2 pl-3 font-medium">Deteksi Terakhir</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {workerStatus.cameras.map((wc) => (
-                  <tr key={wc.camera_id}>
-                    <td className="py-2 pr-3 font-medium text-slate-900">
-                      {wc.nama_kamera}
-                      {wc.last_error && (
-                        <div className="text-[11px] font-normal text-red-600 truncate max-w-xs">{wc.last_error}</div>
-                      )}
-                    </td>
-                    <td className="py-2 px-3">
-                      <span className={`font-semibold ${wc.connected ? 'text-emerald-700' : 'text-amber-700'}`}>
-                        {wc.connected ? 'TERHUBUNG LIVE' : 'MENYAMBUNG / OFFLINE'}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-right font-mono tabular-nums">{wc.frames_decoded}</td>
-                    <td className="py-2 px-3 text-right font-mono tabular-nums font-semibold">{wc.faces_detected_total}</td>
-                    <td className="py-2 px-3 font-mono text-slate-500">{wc.last_frame_at ? wc.last_frame_at.slice(11, 19) : '-'}</td>
-                    <td className="py-2 pl-3 font-mono text-slate-500">{wc.last_face_at ? wc.last_face_at.slice(11, 19) : '-'}</td>
-                  </tr>
-                ))}
+                {workerStatus.cameras.map((wc) => {
+                  const lastDetect = wc.last_detect_at ?? wc.last_face_at;
+                  return (
+                    <tr key={wc.camera_id}>
+                      <td className="py-2 pr-3 font-medium text-slate-900">
+                        {wc.nama_kamera}
+                        {wc.last_error && (
+                          <div className="text-[11px] font-normal text-red-600 truncate max-w-xs">{wc.last_error}</div>
+                        )}
+                      </td>
+                      <td className="py-2 px-3">
+                        <span className={`font-semibold ${wc.connected ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {wc.connected ? 'LIVE' : wc.aktif ? 'RETRY / OFFLINE' : 'NONAKTIF'}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">{wc.fps.toFixed(1)}</td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">{wc.frames_decoded}</td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">
+                        <strong className="text-slate-900">{wc.faces_detected_total}</strong>
+                        <span className="text-slate-400"> / {wc.dropped_filter}</span>
+                      </td>
+                      <td className="py-2 px-3 text-right font-mono tabular-nums">{wc.watchdog_restarts}x</td>
+                      <td className="py-2 px-3 font-mono text-slate-500">
+                        {wc.last_frame_at ? wc.last_frame_at.slice(11, 19) : '-'}
+                      </td>
+                      <td className="py-2 pl-3 font-mono text-slate-500">
+                        {lastDetect ? lastDetect.slice(11, 19) : '-'}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -7,8 +7,15 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+WIB_TZ = timezone(timedelta(hours=7))
+
+
+def now_wib_str() -> str:
+    return datetime.now(WIB_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 import cv2
 import httpx
@@ -184,15 +191,28 @@ def sync_gallery_and_settings() -> None:
         pass
 
 
-def send_heartbeat(camera_id: int, online: bool, error: Optional[str] = None) -> None:
+def send_heartbeat(
+    camera_id: int,
+    online: bool,
+    error: Optional[str] = None,
+    telemetry: Optional[Dict[str, Any]] = None,
+) -> None:
+    payload: Dict[str, Any] = {"online": online, "error": error}
+    if telemetry:
+        payload.update(telemetry)
     try:
         with httpx.Client(timeout=3.0) as client:
-            client.post(
+            resp = client.post(
                 f"{WEB_BACKEND_URL}/api/internal/cameras/{camera_id}/heartbeat",
-                json={"online": online, "error": error},
+                json=payload,
             )
-    except Exception:
-        pass
+            if resp.status_code >= 400:
+                print(
+                    f"[HEARTBEAT][Cam #{camera_id}] HTTP {resp.status_code}: {resp.text[:160]}",
+                    flush=True,
+                )
+    except Exception as exc:
+        print(f"[HEARTBEAT][Cam #{camera_id}] Gagal kirim heartbeat: {exc}", flush=True)
 
 
 def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None:
@@ -202,36 +222,72 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
     frame_interval = 1.0 / float(target_fps)
     tracker = IoUTracker(iou_threshold=0.35, ttl_seconds=4.0, dispatch_cooldown_sec=12.0)
 
+    tel: Dict[str, Any] = {
+        "frames_decoded": 0,
+        "raw_faces_seen": 0,
+        "dropped_filter": 0,
+        "faces_detected_total": 0,
+        "matched_dispatched": 0,
+        "anonymous_dispatched": 0,
+        "watchdog_restarts": 0,
+        "last_frame_at": None,
+        "last_face_at": None,
+        "last_detect_at": None,
+        "fps": 0.0,
+    }
+    recent_frame_ts: List[float] = []
+
     while not stop_event.is_set():
-        cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        if not cap.isOpened():
-            send_heartbeat(cam_id, False, "Gagal membuka stream RTSP (retry 10 detik)")
-            stop_event.wait(10.0)
-            continue
-
-        send_heartbeat(cam_id, True, None)
-        last_hb = time.time()
-        last_proc = 0.0
-        fail_reads = 0
-        frame_counter = 0
-
+        cap = None
         try:
+            cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if not cap.isOpened():
+                err_msg = "Gagal membuka stream RTSP (retry 10 detik)"
+                print(f"[RTSP][Cam #{cam_id}] {err_msg}", flush=True)
+                send_heartbeat(cam_id, False, err_msg, tel)
+                stop_event.wait(10.0)
+                continue
+
+            print(f"[RTSP][Cam #{cam_id}] Stream RTSP terhubung (target_fps={target_fps})", flush=True)
+            send_heartbeat(cam_id, True, None, tel)
+            last_hb = time.time()
+            last_good_frame_ts = time.time()
+            last_proc = 0.0
+            fail_reads = 0
+            frame_counter = 0
+
             while not stop_event.is_set():
                 ret, frame = cap.read()
+                now = time.time()
                 if not ret or frame is None:
                     fail_reads += 1
-                    if fail_reads >= 15:
-                        send_heartbeat(cam_id, False, "Koneksi RTSP terputus, menghubungkan ulang...")
+                    if fail_reads >= 15 or (now - last_good_frame_ts > 45.0):
+                        tel["watchdog_restarts"] += 1
+                        tel["fps"] = 0.0
+                        err_msg = (
+                            f"Watchdog RTSP restart #{tel['watchdog_restarts']}: "
+                            f"fail_reads={fail_reads}, idle={int(now - last_good_frame_ts)}s"
+                        )
+                        print(f"[RTSP][Cam #{cam_id}] {err_msg}", flush=True)
+                        send_heartbeat(cam_id, False, err_msg, tel)
                         break
                     time.sleep(0.1)
                     continue
+
                 fail_reads = 0
                 frame_counter += 1
+                last_good_frame_ts = now
+                tel["frames_decoded"] += 1
+                tel["last_frame_at"] = now_wib_str()
 
-                now = time.time()
-                if now - last_hb >= 30.0:
-                    send_heartbeat(cam_id, True, None)
+                recent_frame_ts.append(now)
+                while recent_frame_ts and (now - recent_frame_ts[0]) > 10.0:
+                    recent_frame_ts.pop(0)
+                tel["fps"] = round(len(recent_frame_ts) / 10.0, 1)
+
+                if now - last_hb >= 15.0:
+                    send_heartbeat(cam_id, True, None, tel)
                     last_hb = now
 
                 if frame_counter % PROCESS_EVERY_N_FRAMES != 0:
@@ -244,24 +300,39 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                 if not faces:
                     continue
 
-                min_conf = float(settings_cache.get("threshold_confidence", 0.80))
-                min_size = int(settings_cache.get("min_face_size", 60))
+                min_conf = min(float(settings_cache.get("threshold_confidence", 0.80)), 0.50)
+                min_size = min(int(settings_cache.get("min_face_size", 60)), 24)
                 rec_thresh = float(settings_cache.get("threshold_recognition", 0.40))
 
                 valid_faces = []
                 boxes = []
+                dropped_now = 0
                 for f in faces:
+                    tel["raw_faces_seen"] += 1
                     conf = float(getattr(f, "det_score", 0.0))
                     x1, y1, x2, y2 = [int(v) for v in f.bbox]
                     w = max(0, x2 - x1)
                     h = max(0, y2 - y1)
                     if conf < min_conf or min(w, h) < min_size:
+                        tel["dropped_filter"] += 1
+                        dropped_now += 1
                         continue
                     valid_faces.append(f)
                     boxes.append((float(x1), float(y1), float(x2), float(y2)))
 
+                print(
+                    f"[DETECT][Cam #{cam_id}] raw={len(faces)} lolos={len(valid_faces)} ditolak_filter={dropped_now} "
+                    f"(min_conf={min_conf}, min_px={min_size})",
+                    flush=True,
+                )
+
                 if not boxes:
                     continue
+
+                detect_wib = now_wib_str()
+                tel["last_face_at"] = detect_wib
+                tel["last_detect_at"] = detect_wib
+                tel["faces_detected_total"] += len(valid_faces)
 
                 tracked = tracker.update(boxes, now)
                 with gallery_lock:
@@ -287,6 +358,20 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     best_id, sim = match_1_to_n(emb, cur_gallery)
                     recognized_id = best_id if (best_id is not None and sim >= rec_thresh) else None
 
+                    if recognized_id is not None:
+                        tel["matched_dispatched"] += 1
+                        print(
+                            f"[MATCH][Cam #{cam_id}] Siswa #{recognized_id} sim={sim:.3f} q={q_score:.3f} "
+                            f"conf={conf:.2f} px={face_px}",
+                            flush=True,
+                        )
+                    else:
+                        tel["anonymous_dispatched"] += 1
+                        print(
+                            f"[MATCH][Cam #{cam_id}] Anonim dims={len(emb)} best_sim={sim:.3f} thresh={rec_thresh} q={q_score:.3f}",
+                            flush=True,
+                        )
+
                     snap_name = f"cam{cam_id}_t{track_id}_{int(now)}.jpg"
                     snap_path = SNAPSHOT_DIR / snap_name
                     if crop.size > 0:
@@ -294,7 +379,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
                     try:
                         with httpx.Client(timeout=4.0) as client:
-                            client.post(
+                            ev_resp = client.post(
                                 f"{WEB_BACKEND_URL}/api/internal/face-event",
                                 json={
                                     "camera_id": cam_id,
@@ -306,10 +391,20 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                                     "snapshot_rel_path": f"/data/snapshots/{snap_name}",
                                 },
                             )
-                    except Exception:
-                        pass
+                            if ev_resp.status_code >= 400:
+                                print(
+                                    f"[EVENT][Cam #{cam_id}] Backend error HTTP {ev_resp.status_code}: {ev_resp.text[:160]}",
+                                    flush=True,
+                                )
+                    except Exception as exc:
+                        print(f"[EVENT][Cam #{cam_id}] Gagal POST /api/internal/face-event: {exc}", flush=True)
+        except Exception as exc:
+            err_msg = f"Exception worker RTSP: {str(exc)[:120]}"
+            print(f"[RTSP][Cam #{cam_id}] {err_msg}", flush=True)
+            send_heartbeat(cam_id, False, err_msg, tel)
         finally:
-            cap.release()
+            if cap is not None:
+                cap.release()
         stop_event.wait(5.0)
 
 
@@ -320,7 +415,8 @@ def refresh_camera_workers() -> int:
             if resp.status_code != 200:
                 return 0
             cams = resp.json().get("cameras", [])
-    except Exception:
+    except Exception as exc:
+        print(f"[RTSP] Gagal fetch /api/internal/cameras: {exc}", flush=True)
         return 0
 
     active_ids = set()
@@ -349,8 +445,11 @@ def background_sync_loop(stop_ev: threading.Event) -> None:
     # Tunggu backend web siap saat container baru boot
     time.sleep(2.5)
     while not stop_ev.is_set():
-        sync_gallery_and_settings()
-        refresh_camera_workers()
+        try:
+            sync_gallery_and_settings()
+            refresh_camera_workers()
+        except Exception as exc:
+            print(f"[SYNC] Error di background_sync_loop (auto-retry 25s): {exc}", flush=True)
         stop_ev.wait(25.0)
 
 

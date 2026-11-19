@@ -10,7 +10,12 @@ import pino from 'pino';
 import QRCode from 'qrcode';
 import { WA_AUTH_DIR, loadDb, saveDb } from './store.ts';
 import type { WaAccount } from '../types';
-import { checkWaAccountQuota, formatWaMessage } from '../lib/attendanceEngine.ts';
+import {
+  applyWaQuotaResetIfDue,
+  checkWaAccountQuota,
+  formatWaMessage,
+  getJakartaNowParts,
+} from '../lib/attendanceEngine.ts';
 
 interface PairingState {
   qrDataUrl: string | null;
@@ -21,7 +26,12 @@ interface PairingState {
 
 const activeSockets = new Map<number, WASocket>();
 const pairingStates = new Map<number, PairingState>();
+const reconnectTimers = new Map<number, NodeJS.Timeout>();
 const logger = pino({ level: 'silent' });
+
+export function getLiveBaileysSocketCount(): number {
+  return activeSockets.size;
+}
 
 export function getPairingState(accountId: number): PairingState {
   return (
@@ -38,6 +48,11 @@ export async function startBaileysPairing(
   accountId: number,
   onQrUpdate?: (payload: Record<string, unknown>) => void
 ): Promise<PairingState> {
+  const pendingTimer = reconnectTimers.get(accountId);
+  if (pendingTimer) {
+    clearTimeout(pendingTimer);
+    reconnectTimers.delete(accountId);
+  }
   const existingSock = activeSockets.get(accountId);
   if (existingSock) {
     try {
@@ -125,6 +140,22 @@ export async function startBaileysPairing(
             error: 'Sesi WhatsApp logout, silakan scan ulang QR.',
             updatedAt: Date.now(),
           });
+          console.warn(`[WA][Acc #${accountId}] Sesi Baileys loggedOut; perlu scan ulang QR.`);
+        } else {
+          pairingStates.set(accountId, {
+            qrDataUrl: null,
+            status: 'CONNECTING',
+            error: 'Koneksi WA terputus sementara, menyambung ulang...',
+            updatedAt: Date.now(),
+          });
+          console.warn(`[WA][Acc #${accountId}] Koneksi Baileys putus (code=${statusCode ?? '-'}), auto-reconnect 8 dtk...`);
+          const timerId = setTimeout(() => {
+            reconnectTimers.delete(accountId);
+            startBaileysPairing(accountId, onQrUpdate).catch((err) => {
+              console.error(`[WA][Acc #${accountId}] Gagal reconnect Baileys:`, err);
+            });
+          }, 8000);
+          reconnectTimers.set(accountId, timerId);
         }
       }
     });
@@ -157,7 +188,8 @@ export async function dispatchWaMessage(
   apiKey: string,
   phoneNumberId: string,
   phone: string,
-  text: string
+  text: string,
+  isProductionMode = false
 ): Promise<{ sent: boolean; simulated: boolean; error?: string }> {
   const cleanPhone = phone.replace(/[^0-9]/g, '');
   if (!cleanPhone) {
@@ -222,7 +254,15 @@ export async function dispatchWaMessage(
     }
   }
 
-  // Fallback aman jika nomor belum scan QR nyata / lingkungan offline preview
+  if (isProductionMode) {
+    return {
+      sent: false,
+      simulated: false,
+      error: 'Gateway WA belum tersambung (scan QR Baileys atau isi API key di menu WhatsApp Gateway).',
+    };
+  }
+
+  // Fallback aman hanya untuk mode demo / preview sebelum produksi
   return { sent: true, simulated: true };
 }
 
@@ -237,6 +277,13 @@ export function startWaQueueWorker(onBroadcast?: (payload: Record<string, unknow
     timer = setTimeout(async () => {
       try {
         const db = loadDb();
+        const nowWib = getJakartaNowParts().dateTimeStr;
+        let resetAny = false;
+        for (const acc of db.wa_accounts) {
+          if (applyWaQuotaResetIfDue(acc, nowWib)) {
+            resetAny = true;
+          }
+        }
         const pending = db.wa_queue.find((q) => q.status === 'PENDING');
         if (pending) {
           const activeTpls = db.wa_templates.filter((t) => t.is_active);
@@ -245,13 +292,15 @@ export function startWaQueueWorker(onBroadcast?: (payload: Record<string, unknow
             ? formatWaMessage(tpl.template_text, pending.payload)
             : `Info Absensi ${pending.payload.nama}: ${pending.payload.status}`;
 
-          const eligibleAccount = db.wa_accounts.find((a) =>
+          const quotaEligible = db.wa_accounts.filter((a) =>
             checkWaAccountQuota({
               status: a.status,
               daily_count: a.daily_count,
               hourly_count: a.hourly_count,
             })
           );
+          const eligibleAccount =
+            quotaEligible.find((a) => activeSockets.has(a.id)) ?? quotaEligible[0];
 
           const result = await dispatchWaMessage(
             eligibleAccount,
@@ -259,29 +308,38 @@ export function startWaQueueWorker(onBroadcast?: (payload: Record<string, unknow
             db.settings.wa_api_key,
             db.settings.wa_phone_number_id,
             pending.phone,
-            msg
+            msg,
+            Boolean(db.settings.production_mode)
           );
 
           if (result.sent) {
             pending.status = 'SENT';
-            pending.sent_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+            pending.sent_at = nowWib;
             pending.error_msg = null;
             if (eligibleAccount) {
               eligibleAccount.daily_count += 1;
               eligibleAccount.hourly_count += 1;
             }
+            console.log(
+              `[WA] Antrean #${pending.id} (${pending.phone}) SENT (sim=${result.simulated}, timeWIB=${nowWib})`
+            );
           } else {
             pending.retry_count += 1;
             pending.error_msg = result.error ?? 'Gagal mengirim';
             if (pending.retry_count >= 3) {
               pending.status = 'FAILED';
             }
+            console.warn(
+              `[WA] Antrean #${pending.id} gagal (retry=${pending.retry_count}): ${pending.error_msg}`
+            );
           }
           saveDb(db);
           onBroadcast?.({ event: 'wa_queue_updated', queue_id: pending.id, status: pending.status });
+        } else if (resetAny) {
+          saveDb(db);
         }
-      } catch {
-        // ignore transient worker error
+      } catch (err) {
+        console.error('[WA] Error di worker antrean WA:', err instanceof Error ? err.message : err);
       }
       scheduleNext();
     }, delayMs);

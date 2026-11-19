@@ -380,6 +380,11 @@ test('validateAndNormalizeScheduleTimes and stripDemoRecordsForProduction enforc
       { rtsp_url: 'rtsp://admin:smk2026@192.168.10.21:554/Streaming/Channels/101' },
       { rtsp_url: 'rtsp://admin:pass@103.166.36.59/cam/realmonitor?channel=1&subtype=0' },
     ],
+    wa_accounts: [
+      { phone_number: '6281122334455' },
+      { phone_number: '6281998877665' },
+      { phone_number: '6285211223344' },
+    ],
     daily_attendance: [{ id: 1 }],
     attendance_logs: [{ id: 1 }],
     anonymous_clusters: [{ id: 101 }],
@@ -397,8 +402,57 @@ test('validateAndNormalizeScheduleTimes and stripDemoRecordsForProduction enforc
   assert.equal(cleaned.students[0].nisn, '9999999999');
   assert.equal(cleaned.cameras.length, 1);
   assert.ok(cleaned.cameras[0].rtsp_url.includes('103.166.36.59'));
+  assert.equal(cleaned.wa_accounts?.length, 1);
+  assert.equal(cleaned.wa_accounts?.[0].phone_number, '6285211223344');
   assert.equal(cleaned.anonymous_clusters.length, 0);
 });
+
+test('getJakartaNowParts converts UTC midnight/early morning to WIB date/time and summarizeEmbeddingDimensions tallies vectors', async () => {
+  const { getJakartaNowParts, summarizeEmbeddingDimensions } = await import('./attendanceEngine');
+  // 2026-11-18T23:30:00Z = 2026-11-19 06:30:00 WIB (Thursday, dayIso=4)
+  const sample = new Date('2026-11-18T23:30:00Z');
+  const wib = getJakartaNowParts(sample, 'Asia/Jakarta');
+  assert.equal(wib.dateStr, '2026-11-19');
+  assert.equal(wib.timeStr, '06:30:00');
+  assert.equal(wib.dayIso, 4);
+  assert.equal(wib.dateTimeStr, '2026-11-19 06:30:00');
+
+  const summary = summarizeEmbeddingDimensions(
+    [
+      { embedding: new Array(16).fill(0.1) },
+      { embedding: new Array(512).fill(0.1) },
+      { embedding: new Array(1024).fill(0.1) },
+      { embedding: null },
+    ],
+    [{ centroid: new Array(1024).fill(0.2) }]
+  );
+  assert.deepEqual(summary.students, {
+    dim_16_demo: 1,
+    dim_512_insightface: 1,
+    dim_1024_node_wasm: 1,
+    empty: 1,
+    other: 0,
+  });
+  assert.equal(summary.clusters.dim_1024_node_wasm, 1);
+});
+
+test('applyWaQuotaResetIfDue resets hourly_count per WIB hour and daily_count per WIB day', async () => {
+  const { applyWaQuotaResetIfDue } = await import('./attendanceEngine');
+  const acc = { daily_count: 19, hourly_count: 10, last_reset_at: '2026-11-19 07:45:00' };
+  // Same hour -> no reset
+  assert.equal(applyWaQuotaResetIfDue(acc, '2026-11-19 07:59:10'), false);
+  assert.equal(acc.hourly_count, 10);
+  // Next hour same day -> reset hourly_count only
+  assert.equal(applyWaQuotaResetIfDue(acc, '2026-11-19 08:01:00'), true);
+  assert.equal(acc.hourly_count, 0);
+  assert.equal(acc.daily_count, 19);
+  // Next WIB day -> reset both daily_count & hourly_count
+  acc.hourly_count = 5;
+  assert.equal(applyWaQuotaResetIfDue(acc, '2026-11-20 06:00:00'), true);
+  assert.equal(acc.hourly_count, 0);
+  assert.equal(acc.daily_count, 0);
+});
+
 
 
 

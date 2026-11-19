@@ -164,49 +164,94 @@ export default function App() {
     }
   }, [authUser, activeTab]);
 
-  // Poll live worker status & subscribe to live WebSocket face detection events when logged in
+  // Poll worker status & bootstrap every 5s + auto-reconnecting WebSocket for real-time updates
   useEffect(() => {
     if (!authUser || routeView.mode !== 'home') return;
 
-    fetchWorkerStatus();
+    let disposed = false;
+    let ws: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
+    let reconnectAttempt = 0;
+    let refreshInFlight = false;
+
+    const refreshAll = async (includeBootstrap: boolean) => {
+      if (disposed || refreshInFlight) return;
+      refreshInFlight = true;
+      try {
+        if (includeBootstrap) {
+          await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
+        } else {
+          await fetchWorkerStatus();
+        }
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+
+    refreshAll(false);
     const poll = window.setInterval(() => {
-      fetchWorkerStatus();
-    }, 4000);
+      if (document.visibilityState === 'visible') {
+        refreshAll(true);
+      }
+    }, 5000);
+
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refreshAll(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(String(ev.data));
-          const evName = msg.event ?? msg.type;
-          if (evName === 'face_detected' || evName === 'student_recognized') {
-            fetchBootstrap();
-            fetchWorkerStatus();
-            if (msg.nama || msg.studentName) {
-              notify(`Terdeteksi: ${msg.nama ?? msg.studentName} (${msg.kelas ?? 'CCTV'})`);
-            } else if (msg.message) {
-              notify(String(msg.message));
-            } else if (msg.cluster_id ?? msg.clusterId) {
-              notify(`Wajah anonim terdeteksi — Cluster #${msg.cluster_id ?? msg.clusterId}`);
+    const connectWs = () => {
+      if (disposed) return;
+      try {
+        ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        ws.onopen = () => {
+          reconnectAttempt = 0;
+        };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(String(ev.data));
+            const evName = msg.event ?? msg.type;
+            if (evName === 'face_detected' || evName === 'student_recognized') {
+              refreshAll(true);
+              if (msg.nama || msg.studentName) {
+                notify(`Terdeteksi: ${msg.nama ?? msg.studentName} (${msg.kelas ?? 'CCTV'})`);
+              } else if (msg.message) {
+                notify(String(msg.message));
+              } else if (msg.cluster_id ?? msg.clusterId) {
+                notify(`Wajah anonim terdeteksi — Cluster #${msg.cluster_id ?? msg.clusterId}`);
+              }
+            } else if (evName === 'attendance_updated' || evName === 'face_update_approved') {
+              refreshAll(true);
+            } else if (evName === 'camera_heartbeat') {
+              refreshAll(false);
+            } else if (evName === 'cluster_ready' || evName === 'anonymous_cluster_ready') {
+              refreshAll(true);
+              notify(`Cluster Anonim #${msg.cluster_id ?? msg.clusterId ?? ''} siap dinamai oleh Guru BK!`);
             }
-          } else if (evName === 'cluster_ready' || evName === 'anonymous_cluster_ready') {
-            fetchBootstrap();
-            notify(`Cluster Anonim #${msg.cluster_id ?? msg.clusterId ?? ''} siap dinamai oleh Guru BK!`);
-          } else if (evName === 'face_update_approved') {
-            fetchBootstrap();
+          } catch {
+            // ignore non-json message
           }
-        } catch {
-          // ignore non-json message
-        }
-      };
-    } catch {
-      // ignore ws init failure
-    }
+        };
+        ws.onclose = () => {
+          if (disposed) return;
+          reconnectAttempt += 1;
+          const delay = Math.min(10000, 3000 + reconnectAttempt * 1500);
+          reconnectTimer = window.setTimeout(connectWs, delay);
+        };
+      } catch {
+        // ignore ws init failure
+      }
+    };
+    connectWs();
 
     return () => {
+      disposed = true;
       window.clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
       if (ws) {
         try {
           ws.close();
@@ -422,6 +467,16 @@ export default function App() {
                 authUser.role === 'ADMIN'
                   ? async () => {
                       await handleActivateProduction({ cleanDemoData: true, production_mode: true });
+                    }
+                  : undefined
+              }
+              onMigrateEmbeddings={
+                authUser.role === 'ADMIN'
+                  ? async () => {
+                      const res = await apiPost('/api/system/migrate-embeddings', {});
+                      notify(
+                        `Migrasi non-destruktif selesai: ${res.migrated_students} siswa & ${res.migrated_clusters} cluster disinkronkan ke ${res.expected_dims}-D (${res.skipped_no_local_photo} tanpa foto lokal).`
+                      );
                     }
                   : undefined
               }

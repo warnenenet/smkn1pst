@@ -289,19 +289,30 @@ export interface BackupEntry {
 export interface WorkerCameraStat {
   camera_id: number;
   nama_kamera: string;
+  aktif: boolean;
   connected: boolean;
+  fps: number;
   frames_decoded: number;
+  raw_faces_seen: number;
+  dropped_filter: number;
   faces_detected_total: number;
+  matched_dispatched: number;
+  anonymous_dispatched: number;
+  watchdog_restarts: number;
   last_frame_at: string | null;
   last_face_at: string | null;
+  last_detect_at: string | null;
   last_error: string | null;
 }
 
 export interface WorkerStatusResponse {
   engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE';
   node_env: string;
+  timezone: string;
+  server_time_wib: string;
   production_mode: boolean;
   model_loaded: boolean;
+  expected_embedding_dims: number;
   active_workers: number;
   cameras: WorkerCameraStat[];
 }

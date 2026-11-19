@@ -30,10 +30,12 @@ import {
   refreshNodeRtspWorkers,
   resolveFfmpegBinary,
   startNodeRtspWorkers,
+  updatePythonCameraTelemetry,
 } from './src/server/nodeFaceWorker.ts';
 import { isPiperAvailable, prewarmStudentNamesTts, synthesizeIndonesianWav } from './src/server/ttsService.ts';
 import {
   dispatchWaMessage,
+  getLiveBaileysSocketCount,
   getPairingState,
   restoreSavedBaileysSessions,
   startBaileysPairing,
@@ -50,6 +52,7 @@ import {
   evaluateAttendanceRecognition,
   evaluateFaceMaintenanceProgress,
   formatWaMessage,
+  getJakartaNowParts,
   maskRtspCredentials,
   normalizeExcelBirthDate,
   normalizeStudentStatus,
@@ -58,6 +61,7 @@ import {
   parseKelasHierarchy,
   resolveScheduleForStudent,
   stripDemoRecordsForProduction,
+  summarizeEmbeddingDimensions,
   validateAndNormalizeScheduleTimes,
 } from './src/lib/attendanceEngine.ts';
 import {
@@ -70,6 +74,7 @@ import type { AcademicTransitionType, AppDatabase, AttendanceStatus, Student, Us
 
 const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001';
 const execFileAsync = promisify(execFile);
+const SERVER_START_MS = Date.now();
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -194,9 +199,9 @@ function applyContinuousFaceMaintenance(params: {
     });
 
     // Daftarkan kandidat ke review bulanan BK jika melewati ambang >= target atau peningkatan signifikan
-    const nowDate = new Date();
-    const curMonth = nowDate.getMonth() + 1;
-    const curYear = nowDate.getFullYear();
+    const jktNow = getJakartaNowParts();
+    const curMonth = jktNow.month;
+    const curYear = jktNow.year;
     const pendingRev = db.face_update_reviews.find(
       (r) => r.student_id === student.id && r.status === 'PENDING'
     );
@@ -295,14 +300,35 @@ function requireAuth(allowedRoles?: UserRole[]): express.RequestHandler {
 // ============================================================================
 
 app.get('/api/health', async (_req, res) => {
+  const db = loadDb();
+  const jkt = getJakartaNowParts();
   const faceHealth = await callFaceService<Record<string, unknown>>('/health');
-  const nodeWorker = getNodeWorkerStatus(loadDb());
+  const nodeWorker = getNodeWorkerStatus(db);
+  const embeddingDimensions = summarizeEmbeddingDimensions(db.students, db.anonymous_clusters);
   res.json({
     ok: true,
     sqlite: true,
+    timezone: 'Asia/Jakarta',
+    server_time_wib: jkt.dateTimeStr,
+    uptime_sec: Math.round((Date.now() - SERVER_START_MS) / 1000),
     piper_offline: isPiperAvailable(),
     face_service: faceHealth ?? { ok: false, mode: nodeWorker.engine },
     node_worker: nodeWorker,
+    embedding_dimensions: embeddingDimensions,
+    today_stats: {
+      date_wib: jkt.dateStr,
+      attendance_logs_today: db.attendance_logs.filter((l) => l.timestamp.startsWith(jkt.dateStr)).length,
+      daily_attendance_today: db.daily_attendance.filter((d) => d.tanggal === jkt.dateStr).length,
+      anonymous_clusters_pending: db.anonymous_clusters.filter((c) => c.status === 'PENDING').length,
+      anonymous_clusters_ready: db.anonymous_clusters.filter((c) => c.status === 'READY').length,
+    },
+    wa_gateway: {
+      auto_dispatch: Boolean(db.settings.wa_auto_dispatch_enabled),
+      provider: db.settings.wa_provider,
+      connected_accounts: db.wa_accounts.filter((a) => a.qr_connected && a.status !== 'BANNED').length,
+      live_baileys_sockets: getLiveBaileysSocketCount(),
+      pending_queue: db.wa_queue.filter((q) => q.status === 'PENDING').length,
+    },
   });
 });
 
@@ -886,7 +912,7 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
     emb = deterministicVecFromSeed(`${st.nisn}:${Date.now()}`);
   }
 
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
   st.embedding = emb;
   st.embedding_quality_score = qScore;
   st.embedding_updated_at = nowStr;
@@ -917,7 +943,7 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
   const entries: Array<{ filename: string; photoDataUrl?: string }> = req.body.entries ?? [];
   let success = 0;
   const failed: Array<{ file: string; error: string }> = [];
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
 
   for (const item of entries) {
     const stem = path.basename(item.filename, path.extname(item.filename)).split('_')[0].trim();
@@ -1012,7 +1038,7 @@ app.post('/api/attendance/override', requireAuth(['ADMIN', 'BK']), (req, res) =>
     res.status(400).json({ error: 'Parameter override tidak valid.' });
     return;
   }
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
   const cleanCatatan = catatan !== undefined && catatan !== null ? String(catatan).trim().slice(0, 240) : null;
   const existing = db.daily_attendance.find((d) => d.student_id === Number(student_id) && d.tanggal === tanggal);
   if (existing) {
@@ -1064,10 +1090,10 @@ app.post('/api/simulate-recognition', requireAuth(), (req, res) => {
     return;
   }
 
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const timeNow = simulatedTime ? String(simulatedTime) : now.toTimeString().slice(0, 8);
-  const dayIso = now.getDay() === 0 ? 7 : now.getDay();
+  const jkt = getJakartaNowParts();
+  const todayStr = jkt.dateStr;
+  const timeNow = simulatedTime ? String(simulatedTime) : jkt.timeStr;
+  const dayIso = jkt.dayIso;
   const nowStr = `${todayStr} ${timeNow}`;
 
   const qScore = computeQualityScore(
@@ -1187,6 +1213,17 @@ app.post('/api/simulate-recognition', requireAuth(), (req, res) => {
     triggerPythonCameraReload();
   }
 
+  if (!evalRes.deduplicated) {
+    broadcastWs({
+      event: 'attendance_updated',
+      camera_id: cam.id,
+      student_id: student.id,
+      tipe: evalRes.logType,
+      status: evalRes.logStatus,
+      timestamp: timeNow,
+    });
+  }
+
   // Anti-spam halaman panggil (60 detik per siswa per kamera, bypass jika forceCall=true)
   const cooldownKey = `${student.id}:${cam.id}`;
   const lastCall = panggilCooldown.get(cooldownKey) ?? 0;
@@ -1264,17 +1301,40 @@ function updateCameraHeartbeat(cameraId: number, online: boolean, error: string 
   const db = loadDb();
   const cam = db.cameras.find((c) => c.id === Number(cameraId));
   if (cam) {
+    const prevOnline = cam.status === 'ONLINE';
     cam.status = online ? 'ONLINE' : 'OFFLINE';
     cam.last_error = error ? String(error) : null;
     if (online) {
-      cam.last_online_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      cam.last_online_at = getJakartaNowParts().dateTimeStr;
     }
     saveDb(db);
+    if (prevOnline !== online) {
+      broadcastWs({ event: 'camera_heartbeat', camera_id: cam.id, online, error: cam.last_error });
+    }
   }
 }
 
 app.post('/api/internal/cameras/:id/heartbeat', (req, res) => {
-  updateCameraHeartbeat(Number(req.params.id), Boolean(req.body.online), req.body.error ? String(req.body.error) : null);
+  const camId = Number(req.params.id);
+  const body = req.body ?? {};
+  const online = Boolean(body.online);
+  const errStr = body.error ? String(body.error) : null;
+  updateCameraHeartbeat(camId, online, errStr);
+  updatePythonCameraTelemetry(camId, {
+    connected: online,
+    last_error: errStr,
+    ...(typeof body.fps === 'number' ? { fps: body.fps } : {}),
+    ...(typeof body.frames_decoded === 'number' ? { frames_decoded: body.frames_decoded } : {}),
+    ...(typeof body.raw_faces_seen === 'number' ? { raw_faces_seen: body.raw_faces_seen } : {}),
+    ...(typeof body.dropped_filter === 'number' ? { dropped_filter: body.dropped_filter } : {}),
+    ...(typeof body.faces_detected_total === 'number' ? { faces_detected_total: body.faces_detected_total } : {}),
+    ...(typeof body.matched_dispatched === 'number' ? { matched_dispatched: body.matched_dispatched } : {}),
+    ...(typeof body.anonymous_dispatched === 'number' ? { anonymous_dispatched: body.anonymous_dispatched } : {}),
+    ...(typeof body.watchdog_restarts === 'number' ? { watchdog_restarts: body.watchdog_restarts } : {}),
+    ...(body.last_frame_at !== undefined ? { last_frame_at: body.last_frame_at } : {}),
+    ...(body.last_face_at !== undefined ? { last_face_at: body.last_face_at } : {}),
+    ...(body.last_detect_at !== undefined ? { last_detect_at: body.last_detect_at } : {}),
+  });
   res.json({ ok: true });
 });
 
@@ -1294,18 +1354,25 @@ function processFaceEvent(payload: {
     return { statusCode: 404, body: { error: 'Kamera tidak ditemukan.' } };
   }
   const gate = db.gates.find((g) => g.id === cam.gate_id);
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const timeNow = now.toTimeString().slice(0, 8);
-  const nowStr = `${todayStr} ${timeNow}`;
-  const dayIso = now.getDay() === 0 ? 7 : now.getDay();
+  const jkt = getJakartaNowParts();
+  const todayStr = jkt.dateStr;
+  const timeNow = jkt.timeStr;
+  const nowStr = jkt.dateTimeStr;
+  const dayIso = jkt.dayIso;
 
   if (!student_id) {
     let bestCluster = null as (typeof db.anonymous_clusters)[number] | null;
     let bestClusterSim = -1;
+    let topClusterAnySim = 0;
+    let clusterDimMismatch = 0;
     for (const c of db.anonymous_clusters) {
       if ((c.status !== 'PENDING' && c.status !== 'READY') || !Array.isArray(embedding)) continue;
+      if (!Array.isArray(c.centroid) || c.centroid.length !== embedding.length) {
+        clusterDimMismatch += 1;
+        continue;
+      }
       const cSim = cosineSimilarity(embedding, c.centroid);
+      if (cSim > topClusterAnySim) topClusterAnySim = cSim;
       if (cSim >= db.settings.threshold_clustering && cSim > bestClusterSim) {
         bestClusterSim = cSim;
         bestCluster = c;
@@ -1356,9 +1423,16 @@ function processFaceEvent(payload: {
           is_read: false,
           created_at: nowStr,
         });
+        console.log(
+          `[CLUSTER][Cam #${cam.id}] PROMOTED READY cluster=#${bestCluster.id} hits=${bestCluster.hit_count} days=${bestCluster.distinct_days}`
+        );
         broadcastWs({ event: 'anonymous_cluster_ready', cluster_id: bestCluster.id, camera_id: cam.id });
+      } else {
+        console.log(
+          `[CLUSTER][Cam #${cam.id}] HIT cluster=#${bestCluster.id} hits=${bestCluster.hit_count}/${db.settings.cluster_ready_hits} sim=${bestClusterSim.toFixed(3)} status=${bestCluster.status}`
+        );
       }
-    } else if (Array.isArray(embedding)) {
+    } else if (Array.isArray(embedding) && embedding.length > 0) {
       bestCluster = {
         id: nextId(db.anonymous_clusters),
         centroid: embedding,
@@ -1374,6 +1448,11 @@ function processFaceEvent(payload: {
         last_camera_id: cam.id,
       };
       db.anonymous_clusters.unshift(bestCluster);
+      console.log(
+        `[CLUSTER][Cam #${cam.id}] NEW cluster=#${bestCluster.id} dims=${embedding.length} q=${Number(quality_score).toFixed(3)} bestExistingSim=${topClusterAnySim.toFixed(3)} thresh=${db.settings.threshold_clustering} dimSkippedClusters=${clusterDimMismatch}`
+      );
+    } else {
+      console.warn(`[CLUSTER][Cam #${cam.id}] Event anonim diabaikan: embedding kosong`);
     }
 
     saveDb(db);
@@ -1447,6 +1526,9 @@ function processFaceEvent(payload: {
       }
     }
   }
+  console.log(
+    `[ATTENDANCE][Cam #${cam.id}] student=#${student.id} (${student.nama}) type=${evalRes.logType} status=${evalRes.logStatus} dedup=${evalRes.deduplicated} timeWIB=${timeNow}`
+  );
 
   let embeddingUpdated = false;
   if (Array.isArray(embedding) && embedding.length > 0) {
@@ -1469,6 +1551,16 @@ function processFaceEvent(payload: {
   saveDb(db);
   if (embeddingUpdated) {
     triggerPythonCameraReload();
+  }
+  if (!evalRes.deduplicated) {
+    broadcastWs({
+      event: 'attendance_updated',
+      camera_id: cam.id,
+      student_id: student.id,
+      tipe: evalRes.logType,
+      status: evalRes.logStatus,
+      timestamp: timeNow,
+    });
   }
   const cooldownKey = `${student.id}:${cam.id}`;
   const lastCall = panggilCooldown.get(cooldownKey) ?? 0;
@@ -1512,7 +1604,7 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
     aktif: Boolean(aktif),
     status: (isDummy || !aktif ? 'OFFLINE' : 'ONLINE') as 'ONLINE' | 'OFFLINE',
     last_error: isDummy ? 'Dummy / URL RTSP belum dikonfigurasi' : null,
-    last_online_at: isDummy ? null : new Date().toISOString().replace('T', ' ').slice(0, 19),
+    last_online_at: isDummy ? null : getJakartaNowParts().dateTimeStr,
   };
   db.cameras.push(cam);
   saveDb(db);
@@ -1574,7 +1666,7 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
 
     const latencyMs = Date.now() - startedAt;
     const snapshotDataUrl = `data:image/jpeg;base64,${jpegBuf.toString('base64')}`;
-    const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+    const nowStr = getJakartaNowParts().dateTimeStr;
 
     if (cam) {
       cam.status = 'ONLINE';
@@ -1666,7 +1758,7 @@ app.post('/api/clusters/:id/assign', requireAuth(['ADMIN', 'BK']), (req, res) =>
   );
   student.embedding = combinedEmb;
   student.embedding_quality_score = Math.max(student.embedding_quality_score || 0, cluster.best_quality_score);
-  student.embedding_updated_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  student.embedding_updated_at = getJakartaNowParts().dateTimeStr;
   if (!student.foto_ref || cluster.best_quality_score >= student.embedding_quality_score) {
     student.foto_ref = cluster.best_snapshot_path;
   }
@@ -1700,7 +1792,7 @@ app.post('/api/clusters/:id/new-student', requireAuth(['ADMIN', 'BK']), (req, re
     status: 'AKTIF' as const,
     embedding: cluster.best_embedding,
     embedding_quality_score: cluster.best_quality_score,
-    embedding_updated_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    embedding_updated_at: getJakartaNowParts().dateTimeStr,
     foto_ref: cluster.best_snapshot_path,
     wa_ortu: String(wa_ortu),
     created_at: new Date().toISOString(),
@@ -1742,7 +1834,7 @@ app.post('/api/face-reviews/:id/approve', requireAuth(['ADMIN', 'BK']), (req, re
   }
   const hid = Number(req.body.history_id ?? rev.candidate_snapshots[0]?.history_id);
   const hist = db.face_update_history.find((h) => h.id === hid);
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
 
   if (hist) {
     for (const h of db.face_update_history) {
@@ -1775,7 +1867,7 @@ app.post('/api/face-reviews/:id/rollback', requireAuth(['ADMIN', 'BK']), (req, r
     return;
   }
   const canonical = db.face_update_history.find((h) => h.student_id === rev.student_id && h.is_canonical);
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
   if (canonical) {
     const st = db.students.find((s) => s.id === rev.student_id);
     if (st) {
@@ -1793,7 +1885,7 @@ app.post('/api/face-reviews/:id/rollback', requireAuth(['ADMIN', 'BK']), (req, r
 
 app.post('/api/face-reviews/approve-all', requireAuth(['ADMIN', 'BK']), (_req, res) => {
   const db = loadDb();
-  const nowStr = new Date().toISOString().replace('T', ' ').slice(0, 19);
+  const nowStr = getJakartaNowParts().dateTimeStr;
   for (const rev of db.face_update_reviews) {
     if (rev.status !== 'PENDING') continue;
     const hid = rev.candidate_snapshots[0]?.history_id;
@@ -2021,6 +2113,107 @@ app.post('/api/system/activate-production', requireAuth(['ADMIN']), (req, res) =
   });
 });
 
+function readLocalPhotoAsDataUrl(relOrData: string | null | undefined): string | null {
+  if (!relOrData) return null;
+  if (relOrData.startsWith('data:image/')) return relOrData;
+  let diskPath: string | null = null;
+  if (relOrData.startsWith('/data/snapshots/')) {
+    diskPath = path.join(DATA_DIR, relOrData.replace(/^\/data\//, ''));
+  } else if (relOrData.startsWith('/src/') || relOrData.startsWith('src/')) {
+    diskPath = path.resolve(process.cwd(), relOrData.replace(/^\/+/, ''));
+  }
+  if (!diskPath || !fs.existsSync(diskPath)) return null;
+  const ext = path.extname(diskPath).toLowerCase();
+  const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+  const buf = fs.readFileSync(diskPath);
+  return `data:${mime};base64,${buf.toString('base64')}`;
+}
+
+app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, res) => {
+  const db = loadDb();
+  const faceHealth = await callFaceService<{ ok?: boolean }>('/health');
+  const pythonOnline = Boolean(faceHealth?.ok);
+  const expectedDims = pythonOnline ? 512 : 1024;
+  const nowStr = getJakartaNowParts().dateTimeStr;
+
+  let migratedStudents = 0;
+  let migratedClusters = 0;
+  let skippedNoLocalPhoto = 0;
+  const errors: string[] = [];
+
+  const extractWithActiveEngine = async (dataUrl: string) => {
+    if (pythonOnline) {
+      return callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl: dataUrl });
+    }
+    return analyzePhotoWithNodeAi(dataUrl, db.settings);
+  };
+
+  for (const st of db.students) {
+    if (st.status === 'LULUS') continue;
+    const curDims = Array.isArray(st.embedding) ? st.embedding.length : 0;
+    if (curDims === expectedDims) continue;
+    const dataUrl = readLocalPhotoAsDataUrl(st.foto_ref);
+    if (!dataUrl) {
+      skippedNoLocalPhoto += 1;
+      continue;
+    }
+    try {
+      const extracted = await extractWithActiveEngine(dataUrl);
+      if (extracted?.embedding?.length === expectedDims) {
+        st.embedding = extracted.embedding;
+        st.embedding_quality_score = Math.max(st.embedding_quality_score || 0, extracted.quality_score);
+        st.embedding_updated_at = nowStr;
+        migratedStudents += 1;
+      } else {
+        errors.push(`Siswa #${st.id} (${st.nama}): wajah tidak terbaca pada foto_ref`);
+      }
+    } catch (err) {
+      errors.push(`Siswa #${st.id}: ${err instanceof Error ? err.message : 'gagal ekstrak'}`);
+    }
+  }
+
+  for (const cl of db.anonymous_clusters) {
+    if (cl.status !== 'PENDING' && cl.status !== 'READY') continue;
+    const curDims = Array.isArray(cl.centroid) ? cl.centroid.length : 0;
+    if (curDims === expectedDims) continue;
+    const dataUrl = readLocalPhotoAsDataUrl(cl.best_snapshot_path);
+    if (!dataUrl) {
+      skippedNoLocalPhoto += 1;
+      continue;
+    }
+    try {
+      const extracted = await extractWithActiveEngine(dataUrl);
+      if (extracted?.embedding?.length === expectedDims) {
+        cl.centroid = extracted.embedding;
+        cl.best_embedding = extracted.embedding;
+        cl.best_quality_score = Math.max(cl.best_quality_score || 0, extracted.quality_score);
+        migratedClusters += 1;
+      } else {
+        errors.push(`Cluster #${cl.id}: wajah tidak terbaca pada snapshot`);
+      }
+    } catch (err) {
+      errors.push(`Cluster #${cl.id}: ${err instanceof Error ? err.message : 'gagal ekstrak'}`);
+    }
+  }
+
+  if (migratedStudents > 0 || migratedClusters > 0) {
+    saveDb(db);
+    triggerPythonCameraReload();
+    refreshNodeRtspWorkers().catch(() => {});
+  }
+
+  res.json({
+    ok: true,
+    engine: pythonOnline ? 'INSIGHTFACE_PYTHON' : 'NODE_WASM_LIVE',
+    expected_dims: expectedDims,
+    migrated_students: migratedStudents,
+    migrated_clusters: migratedClusters,
+    skipped_no_local_photo: skippedNoLocalPhoto,
+    errors,
+    embedding_dimensions: summarizeEmbeddingDimensions(db.students, db.anonymous_clusters),
+  });
+});
+
 app.post('/api/storage/cleanup', requireAuth(['ADMIN']), (_req, res) => {
   const db = loadDb();
   const { freedMb } = runStorageCleanup(db);
@@ -2121,13 +2314,14 @@ app.post('/api/wa/test', requireAuth(['ADMIN', 'BK']), async (req, res) => {
     res.status(400).json({ error: 'Nomor tujuan dan pesan wajib diisi.' });
     return;
   }
+  const waJkt = getJakartaNowParts();
   const activeTpls = db.wa_templates.filter((t) => t.is_active);
   const tpl = activeTpls[Math.floor(Math.random() * activeTpls.length)];
   const formatted = tpl
     ? formatWaMessage(tpl.template_text, {
         nama: 'Raka Pratama (Tes)',
         kelas: 'XI RPL 1',
-        tanggal: new Date().toISOString().slice(0, 10),
+        tanggal: waJkt.dateStr,
         jam_masuk: '06:55:00',
         jam_keluar: '15:10:00',
         status: 'HADIR',
@@ -2141,25 +2335,33 @@ app.post('/api/wa/test', requireAuth(['ADMIN', 'BK']), async (req, res) => {
     db.settings.wa_api_key,
     db.settings.wa_phone_number_id,
     String(phone),
-    formatted
+    formatted,
+    Boolean(db.settings.production_mode)
   );
 
   db.wa_queue.unshift({
     id: nextId(db.wa_queue),
     student_id: null,
     phone: String(phone),
-    payload: { nama: 'Tes Manual', kelas: '-', tanggal: new Date().toISOString().slice(0, 10), jam_masuk: '-', jam_keluar: '-', status: 'TEST' },
+    payload: { nama: 'Tes Manual', kelas: '-', tanggal: waJkt.dateStr, jam_masuk: '-', jam_keluar: '-', status: 'TEST' },
     status: dispatch.sent ? 'SENT' : 'FAILED',
     retry_count: 0,
-    scheduled_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
-    sent_at: dispatch.sent ? new Date().toISOString().replace('T', ' ').slice(0, 19) : null,
+    scheduled_at: waJkt.dateTimeStr,
+    sent_at: dispatch.sent ? waJkt.dateTimeStr : null,
     error_msg: dispatch.error ?? null,
   });
   saveDb(db);
   res.json({
     ok: dispatch.sent,
     simulated: dispatch.simulated,
-    preview: `${formatted}${dispatch.simulated ? ' (Tercatat di log · scan QR Baileys atau isi API Key untuk kirim live)' : ' (Terkirim Live)'}`,
+    error: dispatch.error ?? null,
+    preview: `${formatted}${
+      dispatch.error
+        ? ` (${dispatch.error})`
+        : dispatch.simulated
+          ? ' (Simulasi preview · scan QR Baileys atau isi API Key untuk kirim live)'
+          : ' (Terkirim Live)'
+    }`,
   });
 });
 
@@ -2189,10 +2391,10 @@ app.post('/api/wa/queue/:id/retry', requireAuth(['ADMIN', 'BK']), (req, res) => 
 
 function runDailyScheduleAndWaTick(forceDispatchNow = false): { queued: number; markedAlpa: number; markedNoCheckout: number } {
   const db = loadDb();
-  const now = new Date();
-  const todayStr = now.toISOString().slice(0, 10);
-  const timeNow = now.toTimeString().slice(0, 8);
-  const dayIso = now.getDay() === 0 ? 7 : now.getDay();
+  const jkt = getJakartaNowParts();
+  const todayStr = jkt.dateStr;
+  const timeNow = jkt.timeStr;
+  const dayIso = jkt.dayIso;
 
   let queued = 0;
   let markedAlpa = 0;
@@ -2373,7 +2575,7 @@ app.post('/api/guest/lookup', (req, res) => {
     return;
   }
 
-  const targetMonth = String(month || new Date().toISOString().slice(0, 7));
+  const targetMonth = String(month || getJakartaNowParts().dateStr.slice(0, 7));
   const records = db.daily_attendance
     .filter((d) => d.student_id === student.id && d.tanggal.startsWith(targetMonth))
     .sort((a, b) => b.tanggal.localeCompare(a.tanggal));
@@ -2522,14 +2724,21 @@ async function start() {
   // Jalankan worker antrean WA, restore sesi Baileys tersimpan, scheduler harian + pembersihan storage otomatis
   restoreSavedBaileysSessions(broadcastWs);
   startWaQueueWorker(broadcastWs);
-  setInterval(() => {
+
+  const executeDailyTick = () => {
     try {
-      runDailyScheduleAndWaTick(false);
-    } catch {
-      // ignore scheduler error
+      const res = runDailyScheduleAndWaTick(false);
+      if (res.queued > 0 || res.markedAlpa > 0 || res.markedNoCheckout > 0) {
+        console.log(
+          `[Scheduler] Auto-tick WIB: alpa=${res.markedAlpa}, tidak_keluar=${res.markedNoCheckout}, wa_antre=${res.queued}`
+        );
+        broadcastWs({ event: 'attendance_updated', source: 'scheduler' });
+      }
+    } catch (err) {
+      console.error('[Scheduler] Error pada daily tick:', err instanceof Error ? err.message : err);
     }
-  }, 60_000);
-  setInterval(() => {
+  };
+  const executeMaintenanceTick = () => {
     try {
       const db = loadDb();
       runStorageCleanup(db);
@@ -2537,13 +2746,19 @@ async function start() {
         const latest = listBackups()[0];
         const ageMs = latest ? Date.now() - Date.parse(latest.created_at) : Infinity;
         if (ageMs >= 20 * 3600_000) {
-          runCompactBackup(db.settings.backup_retention_count ?? 2);
+          const bk = runCompactBackup(db.settings.backup_retention_count ?? 2);
+          console.log(`[Backup] Auto-backup harian tersimpan: ${bk.filename} (${bk.bytes} bytes)`);
         }
       }
-    } catch {
-      // ignore scheduled cleanup/backup error
+    } catch (err) {
+      console.error('[Maintenance] Error cleanup/auto-backup:', err instanceof Error ? err.message : err);
     }
-  }, 6 * 3600_000);
+  };
+
+  setTimeout(executeDailyTick, 5000);
+  setInterval(executeDailyTick, 60_000);
+  setTimeout(executeMaintenanceTick, 10_000);
+  setInterval(executeMaintenanceTick, 6 * 3600_000);
 
   const port = Number(process.env.PORT) || 3000;
   server.listen(port, '0.0.0.0', () => {

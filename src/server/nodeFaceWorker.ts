@@ -7,6 +7,7 @@ import {
   computeQualityScore,
   cosineSimilarity,
   extractJpegFramesFromChunk,
+  getJakartaNowParts,
   maskRtspCredentials,
 } from '../lib/attendanceEngine.ts';
 import type { AppDatabase, Camera, WorkerCameraStat } from '../types';
@@ -289,13 +290,20 @@ interface WorkerRuntime {
   child: ChildProcess | null;
   stat: WorkerCameraStat;
   timeoutFlag: '-stimeout' | '-rw_timeout';
+  frameTimestamps: number[];
 }
 
 const workers = new Map<number, WorkerRuntime>();
+const pythonCameraTelemetry = new Map<number, Partial<WorkerCameraStat>>();
 const dispatchCooldown = new Map<string, number>();
 let managerDeps: NodeWorkerDeps | null = null;
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let pythonActive = false;
+
+export function updatePythonCameraTelemetry(cameraId: number, patch: Partial<WorkerCameraStat>): void {
+  const prev = pythonCameraTelemetry.get(cameraId) ?? {};
+  pythonCameraTelemetry.set(cameraId, { ...prev, ...patch });
+}
 
 function stopSingleWorker(camId: number) {
   const w = workers.get(camId);
@@ -309,6 +317,7 @@ function stopSingleWorker(camId: number) {
     }
   }
   workers.delete(camId);
+  console.log(`[RTSP][Cam #${camId}] Worker dihentikan.`);
 }
 
 async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
@@ -316,170 +325,268 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
   let failStreak = 0;
 
   while (!w.stop) {
-    const cam = w.camera;
-    const url = String(cam.rtsp_url || '').trim();
-    if (!cam.aktif || !/^rtsps?:\/\//i.test(url)) {
-      break;
-    }
+    try {
+      const cam = w.camera;
+      const url = String(cam.rtsp_url || '').trim();
+      if (!cam.aktif || !/^rtsps?:\/\//i.test(url)) {
+        break;
+      }
 
-    let stderrTail = '';
-    let remainder: Uint8Array = new Uint8Array(0);
-    let latestFrame: Buffer | null = null;
-    let processingFrame = false;
+      console.log(
+        `[RTSP][Cam #${cam.id}] Memulai stream FFmpeg (fps=1, scale<=1280, timeoutFlag=${w.timeoutFlag}, url=${maskRtspCredentials(url)})`
+      );
 
-    const processPendingFrames = async () => {
-      if (processingFrame || w.stop) return;
-      processingFrame = true;
-      try {
-        while (latestFrame && !w.stop) {
-          const frameBuf = latestFrame;
-          latestFrame = null;
-          w.stat.frames_decoded += 1;
-          w.stat.last_frame_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      let stderrTail = '';
+      let remainder: Uint8Array = new Uint8Array(0);
+      let latestFrame: Buffer | null = null;
+      let processingFrame = false;
+      let lastFrameEpochMs = Date.now();
+      let lastSummaryLogMs = Date.now();
 
-          try {
-            const faces = await detectFacesInJpeg(frameBuf);
-            if (faces.length === 0) continue;
+      const processPendingFrames = async () => {
+        if (processingFrame || w.stop) return;
+        processingFrame = true;
+        try {
+          while (latestFrame && !w.stop) {
+            const frameBuf = latestFrame;
+            latestFrame = null;
+            const nowEpoch = Date.now();
+            const nowWib = getJakartaNowParts(new Date(nowEpoch)).dateTimeStr;
+            w.stat.frames_decoded += 1;
+            w.stat.last_frame_at = nowWib;
 
-            const db = deps.loadDb();
-            const effMinConf = Math.min(db.settings.threshold_confidence, 0.65);
-            const effMinSize = Math.min(db.settings.min_face_size, 40);
+            w.frameTimestamps.push(nowEpoch);
+            while (w.frameTimestamps.length > 0 && nowEpoch - w.frameTimestamps[0] > 10_000) {
+              w.frameTimestamps.shift();
+            }
+            w.stat.fps = Math.round((w.frameTimestamps.length / 10) * 10) / 10;
 
-            for (const f of faces) {
-              if (f.confidence < effMinConf || f.faceSizePx < effMinSize) {
-                continue;
-              }
-              w.stat.faces_detected_total += 1;
-              w.stat.last_face_at = new Date().toISOString().replace('T', ' ').slice(0, 19);
+            if (nowEpoch - lastSummaryLogMs >= 60_000) {
+              lastSummaryLogMs = nowEpoch;
+              console.log(
+                `[RTSP][Cam #${cam.id}] Heartbeat 60s: decoded=${w.stat.frames_decoded} fps=${w.stat.fps} rawFaces=${w.stat.raw_faces_seen} passed=${w.stat.faces_detected_total} dropped=${w.stat.dropped_filter}`
+              );
+            }
 
-              // Cocokkan 1:N dengan siswa ber-embedding sejenis
-              let bestStudentId: number | null = null;
-              let bestSim = 0;
-              for (const st of db.students) {
-                if (st.status === 'LULUS' || !Array.isArray(st.embedding) || st.embedding.length !== f.embedding.length) {
+            try {
+              const faces = await detectFacesInJpeg(frameBuf);
+              if (faces.length === 0) continue;
+
+              const db = deps.loadDb();
+              const effMinConf = Math.min(db.settings.threshold_confidence, 0.5);
+              const effMinSize = Math.min(db.settings.min_face_size, 24);
+              let passedCount = 0;
+              let droppedCount = 0;
+
+              for (const f of faces) {
+                w.stat.raw_faces_seen += 1;
+                if (f.confidence < effMinConf || f.faceSizePx < effMinSize) {
+                  w.stat.dropped_filter += 1;
+                  droppedCount += 1;
                   continue;
                 }
-                const sim = cosineSimilarity(f.embedding, st.embedding);
-                if (sim >= db.settings.threshold_recognition && sim > bestSim) {
-                  bestSim = sim;
-                  bestStudentId = st.id;
+                passedCount += 1;
+                w.stat.faces_detected_total += 1;
+                const detectWib = getJakartaNowParts().dateTimeStr;
+                w.stat.last_face_at = detectWib;
+                w.stat.last_detect_at = detectWib;
+
+                // Cocokkan 1:N dengan siswa ber-embedding sejenis
+                let bestStudentId: number | null = null;
+                let bestSim = 0;
+                let topAnySim = 0;
+                let dimMismatches = 0;
+                for (const st of db.students) {
+                  if (st.status === 'LULUS' || !Array.isArray(st.embedding) || st.embedding.length === 0) {
+                    continue;
+                  }
+                  if (st.embedding.length !== f.embedding.length) {
+                    dimMismatches += 1;
+                    continue;
+                  }
+                  const sim = cosineSimilarity(f.embedding, st.embedding);
+                  if (sim > topAnySim) topAnySim = sim;
+                  if (sim >= db.settings.threshold_recognition && sim > bestSim) {
+                    bestSim = sim;
+                    bestStudentId = st.id;
+                  }
                 }
-              }
 
-              const cooldownKey = `${cam.id}:${bestStudentId ?? 'anon'}`;
-              const lastSent = dispatchCooldown.get(cooldownKey) ?? 0;
-              const nowMs = Date.now();
-              if (nowMs - lastSent < 6000) {
-                continue;
-              }
-              dispatchCooldown.set(cooldownKey, nowMs);
+                const cooldownKey = `${cam.id}:${bestStudentId ?? 'anon'}`;
+                const lastSent = dispatchCooldown.get(cooldownKey) ?? 0;
+                const nowMs = Date.now();
+                if (nowMs - lastSent < 6000) {
+                  continue;
+                }
+                dispatchCooldown.set(cooldownKey, nowMs);
 
-              const snapName = `cam${cam.id}_node_${nowMs}.jpg`;
-              const snapFull = path.join(deps.snapshotsDir, snapName);
-              fs.mkdirSync(deps.snapshotsDir, { recursive: true });
-              fs.writeFileSync(snapFull, f.cropJpeg);
+                const snapName = `cam${cam.id}_node_${nowMs}.jpg`;
+                const snapFull = path.join(deps.snapshotsDir, snapName);
+                fs.mkdirSync(deps.snapshotsDir, { recursive: true });
+                fs.writeFileSync(snapFull, f.cropJpeg);
 
-              const qScore = computeQualityScore(
-                {
+                const qScore = computeQualityScore(
+                  {
+                    confidence: f.confidence,
+                    faceSizePx: f.faceSizePx,
+                    sharpnessNorm: f.sharpnessNorm,
+                    frontalScore: f.frontalScore,
+                  },
+                  db.settings
+                );
+
+                if (bestStudentId) {
+                  w.stat.matched_dispatched += 1;
+                  console.log(
+                    `[MATCH][Cam #${cam.id}] Siswa #${bestStudentId} sim=${bestSim.toFixed(3)} q=${qScore.toFixed(3)} conf=${f.confidence.toFixed(2)} px=${f.faceSizePx}`
+                  );
+                } else {
+                  w.stat.anonymous_dispatched += 1;
+                  console.log(
+                    `[MATCH][Cam #${cam.id}] Anonim dims=${f.embedding.length} bestSim=${topAnySim.toFixed(3)} thresh=${db.settings.threshold_recognition} dimMismatchStudents=${dimMismatches} q=${qScore.toFixed(3)}`
+                  );
+                }
+
+                deps.onFaceEvent({
+                  camera_id: cam.id,
+                  student_id: bestStudentId,
+                  similarity: Math.round(bestSim * 10000) / 10000,
                   confidence: f.confidence,
-                  faceSizePx: f.faceSizePx,
-                  sharpnessNorm: f.sharpnessNorm,
-                  frontalScore: f.frontalScore,
-                },
-                db.settings
+                  quality_score: qScore,
+                  embedding: f.embedding,
+                  snapshot_rel_path: `/data/snapshots/${snapName}`,
+                });
+              }
+
+              console.log(
+                `[DETECT][Cam #${cam.id}] raw=${faces.length} lolos=${passedCount} ditolak_filter=${droppedCount} (minConf=${effMinConf}, minPx=${effMinSize})`
               );
-
-              deps.onFaceEvent({
-                camera_id: cam.id,
-                student_id: bestStudentId,
-                similarity: Math.round(bestSim * 10000) / 10000,
-                confidence: f.confidence,
-                quality_score: qScore,
-                embedding: f.embedding,
-                snapshot_rel_path: `/data/snapshots/${snapName}`,
-              });
+            } catch (err) {
+              console.error(
+                `[DETECT][Cam #${cam.id}] Error analisis frame:`,
+                err instanceof Error ? err.message : err
+              );
             }
-          } catch {
-            // ignore transient frame decode/inference error
           }
+        } finally {
+          processingFrame = false;
         }
-      } finally {
-        processingFrame = false;
+      };
+
+      const exitResult = await new Promise<{ code: number | null; gotFrame: boolean }>((resolve) => {
+        let gotFrame = false;
+        let settled = false;
+        const finish = (code: number | null) => {
+          if (settled) return;
+          settled = true;
+          clearInterval(watchdogTimer);
+          w.child = null;
+          resolve({ code, gotFrame });
+        };
+
+        const args = [
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-rtsp_transport',
+          'tcp',
+          w.timeoutFlag,
+          '7000000',
+          '-i',
+          url,
+          '-vf',
+          "fps=1,scale='min(1280,iw)':-2",
+          '-q:v',
+          '4',
+          '-f',
+          'image2pipe',
+          '-vcodec',
+          'mjpeg',
+          'pipe:1',
+        ];
+        const child = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+        w.child = child;
+
+        const watchdogTimer = setInterval(() => {
+          if (w.stop || settled) return;
+          const idleMs = Date.now() - lastFrameEpochMs;
+          if (idleMs > 45_000) {
+            w.stat.watchdog_restarts += 1;
+            stderrTail = `Watchdog timeout: 0 frame selama ${Math.round(idleMs / 1000)} dtk`;
+            console.warn(`[RTSP][Cam #${cam.id}] ${stderrTail}, me-restart FFmpeg (#${w.stat.watchdog_restarts})...`);
+            try {
+              child.kill('SIGKILL');
+            } catch {
+              // ignore kill error
+            }
+            finish(137);
+          }
+        }, 5000);
+
+        child.stdout.on('data', (chunk: Buffer) => {
+          const res = extractJpegFramesFromChunk(remainder, chunk);
+          remainder = res.remainder;
+          if (res.frames.length > 0) {
+            lastFrameEpochMs = Date.now();
+            if (!gotFrame) {
+              gotFrame = true;
+              failStreak = 0;
+              w.stat.connected = true;
+              w.stat.last_error = null;
+              console.log(`[RTSP][Cam #${cam.id}] Terhubung LIVE (frame pertama diterima)`);
+              deps.onHeartbeat(cam.id, true, null);
+            }
+            latestFrame = Buffer.from(res.frames[res.frames.length - 1]);
+            processPendingFrames().catch((err) => {
+              console.error(`[DETECT][Cam #${cam.id}] Unhandled frame error:`, err);
+            });
+          }
+        });
+
+        child.stderr.on('data', (chunk: Buffer) => {
+          stderrTail = (stderrTail + chunk.toString('utf8')).slice(-600);
+        });
+
+        child.on('close', (code) => {
+          finish(code);
+        });
+
+        child.on('error', (err) => {
+          stderrTail = err.message;
+          finish(1);
+        });
+      });
+
+      if (w.stop) break;
+
+      if (/Option stimeout not found/i.test(stderrTail) && w.timeoutFlag === '-stimeout') {
+        w.timeoutFlag = '-rw_timeout';
+        console.log(`[RTSP][Cam #${cam.id}] Switch timeout flag ke -rw_timeout`);
+        continue;
       }
-    };
 
-    const exitResult = await new Promise<{ code: number | null; gotFrame: boolean }>((resolve) => {
-      let gotFrame = false;
-      const args = [
-        '-hide_banner',
-        '-loglevel',
-        'error',
-        '-rtsp_transport',
-        'tcp',
-        w.timeoutFlag,
-        '7000000',
-        '-i',
-        url,
-        '-vf',
-        "fps=1,scale='min(1280,iw)':-2",
-        '-q:v',
-        '4',
-        '-f',
-        'image2pipe',
-        '-vcodec',
-        'mjpeg',
-        'pipe:1',
-      ];
-      const child = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-      w.child = child;
+      w.stat.connected = false;
+      w.stat.fps = 0;
+      failStreak = exitResult.gotFrame ? 0 : failStreak + 1;
+      const maskedErr = maskRtspCredentials(
+        stderrTail.trim() || `Stream RTSP terputus (kode ${exitResult.code ?? '-'})`
+      ).slice(0, 140);
+      w.stat.last_error = maskedErr;
+      deps.onHeartbeat(cam.id, false, maskedErr);
 
-      child.stdout.on('data', (chunk: Buffer) => {
-        const res = extractJpegFramesFromChunk(remainder, chunk);
-        remainder = res.remainder;
-        if (res.frames.length > 0) {
-          if (!gotFrame) {
-            gotFrame = true;
-            failStreak = 0;
-            w.stat.connected = true;
-            w.stat.last_error = null;
-            deps.onHeartbeat(cam.id, true, null);
-          }
-          latestFrame = Buffer.from(res.frames[res.frames.length - 1]);
-          processPendingFrames().catch(() => {});
-        }
-      });
-
-      child.stderr.on('data', (chunk: Buffer) => {
-        stderrTail = (stderrTail + chunk.toString('utf8')).slice(-600);
-      });
-
-      child.on('close', (code) => {
-        w.child = null;
-        resolve({ code, gotFrame });
-      });
-
-      child.on('error', (err) => {
-        stderrTail = err.message;
-        w.child = null;
-        resolve({ code: 1, gotFrame });
-      });
-    });
-
-    if (w.stop) break;
-
-    if (/Option stimeout not found/i.test(stderrTail) && w.timeoutFlag === '-stimeout') {
-      w.timeoutFlag = '-rw_timeout';
-      continue;
+      const retryMs = failStreak === 0 ? 4000 : failStreak === 1 ? 10000 : 30000;
+      console.warn(
+        `[RTSP][Cam #${cam.id}] Terputus/gagal (kode=${exitResult.code ?? '-'}, retry=${retryMs}ms): ${maskedErr}`
+      );
+      await new Promise((r) => setTimeout(r, retryMs));
+    } catch (loopErr) {
+      const msg = loopErr instanceof Error ? loopErr.message : String(loopErr);
+      w.stat.connected = false;
+      w.stat.fps = 0;
+      w.stat.last_error = msg.slice(0, 140);
+      console.error(`[RTSP][Cam #${w.camera.id}] Exception fatal di worker loop (auto-retry 5s):`, msg);
+      await new Promise((r) => setTimeout(r, 5000));
     }
-
-    w.stat.connected = false;
-    failStreak = exitResult.gotFrame ? 0 : failStreak + 1;
-    const maskedErr = maskRtspCredentials(stderrTail.trim() || `Stream RTSP terputus (kode ${exitResult.code ?? '-'})`).slice(0, 140);
-    w.stat.last_error = maskedErr;
-    deps.onHeartbeat(cam.id, false, maskedErr);
-
-    const retryMs = failStreak === 0 ? 4000 : failStreak === 1 ? 10000 : 45000;
-    await new Promise((r) => setTimeout(r, retryMs));
   }
 }
 
@@ -492,6 +599,9 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
 
   pythonActive = await managerDeps.isPythonFaceServiceOnline();
   if (pythonActive) {
+    if (workers.size > 0) {
+      console.log('[RTSP] Python InsightFace aktif; mengalihkan worker kamera dari Node WASM ke Python.');
+    }
     for (const cid of Array.from(workers.keys())) stopSingleWorker(cid);
     return;
   }
@@ -513,6 +623,7 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
     } else {
       existing.camera = nextCam;
       existing.stat.nama_kamera = nextCam.nama_kamera;
+      existing.stat.aktif = Boolean(nextCam.aktif);
     }
   }
 
@@ -523,27 +634,45 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
         stop: false,
         child: null,
         timeoutFlag: '-stimeout',
+        frameTimestamps: [],
         stat: {
           camera_id: cam.id,
           nama_kamera: cam.nama_kamera,
+          aktif: Boolean(cam.aktif),
           connected: false,
+          fps: 0,
           frames_decoded: 0,
+          raw_faces_seen: 0,
+          dropped_filter: 0,
           faces_detected_total: 0,
+          matched_dispatched: 0,
+          anonymous_dispatched: 0,
+          watchdog_restarts: 0,
           last_frame_at: null,
           last_face_at: null,
+          last_detect_at: null,
           last_error: null,
         },
       };
       workers.set(cid, runtime);
-      runCameraLoop(runtime, managerDeps).catch(() => {});
+      runCameraLoop(runtime, managerDeps).catch((err) => {
+        console.error(`[RTSP][Cam #${cid}] Worker crash tak terduga:`, err);
+        workers.delete(cid);
+      });
     }
   }
 }
 
 export function startNodeRtspWorkers(deps: NodeWorkerDeps): void {
   managerDeps = deps;
-  // Pre-load WASM model in background so first camera frame analyzes immediately
-  initNodeFaceAi().catch(() => {});
+  console.log('[FaceWorker] Memulai inisialisasi model Node WASM (@vladmandic/human) dan worker RTSP...');
+  initNodeFaceAi()
+    .then(() => {
+      console.log('[FaceWorker] Model Human WASM siap (1024-dim embedding).');
+    })
+    .catch((err) => {
+      console.error('[FaceWorker] Gagal memuat model Human WASM:', err);
+    });
   refreshNodeRtspWorkers().catch(() => {});
   if (syncTimer) clearInterval(syncTimer);
   syncTimer = setInterval(() => {
@@ -554,19 +683,55 @@ export function startNodeRtspWorkers(deps: NodeWorkerDeps): void {
 export function getNodeWorkerStatus(db: AppDatabase): {
   engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE';
   node_env: string;
+  timezone: string;
+  server_time_wib: string;
   production_mode: boolean;
   model_loaded: boolean;
+  expected_embedding_dims: number;
   active_workers: number;
   cameras: WorkerCameraStat[];
 } {
-  const list = Array.from(workers.values()).map((w) => ({ ...w.stat }));
-  const engine = pythonActive ? 'INSIGHTFACE_PYTHON' : list.length > 0 || humanSingleton !== null ? 'NODE_WASM_LIVE' : 'IDLE';
+  const engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE' = pythonActive
+    ? 'INSIGHTFACE_PYTHON'
+    : workers.size > 0 || humanSingleton !== null
+      ? 'NODE_WASM_LIVE'
+      : 'IDLE';
+
+  const cameras: WorkerCameraStat[] = db.cameras.map((cam) => {
+    const nodeWorker = workers.get(cam.id);
+    if (nodeWorker) {
+      return { ...nodeWorker.stat };
+    }
+    const pyTel = pythonCameraTelemetry.get(cam.id);
+    return {
+      camera_id: cam.id,
+      nama_kamera: cam.nama_kamera,
+      aktif: Boolean(cam.aktif),
+      connected: Boolean(pyTel?.connected ?? (pythonActive && cam.status === 'ONLINE')),
+      fps: pyTel?.fps ?? 0,
+      frames_decoded: pyTel?.frames_decoded ?? 0,
+      raw_faces_seen: pyTel?.raw_faces_seen ?? 0,
+      dropped_filter: pyTel?.dropped_filter ?? 0,
+      faces_detected_total: pyTel?.faces_detected_total ?? 0,
+      matched_dispatched: pyTel?.matched_dispatched ?? 0,
+      anonymous_dispatched: pyTel?.anonymous_dispatched ?? 0,
+      watchdog_restarts: pyTel?.watchdog_restarts ?? 0,
+      last_frame_at: pyTel?.last_frame_at ?? null,
+      last_face_at: pyTel?.last_face_at ?? null,
+      last_detect_at: pyTel?.last_detect_at ?? pyTel?.last_face_at ?? null,
+      last_error: pyTel?.last_error ?? cam.last_error,
+    };
+  });
+
   return {
     engine,
     node_env: process.env.NODE_ENV || 'development',
+    timezone: 'Asia/Jakarta',
+    server_time_wib: getJakartaNowParts().dateTimeStr,
     production_mode: Boolean(db.settings.production_mode),
-    model_loaded: Boolean(humanSingleton),
-    active_workers: list.filter((c) => c.connected).length,
-    cameras: list,
+    model_loaded: pythonActive ? true : Boolean(humanSingleton),
+    expected_embedding_dims: pythonActive ? 512 : 1024,
+    active_workers: cameras.filter((c) => c.connected).length,
+    cameras,
   };
 }

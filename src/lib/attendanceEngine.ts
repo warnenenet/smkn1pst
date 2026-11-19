@@ -230,6 +230,27 @@ export function checkWaAccountQuota(account: Pick<WaAccount, 'status' | 'daily_c
   return account.daily_count < maxDaily && account.hourly_count < maxHourly;
 }
 
+export function applyWaQuotaResetIfDue(
+  account: Pick<WaAccount, 'daily_count' | 'hourly_count' | 'last_reset_at'>,
+  nowWibDateTimeStr: string
+): boolean {
+  const prev = String(account.last_reset_at || '');
+  const curDate = nowWibDateTimeStr.slice(0, 10);
+  const curHour = nowWibDateTimeStr.slice(0, 13);
+  if (!prev || prev.slice(0, 10) !== curDate) {
+    account.daily_count = 0;
+    account.hourly_count = 0;
+    account.last_reset_at = nowWibDateTimeStr;
+    return true;
+  }
+  if (prev.slice(0, 13) !== curHour) {
+    account.hourly_count = 0;
+    account.last_reset_at = nowWibDateTimeStr;
+    return true;
+  }
+  return false;
+}
+
 export function calculateAttendancePercentage(records: Array<Pick<DailyAttendance, 'status'>>): number {
   if (records.length === 0) return 0;
   const present = records.filter((r) =>
@@ -592,6 +613,7 @@ export function stripDemoRecordsForProduction<
   T extends {
     students: Array<{ nisn: string }>;
     cameras: Array<{ rtsp_url: string }>;
+    wa_accounts?: Array<{ phone_number: string }>;
     daily_attendance: unknown[];
     attendance_logs: unknown[];
     anonymous_clusters: unknown[];
@@ -614,11 +636,15 @@ export function stripDemoRecordsForProduction<
     '0081122007',
     '0081122008',
   ]);
+  const demoWaPhones = new Set(['6281122334455', '6281998877665']);
   const onlyDemoStudents = db.students.every((s) => demoNisnSet.has(s.nisn));
   return {
     ...db,
     students: onlyDemoStudents ? [] : db.students.filter((s) => !demoNisnSet.has(s.nisn)),
     cameras: db.cameras.filter((c) => !isDemoPlaceholderCameraUrl(c.rtsp_url)),
+    ...(Array.isArray(db.wa_accounts)
+      ? { wa_accounts: db.wa_accounts.filter((a) => !demoWaPhones.has(String(a.phone_number || '').replace(/[^0-9]/g, ''))) }
+      : {}),
     daily_attendance: onlyDemoStudents ? [] : db.daily_attendance,
     attendance_logs: onlyDemoStudents ? [] : db.attendance_logs,
     anonymous_clusters: [],
@@ -631,6 +657,89 @@ export function stripDemoRecordsForProduction<
     storage_bytes_simulated: 12 * 1024 * 1024,
   };
 }
+
+export interface JakartaNowParts {
+  dateStr: string;
+  timeStr: string;
+  dateTimeStr: string;
+  isoTimestamp: string;
+  dayIso: number; // 1=Senin .. 7=Minggu
+  month: number;
+  year: number;
+}
+
+const WEEKDAY_TO_ISO: Record<string, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 7,
+};
+
+export function getJakartaNowParts(date: Date = new Date(), timeZone = 'Asia/Jakarta'): JakartaNowParts {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    weekday: 'short',
+    hour12: false,
+  });
+  const parts = fmt.formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((p) => p.type === type)?.value ?? '';
+  const yearNum = Number(pick('year')) || date.getUTCFullYear();
+  const monthNum = Number(pick('month')) || date.getUTCMonth() + 1;
+  const dayStr = pick('day').padStart(2, '0');
+  const rawHour = Number(pick('hour'));
+  const hh = String(rawHour === 24 ? 0 : rawHour).padStart(2, '0');
+  const mm = pick('minute').padStart(2, '0');
+  const ss = pick('second').padStart(2, '0');
+  const monthStr = String(monthNum).padStart(2, '0');
+  const yearStr = String(yearNum).padStart(4, '0');
+  const dateStr = `${yearStr}-${monthStr}-${dayStr}`;
+  const timeStr = `${hh}:${mm}:${ss}`;
+  const weekday = pick('weekday');
+  const dayIso = WEEKDAY_TO_ISO[weekday] ?? (date.getUTCDay() === 0 ? 7 : date.getUTCDay());
+  return {
+    dateStr,
+    timeStr,
+    dateTimeStr: `${dateStr} ${timeStr}`,
+    isoTimestamp: `${dateStr}T${timeStr}`,
+    dayIso,
+    month: monthNum,
+    year: yearNum,
+  };
+}
+
+export function summarizeEmbeddingDimensions(
+  students: Array<{ embedding: number[] | null | undefined }>,
+  clusters: Array<{ centroid: number[] | null | undefined }>
+): {
+  students: { dim_16_demo: number; dim_512_insightface: number; dim_1024_node_wasm: number; empty: number; other: number };
+  clusters: { dim_16_demo: number; dim_512_insightface: number; dim_1024_node_wasm: number; empty: number; other: number };
+} {
+  const tally = (vecs: Array<number[] | null | undefined>) => {
+    const res = { dim_16_demo: 0, dim_512_insightface: 0, dim_1024_node_wasm: 0, empty: 0, other: 0 };
+    for (const v of vecs) {
+      if (!Array.isArray(v) || v.length === 0) res.empty += 1;
+      else if (v.length === 16) res.dim_16_demo += 1;
+      else if (v.length === 512) res.dim_512_insightface += 1;
+      else if (v.length === 1024) res.dim_1024_node_wasm += 1;
+      else res.other += 1;
+    }
+    return res;
+  };
+  return {
+    students: tally(students.map((s) => s.embedding)),
+    clusters: tally(clusters.map((c) => c.centroid)),
+  };
+}
+
 
 
 
