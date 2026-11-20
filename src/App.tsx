@@ -19,6 +19,7 @@ import { SettingsUsersView } from './components/SettingsUsersView';
 import { CallPageView } from './components/CallPageView';
 import { GuestPortalView } from './components/GuestPortalView';
 import { LoginView } from './components/LoginView';
+import { shouldPauseBackgroundBootstrap } from './lib/uiRefreshGuard';
 import type {
   AppDatabase,
   AttendanceStatus,
@@ -164,7 +165,19 @@ export default function App() {
     }
   }, [authUser, activeTab]);
 
-  // Poll worker status & bootstrap every 5s + auto-reconnecting WebSocket for real-time updates
+  useEffect(() => {
+    if (authUser && routeView.mode === 'login') {
+      window.history.replaceState({}, '', '/');
+      setRouteView({ mode: 'home', cameraId: 1 });
+    }
+  }, [authUser, routeView.mode]);
+
+  const activeTabRef = useRef<NavTab>(activeTab);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
+
+  // Poll worker status every 10s + bootstrap every 15s (ONLY when not on config/form tabs and not typing) + WebSocket
   useEffect(() => {
     if (!authUser || routeView.mode !== 'home') return;
 
@@ -174,11 +187,21 @@ export default function App() {
     let reconnectAttempt = 0;
     let refreshInFlight = false;
 
+    const canRefreshBootstrapNow = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return !shouldPauseBackgroundBootstrap({
+        activeTab: activeTabRef.current,
+        activeElementTag: el?.tagName ?? null,
+        isContentEditable: Boolean(el?.isContentEditable),
+      });
+    };
+
     const refreshAll = async (includeBootstrap: boolean) => {
       if (disposed || refreshInFlight) return;
+      const shouldFetchBoot = includeBootstrap && canRefreshBootstrapNow();
       refreshInFlight = true;
       try {
-        if (includeBootstrap) {
+        if (shouldFetchBoot) {
           await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
         } else {
           await fetchWorkerStatus();
@@ -193,7 +216,7 @@ export default function App() {
       if (document.visibilityState === 'visible') {
         refreshAll(true);
       }
-    }, 5000);
+    }, 15000);
 
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -338,9 +361,6 @@ export default function App() {
   }
 
   if (routeView.mode === 'login') {
-    if (authUser) {
-      navigateRoute('home');
-    }
     return (
       <LoginView
         schoolName={schoolName}
@@ -418,12 +438,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4 shrink-0">
-            <span className="hidden sm:inline text-xs text-slate-500">
+            <span className="hidden sm:inline text-xs text-slate-500 whitespace-nowrap">
               {db.settings.school_name} · <span className="font-mono">{authUser.role}</span>
             </span>
             {isProduction ? (
-              <span className="px-3 py-1 text-[11px] font-mono font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md whitespace-nowrap">
-                MODE PRODUKSI
+              <span className="text-xs font-mono font-semibold text-emerald-700 whitespace-nowrap shrink-0">
+                PRODUKSI LIVE
               </span>
             ) : (
               <button

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Download, HardDriveUpload, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { AppDatabase, BackupEntry, SettingsMap, TTSMode, UserRole, WorkerStatusResponse } from '../types';
+import { shouldSyncFormFromServer } from '../lib/uiRefreshGuard';
 
 interface SettingsUsersViewProps {
   db: AppDatabase;
@@ -26,6 +27,9 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
   onBackupFinished,
 }) => {
   const [form, setForm] = useState<SettingsMap>(db.settings);
+  const [dirtySettings, setDirtySettings] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const lastSyncedRef = useRef<string>(JSON.stringify(db.settings));
   const [confirmProd, setConfirmProd] = useState(false);
   const [prodBusy, setProdBusy] = useState(false);
 
@@ -42,8 +46,23 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
   const [backupMsg, setBackupMsg] = useState('');
 
   useEffect(() => {
-    setForm(db.settings);
-  }, [db.settings]);
+    const nextSerialized = JSON.stringify(db.settings);
+    if (
+      shouldSyncFormFromServer({
+        isDirty: dirtySettings,
+        nextSerialized,
+        lastSyncedSerialized: lastSyncedRef.current,
+      })
+    ) {
+      lastSyncedRef.current = nextSerialized;
+      setForm(db.settings);
+    }
+  }, [db.settings, dirtySettings]);
+
+  const updateForm = <K extends keyof SettingsMap>(key: K, value: SettingsMap[K]) => {
+    setDirtySettings(true);
+    setForm((prev) => ({ ...prev, [key]: value }));
+  };
 
   const loadBackups = async () => {
     try {
@@ -204,33 +223,52 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
       </section>
 
       <section className="bg-white border border-slate-200 rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-slate-900 mb-4">Pengaturan Threshold AI (Kualitas 70% &amp; Kesamaan 70%), Backup &amp; Audio Gerbang</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+          <h2 className="text-sm font-semibold text-slate-900">Pengaturan Threshold AI (Kualitas 70% &amp; Kesamaan 70%), Backup &amp; Audio Gerbang</h2>
+          {dirtySettings && (
+            <span className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded">
+              Ada perubahan belum disimpan
+            </span>
+          )}
+        </div>
         <form
           onSubmit={async (e) => {
             e.preventDefault();
-            await onSaveSettings(form);
+            setSavingSettings(true);
+            try {
+              const normalizedForm: SettingsMap = {
+                ...form,
+                min_snapshot_quality: Math.max(0.7, Math.min(0.99, Number(form.min_snapshot_quality) || 0.7)),
+              };
+              await onSaveSettings(normalizedForm);
+              lastSyncedRef.current = JSON.stringify(normalizedForm);
+              setForm(normalizedForm);
+              setDirtySettings(false);
+            } finally {
+              setSavingSettings(false);
+            }
           }}
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
         >
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Nama Sekolah</label>
-            <input value={form.school_name} onChange={(e) => setForm({ ...form, school_name: e.target.value })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs" />
+            <label htmlFor="set-school-name" className="block text-xs text-slate-600 mb-1">Nama Sekolah</label>
+            <input id="set-school-name" value={form.school_name} onChange={(e) => updateForm('school_name', e.target.value)} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Cutoff TIDAK_KELUAR</label>
-            <input type="time" step="1" value={form.cutoff_keluar} onChange={(e) => setForm({ ...form, cutoff_keluar: e.target.value })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-cutoff" className="block text-xs text-slate-600 mb-1">Cutoff TIDAK_KELUAR</label>
+            <input id="set-cutoff" type="time" step="1" value={form.cutoff_keluar} onChange={(e) => updateForm('cutoff_keluar', e.target.value)} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Confidence Deteksi Min (Default 0.80)</label>
-            <input type="number" step="0.01" min="0.5" max="0.99" value={form.threshold_confidence} onChange={(e) => setForm({ ...form, threshold_confidence: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-thresh-conf" className="block text-xs text-slate-600 mb-1">Confidence Deteksi Min (Default 0.80)</label>
+            <input id="set-thresh-conf" type="number" step="0.01" min="0.5" max="0.99" value={form.threshold_confidence} onChange={(e) => updateForm('threshold_confidence', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Threshold Pengenalan 1:N / Kesamaan Wajah (Default 0.70 = 70%)</label>
-            <input type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_recognition} onChange={(e) => setForm({ ...form, threshold_recognition: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-thresh-rec" className="block text-xs text-slate-600 mb-1">Threshold Pengenalan 1:N / Kesamaan Wajah (Default 0.70 = 70%)</label>
+            <input id="set-thresh-rec" type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_recognition} onChange={(e) => updateForm('threshold_recognition', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Threshold Clustering Anonim (Default 0.70 = 70%)</label>
-            <input type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_clustering} onChange={(e) => setForm({ ...form, threshold_clustering: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-thresh-clust" className="block text-xs text-slate-600 mb-1">Threshold Clustering Anonim (Default 0.70 = 70%)</label>
+            <input id="set-thresh-clust" type="number" step="0.01" min="0.2" max="0.99" value={form.threshold_clustering} onChange={(e) => updateForm('threshold_clustering', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
             <label htmlFor="face-maint-target" className="block text-xs text-slate-600 mb-1">Target Maintenance Wajah (Default 0.80 = 80%)</label>
@@ -241,7 +279,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               min="0.5"
               max="0.99"
               value={form.face_maintenance_target ?? 0.80}
-              onChange={(e) => setForm({ ...form, face_maintenance_target: Number(e.target.value) })}
+              onChange={(e) => updateForm('face_maintenance_target', Number(e.target.value))}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
@@ -254,27 +292,30 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               min="0.70"
               max="0.99"
               value={form.min_snapshot_quality ?? 0.70}
-              onChange={(e) => setForm({ ...form, min_snapshot_quality: Math.max(0.7, Number(e.target.value)) })}
+              onChange={(e) => updateForm('min_snapshot_quality', Number(e.target.value))}
+              onBlur={() =>
+                updateForm('min_snapshot_quality', Math.max(0.7, Math.min(0.99, Number(form.min_snapshot_quality) || 0.7)))
+              }
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Ukuran Wajah Min (px)</label>
-            <input type="number" value={form.min_face_size} onChange={(e) => setForm({ ...form, min_face_size: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-min-face" className="block text-xs text-slate-600 mb-1">Ukuran Wajah Min (px)</label>
+            <input id="set-min-face" type="number" value={form.min_face_size} onChange={(e) => updateForm('min_face_size', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Syarat READY: Min Hit Count</label>
-            <input type="number" value={form.cluster_ready_hits} onChange={(e) => setForm({ ...form, cluster_ready_hits: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-ready-hits" className="block text-xs text-slate-600 mb-1">Syarat READY: Min Hit Count</label>
+            <input id="set-ready-hits" type="number" value={form.cluster_ready_hits} onChange={(e) => updateForm('cluster_ready_hits', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Syarat READY: Min Hari Berbeda</label>
-            <input type="number" value={form.cluster_ready_days} onChange={(e) => setForm({ ...form, cluster_ready_days: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-ready-days" className="block text-xs text-slate-600 mb-1">Syarat READY: Min Hari Berbeda</label>
+            <input id="set-ready-days" type="number" value={form.cluster_ready_days} onChange={(e) => updateForm('cluster_ready_days', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
           </div>
           <div>
-            <label className="block text-xs text-slate-600 mb-1">Auto-Arsip / Hapus Cluster (Hari)</label>
+            <label htmlFor="set-archive-days" className="block text-xs text-slate-600 mb-1">Auto-Arsip / Hapus Cluster (Hari)</label>
             <div className="flex gap-2">
-              <input type="number" value={form.cluster_archive_days} onChange={(e) => setForm({ ...form, cluster_archive_days: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
-              <input type="number" value={form.cluster_delete_days} onChange={(e) => setForm({ ...form, cluster_delete_days: Number(e.target.value) })} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+              <input id="set-archive-days" aria-label="Auto-Arsip Cluster (Hari)" type="number" value={form.cluster_archive_days} onChange={(e) => updateForm('cluster_archive_days', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+              <input aria-label="Auto-Hapus Cluster (Hari)" type="number" value={form.cluster_delete_days} onChange={(e) => updateForm('cluster_delete_days', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
             </div>
           </div>
 
@@ -283,7 +324,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
             <select
               id="tts-mode"
               value={form.tts_mode ?? 'AUTO_ADAPTIVE'}
-              onChange={(e) => setForm({ ...form, tts_mode: e.target.value as TTSMode })}
+              onChange={(e) => updateForm('tts_mode', e.target.value as TTSMode)}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs bg-white"
             >
               <option value="AUTO_ADAPTIVE">AUTO_ADAPTIVE (Sepi=Nama, Sibuk=Chime Kilat)</option>
@@ -299,7 +340,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               min={1}
               max={15}
               value={form.tts_max_age_sec ?? 3}
-              onChange={(e) => setForm({ ...form, tts_max_age_sec: Number(e.target.value) })}
+              onChange={(e) => updateForm('tts_max_age_sec', Number(e.target.value))}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
@@ -311,7 +352,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               min={2}
               max={20}
               value={form.tts_burst_threshold ?? 3}
-              onChange={(e) => setForm({ ...form, tts_burst_threshold: Number(e.target.value) })}
+              onChange={(e) => updateForm('tts_burst_threshold', Number(e.target.value))}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
@@ -323,7 +364,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               min={1}
               max={5}
               value={form.backup_retention_count ?? 2}
-              onChange={(e) => setForm({ ...form, backup_retention_count: Number(e.target.value) })}
+              onChange={(e) => updateForm('backup_retention_count', Number(e.target.value))}
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
@@ -332,19 +373,38 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               <input
                 type="checkbox"
                 checked={form.auto_backup_enabled ?? true}
-                onChange={(e) => setForm({ ...form, auto_backup_enabled: e.target.checked })}
+                onChange={(e) => updateForm('auto_backup_enabled', e.target.checked)}
               />
               Aktifkan Auto-Backup Harian (.sqlite.gz)
             </label>
           </div>
 
-          <div className="sm:col-span-2 lg:col-span-3 flex items-center justify-between pt-2 border-t border-slate-100">
+          <div className="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
             <span className="text-xs text-slate-500">
               Anti-spoofing &amp; liveness detection DINONAKTIFKAN total sesuai kebijakan gerbang sekolah.
             </span>
-            <button type="submit" className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded-md">
-              Simpan Pengaturan
-            </button>
+            <div className="flex items-center gap-2">
+              {dirtySettings && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setForm(db.settings);
+                    lastSyncedRef.current = JSON.stringify(db.settings);
+                    setDirtySettings(false);
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md"
+                >
+                  Reset
+                </button>
+              )}
+              <button
+                type="submit"
+                disabled={savingSettings}
+                className="px-4 py-2 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-50 rounded-md"
+              >
+                {savingSettings ? 'Menyimpan...' : 'Simpan Pengaturan'}
+              </button>
+            </div>
           </div>
         </form>
       </section>
@@ -383,7 +443,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
           </div>
         )}
 
-        <div className="overflow-x-auto">
+        <div tabIndex={0} role="region" aria-label="Daftar Snapshot Backup Database" className="table-wrapper">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">
@@ -435,10 +495,33 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               }}
               className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4"
             >
-              <input placeholder="Nama Lengkap" required value={uName} onChange={(e) => setUName(e.target.value)} className="border border-slate-300 rounded px-2.5 py-1.5 text-xs" />
-              <input type="email" placeholder="Email" required value={uEmail} onChange={(e) => setUEmail(e.target.value)} className="border border-slate-300 rounded px-2.5 py-1.5 text-xs" />
               <input
+                name="name"
+                autoComplete="name"
+                aria-label="Nama Lengkap User"
+                placeholder="Nama Lengkap"
+                required
+                value={uName}
+                onChange={(e) => setUName(e.target.value)}
+                className="border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+              />
+              <input
+                name="email"
+                type="email"
+                autoComplete="email"
+                spellCheck={false}
+                aria-label="Email User"
+                placeholder="Email"
+                required
+                value={uEmail}
+                onChange={(e) => setUEmail(e.target.value)}
+                className="border border-slate-300 rounded px-2.5 py-1.5 text-xs"
+              />
+              <input
+                name="new-password"
                 type="password"
+                autoComplete="new-password"
+                aria-label="Password awal user"
                 minLength={6}
                 required
                 placeholder="Password awal (min 6)"
@@ -447,7 +530,7 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
                 className="border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
               />
               <div className="flex gap-2">
-                <select value={uRole} onChange={(e) => setURole(e.target.value as UserRole)} className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white flex-1">
+                <select aria-label="Role User" value={uRole} onChange={(e) => setURole(e.target.value as UserRole)} className="border border-slate-300 rounded px-2 py-1.5 text-xs bg-white flex-1">
                   <option value="ADMIN">ADMIN</option>
                   <option value="BK">BK</option>
                   <option value="GURU">GURU</option>
@@ -456,35 +539,37 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               </div>
             </form>
 
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500">
-                  <th className="py-2 font-medium">Nama &amp; Email</th>
-                  <th className="py-2 font-medium">Role</th>
-                  <th className="py-2 font-medium text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {db.users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="py-2">
-                      <div className="font-medium text-slate-900">{u.name}</div>
-                      <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
-                    </td>
-                    <td className="py-2 font-mono text-slate-700">{u.role}</td>
-                    <td className="py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => onToggleUser(u.id)}
-                        className={`text-xs font-medium hover:underline ${u.is_active ? 'text-emerald-700' : 'text-red-700'}`}
-                      >
-                        {u.is_active ? 'Aktif (Nonaktifkan)' : 'Nonaktif (Aktifkan)'}
-                      </button>
-                    </td>
+            <div tabIndex={0} role="region" aria-label="Daftar Akun Pengguna" className="table-wrapper">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-2 font-medium">Nama &amp; Email</th>
+                    <th className="py-2 font-medium">Role</th>
+                    <th className="py-2 font-medium text-right">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {db.users.map((u) => (
+                    <tr key={u.id}>
+                      <td className="py-2">
+                        <div className="font-medium text-slate-900">{u.name}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
+                      </td>
+                      <td className="py-2 font-mono text-slate-700">{u.role}</td>
+                      <td className="py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => onToggleUser(u.id)}
+                          className={`text-xs font-medium hover:underline ${u.is_active ? 'text-emerald-700' : 'text-red-700'}`}
+                        >
+                          {u.is_active ? 'Aktif (Nonaktifkan)' : 'Nonaktif (Aktifkan)'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <hr className="border-slate-200" />
@@ -500,7 +585,10 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               className="flex flex-col sm:flex-row gap-2"
             >
               <input
+                name="current-password"
                 type="password"
+                autoComplete="current-password"
+                aria-label="Password lama"
                 required
                 placeholder="Password lama"
                 value={oldPwd}
@@ -508,7 +596,10 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
                 className="border border-slate-300 rounded px-2.5 py-1.5 text-xs flex-1"
               />
               <input
+                name="new-password"
                 type="password"
+                autoComplete="new-password"
+                aria-label="Password baru"
                 required
                 minLength={6}
                 placeholder="Password baru (min 6)"

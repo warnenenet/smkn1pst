@@ -5,12 +5,13 @@ import { createRequire } from 'module';
 import jpeg from 'jpeg-js';
 import {
   computeQualityScore,
-  cosineSimilarity,
   extractJpegFramesFromChunk,
   getJakartaNowParts,
   maskRtspCredentials,
   passesSnapshotQualityThreshold,
 } from '../lib/attendanceEngine.ts';
+import { findBestFaceMatch } from '../lib/faceIndex.ts';
+import { getCachedStudentFaceIndex } from './store.ts';
 import type { AppDatabase, Camera, WorkerCameraStat } from '../types';
 
 const requireCjs = createRequire(import.meta.url);
@@ -412,32 +413,24 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
                 w.stat.last_face_at = detectWib;
                 w.stat.last_detect_at = detectWib;
 
-                // Cocokkan 1:N dengan siswa ber-embedding sejenis
-                let bestStudentId: number | null = null;
-                let bestSim = 0;
-                let topAnySim = 0;
-                let dimMismatches = 0;
-                for (const st of db.students) {
-                  if (st.status === 'LULUS' || !Array.isArray(st.embedding) || st.embedding.length === 0) {
-                    continue;
-                  }
-                  if (st.embedding.length !== f.embedding.length) {
-                    dimMismatches += 1;
-                    continue;
-                  }
-                  const sim = cosineSimilarity(f.embedding, st.embedding);
-                  if (sim > topAnySim) topAnySim = sim;
-                  if (sim >= db.settings.threshold_recognition && sim > bestSim) {
-                    bestSim = sim;
-                    bestStudentId = st.id;
-                  }
-                }
+                // Cocokkan 1:N dengan indeks vektor Float32Array pre-normalisasi (optimal 5000+ siswa <1ms)
+                const studentIdx = getCachedStudentFaceIndex(db.students);
+                const match = findBestFaceMatch(studentIdx, f.embedding, db.settings.threshold_recognition);
+                const bestStudentId = match.bestId;
+                const bestSim = match.bestSimilarity;
+                const topAnySim = match.topAnySimilarity;
+                const dimMismatches = match.dimMismatchCount;
 
                 const cooldownKey = `${cam.id}:${bestStudentId ?? 'anon'}`;
                 const lastSent = dispatchCooldown.get(cooldownKey) ?? 0;
                 const nowMs = Date.now();
                 if (nowMs - lastSent < 6000) {
                   continue;
+                }
+                if (dispatchCooldown.size > 500) {
+                  for (const [k, ts] of dispatchCooldown.entries()) {
+                    if (nowMs - ts > 300_000) dispatchCooldown.delete(k);
+                  }
                 }
                 dispatchCooldown.set(cooldownKey, nowMs);
 
@@ -700,6 +693,7 @@ export function getNodeWorkerStatus(db: AppDatabase): {
   model_loaded: boolean;
   expected_embedding_dims: number;
   active_workers: number;
+  indexed_students: number;
   cameras: WorkerCameraStat[];
 } {
   const engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE' = pythonActive
@@ -707,6 +701,7 @@ export function getNodeWorkerStatus(db: AppDatabase): {
     : workers.size > 0 || humanSingleton !== null
       ? 'NODE_WASM_LIVE'
       : 'IDLE';
+  const indexedStudents = getCachedStudentFaceIndex(db.students).totalIndexed;
 
   const cameras: WorkerCameraStat[] = db.cameras.map((cam) => {
     const nodeWorker = workers.get(cam.id);
@@ -743,6 +738,7 @@ export function getNodeWorkerStatus(db: AppDatabase): {
     model_loaded: pythonActive ? true : Boolean(humanSingleton),
     expected_embedding_dims: pythonActive ? 512 : 1024,
     active_workers: cameras.filter((c) => c.connected).length,
+    indexed_students: indexedStudents,
     cameras,
   };
 }

@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw, QrCode } from 'lucide-react';
 import type { AppDatabase, SettingsMap, WaProvider } from '../types';
+import { shouldSyncFormFromServer } from '../lib/uiRefreshGuard';
 
 interface WhatsAppViewProps {
   db: AppDatabase;
@@ -28,6 +29,10 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
   const [phoneNumId, setPhoneNumId] = useState(db.settings.wa_phone_number_id);
   const [delayAfterPulang, setDelayAfterPulang] = useState<number>(db.settings.wa_delay_after_pulang_menit ?? 60);
   const [autoDispatchEnabled, setAutoDispatchEnabled] = useState<boolean>(db.settings.wa_auto_dispatch_enabled ?? true);
+  const [dirtyWa, setDirtyWa] = useState(false);
+  const waSnapshot = (s: SettingsMap) =>
+    JSON.stringify([s.wa_provider, s.wa_api_key, s.wa_phone_number_id, s.wa_delay_after_pulang_menit, s.wa_auto_dispatch_enabled]);
+  const lastWaSyncRef = useRef<string>(waSnapshot(db.settings));
   const [dispatchResult, setDispatchResult] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [testPhone, setTestPhone] = useState('6281234560001');
@@ -40,6 +45,24 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
     error: null,
   });
   const [tplDrafts, setTplDrafts] = useState<Record<number, string>>({});
+
+  useEffect(() => {
+    const nextSerialized = waSnapshot(db.settings);
+    if (
+      shouldSyncFormFromServer({
+        isDirty: dirtyWa,
+        nextSerialized,
+        lastSyncedSerialized: lastWaSyncRef.current,
+      })
+    ) {
+      lastWaSyncRef.current = nextSerialized;
+      setProvider(db.settings.wa_provider);
+      setApiKey(db.settings.wa_api_key);
+      setPhoneNumId(db.settings.wa_phone_number_id);
+      setDelayAfterPulang(db.settings.wa_delay_after_pulang_menit ?? 60);
+      setAutoDispatchEnabled(db.settings.wa_auto_dispatch_enabled ?? true);
+    }
+  }, [db.settings, dirtyWa]);
 
   useEffect(() => {
     if (qrModalId === null) return;
@@ -77,7 +100,14 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-slate-900">Konfigurasi Provider &amp; Jadwal Rekap Pulang</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">Konfigurasi Provider &amp; Jadwal Rekap Pulang</h2>
+            {dirtyWa && (
+              <span className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                Belum disimpan
+              </span>
+            )}
+          </div>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -88,12 +118,14 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                 wa_delay_after_pulang_menit: delayAfterPulang,
                 wa_auto_dispatch_enabled: autoDispatchEnabled,
               });
+              lastWaSyncRef.current = JSON.stringify([provider, apiKey, phoneNumId, delayAfterPulang, autoDispatchEnabled]);
+              setDirtyWa(false);
             }}
             className="space-y-3"
           >
             <div>
               <label htmlFor="wa-prov" className="block text-xs text-slate-600 mb-1">Provider Aktif</label>
-              <select id="wa-prov" value={provider} onChange={(e) => setProvider(e.target.value as WaProvider)} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs bg-white">
+              <select id="wa-prov" value={provider} onChange={(e) => { setDirtyWa(true); setProvider(e.target.value as WaProvider); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs bg-white">
                 <option value="BAILEYS">Baileys (Gratis Nomor Pribadi + Anti-Blokir)</option>
                 <option value="META_CLOUD">Meta WhatsApp Cloud API (1000 conv gratis/bln)</option>
                 <option value="FONNTE">Fonnte (Provider Lokal)</option>
@@ -102,9 +134,9 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
             </div>
             {provider !== 'BAILEYS' && (
               <>
-                <input placeholder="API Key Provider" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
+                <input placeholder="API Key Provider" value={apiKey} onChange={(e) => { setDirtyWa(true); setApiKey(e.target.value); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
                 {provider === 'META_CLOUD' && (
-                  <input placeholder="Meta Phone Number ID" value={phoneNumId} onChange={(e) => setPhoneNumId(e.target.value)} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
+                  <input placeholder="Meta Phone Number ID" value={phoneNumId} onChange={(e) => { setDirtyWa(true); setPhoneNumId(e.target.value); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
                 )}
               </>
             )}
@@ -120,7 +152,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                   min={0}
                   max={240}
                   value={delayAfterPulang}
-                  onChange={(e) => setDelayAfterPulang(Math.max(0, Number(e.target.value)))}
+                  onChange={(e) => { setDirtyWa(true); setDelayAfterPulang(Math.max(0, Number(e.target.value))); }}
                   className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
                 />
               </div>
@@ -128,7 +160,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                 <input
                   type="checkbox"
                   checked={autoDispatchEnabled}
-                  onChange={(e) => setAutoDispatchEnabled(e.target.checked)}
+                  onChange={(e) => { setDirtyWa(true); setAutoDispatchEnabled(e.target.checked); }}
                 />
                 <span>Aktifkan rekap WA otomatis pasca-pulang</span>
               </label>
@@ -281,7 +313,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
             <Download className="w-3.5 h-3.5" /> Export Log CSV
           </a>
         </div>
-        <div className="overflow-x-auto">
+        <div tabIndex={0} role="region" aria-label="Antrean dan Log Pengiriman WhatsApp" className="table-wrapper">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">
@@ -331,7 +363,14 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
               />
               <button
                 type="button"
-                onClick={() => onUpdateTemplate(tpl.id, tplDrafts[tpl.id] ?? tpl.template_text)}
+                onClick={async () => {
+                  await onUpdateTemplate(tpl.id, tplDrafts[tpl.id] ?? tpl.template_text);
+                  setTplDrafts((p) => {
+                    const next = { ...p };
+                    delete next[tpl.id];
+                    return next;
+                  });
+                }}
                 className="px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-900 text-white rounded shrink-0"
               >
                 Simpan

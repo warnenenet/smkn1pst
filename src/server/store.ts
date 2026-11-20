@@ -29,6 +29,7 @@ import type {
   WaTemplate,
 } from '../types';
 import { normalizeMinSnapshotQuality, stripDemoRecordsForProduction } from '../lib/attendanceEngine.ts';
+import { buildFaceVectorIndex, type FaceVectorIndex } from '../lib/faceIndex.ts';
 
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
 export const SQLITE_FILE = path.join(DATA_DIR, 'absensi.sqlite');
@@ -43,6 +44,186 @@ const DAILY_WINDOW_DAYS = 180;
 
 let sqliteDb: DatabaseSync | null = null;
 let schemaInitialized = false;
+let cachedDb: AppDatabase | null = null;
+let dbVersion = 0;
+
+const embeddingTagMap = new WeakMap<number[], number>();
+let nextEmbTag = 1;
+function getEmbeddingTag(vec: number[] | null | undefined): string {
+  if (!Array.isArray(vec) || vec.length === 0) return '0';
+  let tag = embeddingTagMap.get(vec);
+  if (!tag) {
+    tag = nextEmbTag++;
+    embeddingTagMap.set(vec, tag);
+  }
+  const mid = vec[vec.length >> 1] ?? 0;
+  return `${tag}:${vec.length}:${vec[0] ?? 0}:${mid}`;
+}
+
+interface PersistedStateTrackers {
+  initialized: boolean;
+  smallHashes: Record<string, string>;
+  students: Map<number, string>;
+  clusters: Map<number, string>;
+  history: Map<number, string>;
+  reviews: Map<number, string>;
+  logs: Map<number, string>;
+  daily: Map<number, string>;
+  waQueue: Map<number, string>;
+  notifications: Map<number, string>;
+  guestLogs: Set<number>;
+}
+
+const persisted: PersistedStateTrackers = {
+  initialized: false,
+  smallHashes: {},
+  students: new Map(),
+  clusters: new Map(),
+  history: new Map(),
+  reviews: new Map(),
+  logs: new Map(),
+  daily: new Map(),
+  waQueue: new Map(),
+  notifications: new Map(),
+  guestLogs: new Set(),
+};
+
+function resetPersistedTrackers(): void {
+  persisted.initialized = false;
+  persisted.smallHashes = {};
+  persisted.students.clear();
+  persisted.clusters.clear();
+  persisted.history.clear();
+  persisted.reviews.clear();
+  persisted.logs.clear();
+  persisted.daily.clear();
+  persisted.waQueue.clear();
+  persisted.notifications.clear();
+  persisted.guestLogs.clear();
+}
+
+function studentSignature(s: Student): string {
+  return `${s.nis}|${s.nisn}|${s.nama}|${s.nickname}|${s.kelas_id}|${s.tanggal_lahir}|${s.status}|${getEmbeddingTag(s.embedding)}|${s.embedding_quality_score}|${s.embedding_updated_at ?? ''}|${s.foto_ref ?? ''}|${s.wa_ortu ?? ''}`;
+}
+
+function clusterSignature(c: AnonymousCluster): string {
+  return `${getEmbeddingTag(c.centroid)}|${c.hit_count}|${c.distinct_days}|${c.last_seen}|${c.best_snapshot_path}|${c.best_quality_score}|${getEmbeddingTag(c.best_embedding)}|${c.hit_snapshots?.length ?? 0}|${c.status}|${c.named_student_id ?? ''}|${c.last_camera_id ?? ''}`;
+}
+
+function historySignature(h: FaceUpdateHistory): string {
+  return `${h.student_id}|${h.version}|${getEmbeddingTag(h.embedding)}|${h.quality_score}|${h.snapshot_path}|${h.approved_by ?? ''}|${h.approved_at ?? ''}|${h.is_canonical ? 1 : 0}`;
+}
+
+function reviewSignature(r: FaceUpdateReview): string {
+  return `${r.student_id}|${r.month}|${r.year}|${r.candidate_snapshots.length}|${r.current_quality}|${r.best_new_quality}|${r.status}|${r.reviewed_by ?? ''}|${r.reviewed_at ?? ''}`;
+}
+
+function logSignature(l: AttendanceLog): string {
+  return `${l.student_id}|${l.gate_id}|${l.camera_id}|${l.timestamp}|${l.tipe}|${l.status}|${l.is_manual_override ? 1 : 0}|${l.similarity_score ?? ''}|${l.snapshot_path ?? ''}`;
+}
+
+function dailySignature(d: DailyAttendance): string {
+  return `${d.student_id}|${d.tanggal}|${d.jam_masuk ?? ''}|${d.jam_keluar ?? ''}|${d.status}|${d.manual_override_by ?? ''}|${d.manual_override_at ?? ''}|${d.catatan ?? ''}`;
+}
+
+function waQueueSignature(q: WaQueue): string {
+  return `${q.student_id ?? ''}|${q.phone}|${q.status}|${q.retry_count}|${q.scheduled_at}|${q.sent_at ?? ''}|${q.error_msg ?? ''}`;
+}
+
+function notifSignature(n: NotificationItem): string {
+  return `${n.is_read ? 1 : 0}|${n.title}|${n.message}`;
+}
+
+function seedTrackersFromDb(db: AppDatabase): void {
+  resetPersistedTrackers();
+  persisted.smallHashes = {
+    users: JSON.stringify(db.users),
+    jurusans: JSON.stringify(db.jurusans),
+    kelas: JSON.stringify(db.kelas),
+    gates: JSON.stringify(db.gates),
+    cameras: JSON.stringify(db.cameras),
+    schedules: JSON.stringify(db.schedules),
+    kelas_overrides: JSON.stringify(db.kelas_overrides),
+    schedule_exceptions: JSON.stringify(db.schedule_exceptions),
+    visitors: JSON.stringify(db.visitors),
+    wa_accounts: JSON.stringify(db.wa_accounts),
+    wa_templates: JSON.stringify(db.wa_templates),
+    settings: JSON.stringify(db.settings) + '|' + String(db.storage_bytes_simulated),
+  };
+  for (const s of db.students) persisted.students.set(s.id, studentSignature(s));
+  for (const c of db.anonymous_clusters) persisted.clusters.set(c.id, clusterSignature(c));
+  for (const h of db.face_update_history) persisted.history.set(h.id, historySignature(h));
+  for (const r of db.face_update_reviews) persisted.reviews.set(r.id, reviewSignature(r));
+  for (const l of db.attendance_logs) persisted.logs.set(l.id, logSignature(l));
+  for (const d of db.daily_attendance) persisted.daily.set(d.id, dailySignature(d));
+  for (const q of db.wa_queue) persisted.waQueue.set(q.id, waQueueSignature(q));
+  for (const n of db.notifications) persisted.notifications.set(n.id, notifSignature(n));
+  for (const g of db.guest_access_logs) persisted.guestLogs.add(g.id);
+  persisted.initialized = true;
+}
+
+let cachedStudentIndex: { fingerprint: string; index: FaceVectorIndex } | null = null;
+let cachedClusterIndex: { fingerprint: string; index: FaceVectorIndex } | null = null;
+
+export function getCachedStudentFaceIndex(students: readonly Student[]): FaceVectorIndex {
+  let activeCount = 0;
+  let tagSum = 0;
+  let fpParts = '';
+  for (let i = 0; i < students.length; i++) {
+    const s = students[i];
+    if (s.status === 'LULUS' || !Array.isArray(s.embedding) || s.embedding.length === 0) continue;
+    activeCount++;
+    let t = embeddingTagMap.get(s.embedding);
+    if (!t) {
+      t = nextEmbTag++;
+      embeddingTagMap.set(s.embedding, t);
+    }
+    tagSum = (tagSum + t * (s.id + 1)) | 0;
+  }
+  fpParts = `${activeCount}:${tagSum}:${dbVersion}`;
+  if (cachedStudentIndex && cachedStudentIndex.fingerprint === fpParts) {
+    return cachedStudentIndex.index;
+  }
+  const entries = students
+    .filter((s) => s.status !== 'LULUS' && Array.isArray(s.embedding) && s.embedding.length > 0)
+    .map((s) => ({ id: s.id, embedding: s.embedding }));
+  const index = buildFaceVectorIndex(entries, dbVersion + 1);
+  cachedStudentIndex = { fingerprint: fpParts, index };
+  return index;
+}
+
+export function getCachedClusterFaceIndex(clusters: readonly AnonymousCluster[]): FaceVectorIndex {
+  let activeCount = 0;
+  let tagSum = 0;
+  for (let i = 0; i < clusters.length; i++) {
+    const c = clusters[i];
+    if ((c.status !== 'PENDING' && c.status !== 'READY') || !Array.isArray(c.centroid) || c.centroid.length === 0) continue;
+    activeCount++;
+    let t = embeddingTagMap.get(c.centroid);
+    if (!t) {
+      t = nextEmbTag++;
+      embeddingTagMap.set(c.centroid, t);
+    }
+    tagSum = (tagSum + t * (c.id + 1)) | 0;
+  }
+  const fp = `${activeCount}:${tagSum}:${dbVersion}`;
+  if (cachedClusterIndex && cachedClusterIndex.fingerprint === fp) {
+    return cachedClusterIndex.index;
+  }
+  const entries = clusters
+    .filter((c) => (c.status === 'PENDING' || c.status === 'READY') && Array.isArray(c.centroid) && c.centroid.length > 0)
+    .map((c) => ({ id: c.id, embedding: c.centroid }));
+  const index = buildFaceVectorIndex(entries, dbVersion + 1);
+  cachedClusterIndex = { fingerprint: fp, index };
+  return index;
+}
+
+export function invalidateDbCache(): void {
+  cachedDb = null;
+  cachedStudentIndex = null;
+  cachedClusterIndex = null;
+  resetPersistedTrackers();
+}
 
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -870,12 +1051,18 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
 }
 
 export function loadDb(): AppDatabase {
+  if (cachedDb) {
+    return cachedDb;
+  }
+
   const sqlite = getSqlite();
 
   // Cek apakah tabel relasional sudah terisi
   const userCountRow = sqlite.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number } | undefined;
   if ((userCountRow?.c ?? 0) > 0) {
-    return hydrateDefaults(readRelationalDb(sqlite));
+    cachedDb = hydrateDefaults(readRelationalDb(sqlite));
+    seedTrackersFromDb(cachedDb);
+    return cachedDb;
   }
 
   // Migrasi satu kali otomatis dari app_state JSON blob lama -> tabel relasional SQLite terindeks
@@ -885,6 +1072,7 @@ export function loadDb(): AppDatabase {
       | undefined;
     if (legacyRow?.value_json) {
       const migrated = hydrateDefaults(JSON.parse(legacyRow.value_json) as AppDatabase);
+      resetPersistedTrackers();
       saveDb(migrated);
       sqlite.prepare('DELETE FROM app_state WHERE key = ?').run('main');
       try {
@@ -892,26 +1080,397 @@ export function loadDb(): AppDatabase {
       } catch {
         // ignore vacuum failure if concurrent read
       }
-      return readRelationalDb(sqlite);
+      cachedDb = readRelationalDb(sqlite);
+      seedTrackersFromDb(cachedDb);
+      return cachedDb;
     }
 
     if (fs.existsSync(LEGACY_JSON_FILE)) {
       const raw = fs.readFileSync(LEGACY_JSON_FILE, 'utf-8');
       const migrated = hydrateDefaults(JSON.parse(raw) as AppDatabase);
+      resetPersistedTrackers();
       saveDb(migrated);
-      return readRelationalDb(sqlite);
+      cachedDb = readRelationalDb(sqlite);
+      seedTrackersFromDb(cachedDb);
+      return cachedDb;
     }
   } catch {
     // Fallback ke seed awal jika JSON lama korup
   }
 
   const seed = createInitialSeed();
+  resetPersistedTrackers();
   saveDb(seed);
-  return readRelationalDb(sqlite);
+  cachedDb = readRelationalDb(sqlite);
+  seedTrackersFromDb(cachedDb);
+  return cachedDb;
 }
 
 export function saveDb(db: AppDatabase): void {
   const sqlite = getSqlite();
+  cachedDb = db;
+  dbVersion += 1;
+
+  if (!persisted.initialized) {
+    saveDbFull(sqlite, db);
+    seedTrackersFromDb(db);
+    return;
+  }
+
+  const hashUsers = JSON.stringify(db.users);
+  const hashJurusans = JSON.stringify(db.jurusans);
+  const hashKelas = JSON.stringify(db.kelas);
+  const hashGates = JSON.stringify(db.gates);
+  const hashCameras = JSON.stringify(db.cameras);
+  const hashSchedules = JSON.stringify(db.schedules);
+  const hashOverrides = JSON.stringify(db.kelas_overrides);
+  const hashExceptions = JSON.stringify(db.schedule_exceptions);
+  const hashVisitors = JSON.stringify(db.visitors);
+  const hashWaAcc = JSON.stringify(db.wa_accounts);
+  const hashWaTpl = JSON.stringify(db.wa_templates);
+  const hashSettings = JSON.stringify(db.settings) + '|' + String(db.storage_bytes_simulated);
+
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    if (persisted.smallHashes.users !== hashUsers) {
+      sqlite.exec('DELETE FROM users');
+      const insUser = sqlite.prepare('INSERT INTO users (id, name, email, role, is_active, password_hash) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const u of db.users) insUser.run(u.id, u.name, u.email, u.role, u.is_active ? 1 : 0, u.password_hash ?? '');
+      persisted.smallHashes.users = hashUsers;
+    }
+    if (persisted.smallHashes.jurusans !== hashJurusans) {
+      sqlite.exec('DELETE FROM jurusans');
+      const insJur = sqlite.prepare('INSERT INTO jurusans (id, kode, nama) VALUES (?, ?, ?)');
+      for (const j of db.jurusans) insJur.run(j.id, j.kode, j.nama);
+      persisted.smallHashes.jurusans = hashJurusans;
+    }
+    if (persisted.smallHashes.kelas !== hashKelas) {
+      sqlite.exec('DELETE FROM kelas');
+      const insKls = sqlite.prepare('INSERT INTO kelas (id, jurusan_id, tingkat, nama, shift) VALUES (?, ?, ?, ?, ?)');
+      for (const k of db.kelas) insKls.run(k.id, k.jurusan_id, k.tingkat, k.nama, k.shift);
+      persisted.smallHashes.kelas = hashKelas;
+    }
+    if (persisted.smallHashes.gates !== hashGates) {
+      sqlite.exec('DELETE FROM gates');
+      const insGate = sqlite.prepare('INSERT INTO gates (id, nama_gerbang, lokasi, tipe) VALUES (?, ?, ?, ?)');
+      for (const g of db.gates) insGate.run(g.id, g.nama_gerbang, g.lokasi, g.tipe);
+      persisted.smallHashes.gates = hashGates;
+    }
+    if (persisted.smallHashes.cameras !== hashCameras) {
+      sqlite.exec('DELETE FROM cameras');
+      const insCam = sqlite.prepare(`
+        INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const c of db.cameras) {
+        insCam.run(c.id, c.nama_kamera, c.gate_id, c.rtsp_url, c.resolusi, c.fps, c.aktif ? 1 : 0, c.status, c.last_error ?? null, c.last_online_at ?? null);
+      }
+      persisted.smallHashes.cameras = hashCameras;
+    }
+    if (persisted.smallHashes.schedules !== hashSchedules) {
+      sqlite.exec('DELETE FROM schedules');
+      const insSched = sqlite.prepare(`
+        INSERT INTO schedules (id, jurusan_id, hari, jam_masuk_mulai, jam_masuk_selesai, jam_keluar_mulai, jam_keluar_selesai, toleransi_terlambat_menit)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const sc of db.schedules) {
+        insSched.run(sc.id, sc.jurusan_id ?? null, sc.hari, sc.jam_masuk_mulai, sc.jam_masuk_selesai, sc.jam_keluar_mulai, sc.jam_keluar_selesai, sc.toleransi_terlambat_menit);
+      }
+      persisted.smallHashes.schedules = hashSchedules;
+    }
+    if (persisted.smallHashes.kelas_overrides !== hashOverrides) {
+      sqlite.exec('DELETE FROM kelas_overrides');
+      const insOverride = sqlite.prepare(`
+        INSERT INTO kelas_overrides (id, kelas_id, hari, jam_masuk_mulai, jam_masuk_selesai, jam_keluar_mulai, jam_keluar_selesai, alasan)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const o of db.kelas_overrides) {
+        insOverride.run(o.id, o.kelas_id, o.hari, o.jam_masuk_mulai, o.jam_masuk_selesai, o.jam_keluar_mulai, o.jam_keluar_selesai, o.alasan);
+      }
+      persisted.smallHashes.kelas_overrides = hashOverrides;
+    }
+    if (persisted.smallHashes.schedule_exceptions !== hashExceptions) {
+      sqlite.exec('DELETE FROM schedule_exceptions');
+      const insExc = sqlite.prepare(`
+        INSERT INTO schedule_exceptions (id, tanggal, scope, ref_id, tipe, catatan, jam_masuk_override, jam_keluar_override)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const ex of db.schedule_exceptions) {
+        insExc.run(ex.id, ex.tanggal, ex.scope, ex.ref_id ?? null, ex.tipe, ex.catatan, ex.jam_masuk_override ?? null, ex.jam_keluar_override ?? null);
+      }
+      persisted.smallHashes.schedule_exceptions = hashExceptions;
+    }
+    if (persisted.smallHashes.visitors !== hashVisitors) {
+      sqlite.exec('DELETE FROM visitors');
+      const insVisitor = sqlite.prepare('INSERT INTO visitors (id, nama, kategori, snapshot_path, catatan, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+      for (const v of db.visitors) insVisitor.run(v.id, v.nama, v.kategori, v.snapshot_path, v.catatan, v.created_at);
+      persisted.smallHashes.visitors = hashVisitors;
+    }
+    if (persisted.smallHashes.wa_accounts !== hashWaAcc) {
+      sqlite.exec('DELETE FROM wa_accounts');
+      const insWaAcc = sqlite.prepare(`
+        INSERT INTO wa_accounts (id, provider, phone_number, api_key, status, daily_count, hourly_count, last_reset_at, created_at, qr_connected)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const a of db.wa_accounts) {
+        insWaAcc.run(a.id, a.provider, a.phone_number, a.api_key ?? '', a.status, a.daily_count, a.hourly_count, a.last_reset_at, a.created_at, a.qr_connected ? 1 : 0);
+      }
+      persisted.smallHashes.wa_accounts = hashWaAcc;
+    }
+    if (persisted.smallHashes.wa_templates !== hashWaTpl) {
+      sqlite.exec('DELETE FROM wa_templates');
+      const insWaTpl = sqlite.prepare('INSERT INTO wa_templates (id, code, name, template_text, is_active) VALUES (?, ?, ?, ?, ?)');
+      for (const t of db.wa_templates) insWaTpl.run(t.id, t.code, t.name, t.template_text, t.is_active ? 1 : 0);
+      persisted.smallHashes.wa_templates = hashWaTpl;
+    }
+    if (persisted.smallHashes.settings !== hashSettings) {
+      const insSetting = sqlite.prepare(`
+        INSERT INTO settings (key, value_json) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json
+      `);
+      insSetting.run('app_settings', JSON.stringify(db.settings));
+      insSetting.run('storage_bytes_simulated', JSON.stringify(db.storage_bytes_simulated));
+      persisted.smallHashes.settings = hashSettings;
+    }
+
+    // Incremental Students upsert/delete (avoids rewriting 5,000 embedding BLOBs on every attendance scan!)
+    const nextStudents = new Map<number, string>();
+    const upsertStudent = sqlite.prepare(`
+      INSERT INTO students (
+        id, nis, nisn, nama, nickname, kelas_id, tanggal_lahir, status,
+        embedding, embedding_quality_score, embedding_updated_at, foto_ref, wa_ortu, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        nis = excluded.nis,
+        nisn = excluded.nisn,
+        nama = excluded.nama,
+        nickname = excluded.nickname,
+        kelas_id = excluded.kelas_id,
+        tanggal_lahir = excluded.tanggal_lahir,
+        status = excluded.status,
+        embedding = excluded.embedding,
+        embedding_quality_score = excluded.embedding_quality_score,
+        embedding_updated_at = excluded.embedding_updated_at,
+        foto_ref = excluded.foto_ref,
+        wa_ortu = excluded.wa_ortu
+    `);
+    for (const s of db.students) {
+      const sig = studentSignature(s);
+      nextStudents.set(s.id, sig);
+      if (persisted.students.get(s.id) !== sig) {
+        upsertStudent.run(
+          s.id, s.nis, s.nisn, s.nama, s.nickname, s.kelas_id, s.tanggal_lahir, s.status,
+          encodeEmbeddingBlob(s.embedding), s.embedding_quality_score, s.embedding_updated_at ?? null,
+          s.foto_ref ?? null, s.wa_ortu ?? '', s.created_at
+        );
+      }
+    }
+    const delStudent = sqlite.prepare('DELETE FROM students WHERE id = ?');
+    for (const prevId of persisted.students.keys()) {
+      if (!nextStudents.has(prevId)) delStudent.run(prevId);
+    }
+    persisted.students = nextStudents;
+
+    // Incremental Anonymous Clusters upsert/delete
+    const nextClusters = new Map<number, string>();
+    const upsertCluster = sqlite.prepare(`
+      INSERT INTO anonymous_clusters (
+        id, centroid, hit_count, distinct_days, first_seen, last_seen,
+        best_snapshot_path, best_quality_score, best_embedding, hit_snapshots_json, status, named_student_id, last_camera_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        centroid = excluded.centroid,
+        hit_count = excluded.hit_count,
+        distinct_days = excluded.distinct_days,
+        last_seen = excluded.last_seen,
+        best_snapshot_path = excluded.best_snapshot_path,
+        best_quality_score = excluded.best_quality_score,
+        best_embedding = excluded.best_embedding,
+        hit_snapshots_json = excluded.hit_snapshots_json,
+        status = excluded.status,
+        named_student_id = excluded.named_student_id,
+        last_camera_id = excluded.last_camera_id
+    `);
+    for (const c of db.anonymous_clusters) {
+      const sig = clusterSignature(c);
+      nextClusters.set(c.id, sig);
+      if (persisted.clusters.get(c.id) !== sig) {
+        upsertCluster.run(
+          c.id, encodeEmbeddingBlob(c.centroid), c.hit_count, c.distinct_days, c.first_seen, c.last_seen,
+          c.best_snapshot_path, c.best_quality_score, encodeEmbeddingBlob(c.best_embedding),
+          JSON.stringify(c.hit_snapshots ?? []), c.status, c.named_student_id ?? null, c.last_camera_id ?? null
+        );
+      }
+    }
+    const delCluster = sqlite.prepare('DELETE FROM anonymous_clusters WHERE id = ?');
+    for (const prevId of persisted.clusters.keys()) {
+      if (!nextClusters.has(prevId)) delCluster.run(prevId);
+    }
+    persisted.clusters = nextClusters;
+
+    // Incremental Face History
+    const nextHist = new Map<number, string>();
+    const upsertHist = sqlite.prepare(`
+      INSERT INTO face_update_history (id, student_id, version, embedding, quality_score, snapshot_path, created_at, approved_by, approved_at, is_canonical)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        approved_by = excluded.approved_by,
+        approved_at = excluded.approved_at,
+        is_canonical = excluded.is_canonical
+    `);
+    for (const h of db.face_update_history) {
+      const sig = historySignature(h);
+      nextHist.set(h.id, sig);
+      if (persisted.history.get(h.id) !== sig) {
+        upsertHist.run(
+          h.id, h.student_id, h.version, encodeEmbeddingBlob(h.embedding), h.quality_score,
+          h.snapshot_path, h.created_at, h.approved_by ?? null, h.approved_at ?? null, h.is_canonical ? 1 : 0
+        );
+      }
+    }
+    const delHist = sqlite.prepare('DELETE FROM face_update_history WHERE id = ?');
+    for (const prevId of persisted.history.keys()) {
+      if (!nextHist.has(prevId)) delHist.run(prevId);
+    }
+    persisted.history = nextHist;
+
+    // Incremental Face Reviews
+    const nextRev = new Map<number, string>();
+    const upsertRev = sqlite.prepare(`
+      INSERT INTO face_update_reviews (id, student_id, month, year, candidate_snapshots_json, current_quality, best_new_quality, status, reviewed_by, reviewed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        candidate_snapshots_json = excluded.candidate_snapshots_json,
+        current_quality = excluded.current_quality,
+        best_new_quality = excluded.best_new_quality,
+        status = excluded.status,
+        reviewed_by = excluded.reviewed_by,
+        reviewed_at = excluded.reviewed_at
+    `);
+    for (const r of db.face_update_reviews) {
+      const sig = reviewSignature(r);
+      nextRev.set(r.id, sig);
+      if (persisted.reviews.get(r.id) !== sig) {
+        upsertRev.run(
+          r.id, r.student_id, r.month, r.year, JSON.stringify(r.candidate_snapshots),
+          r.current_quality, r.best_new_quality, r.status, r.reviewed_by ?? null, r.reviewed_at ?? null
+        );
+      }
+    }
+    const delRev = sqlite.prepare('DELETE FROM face_update_reviews WHERE id = ?');
+    for (const prevId of persisted.reviews.keys()) {
+      if (!nextRev.has(prevId)) delRev.run(prevId);
+    }
+    persisted.reviews = nextRev;
+
+    // Incremental Attendance Logs (insert/update changed only)
+    const nextLogs = new Map<number, string>();
+    const upsertLog = sqlite.prepare(`
+      INSERT INTO attendance_logs (id, student_id, gate_id, camera_id, timestamp, tipe, status, is_manual_override, similarity_score, snapshot_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        is_manual_override = excluded.is_manual_override,
+        similarity_score = excluded.similarity_score,
+        snapshot_path = excluded.snapshot_path
+    `);
+    for (const l of db.attendance_logs) {
+      const sig = logSignature(l);
+      nextLogs.set(l.id, sig);
+      if (persisted.logs.get(l.id) !== sig) {
+        upsertLog.run(l.id, l.student_id, l.gate_id, l.camera_id, l.timestamp, l.tipe, l.status, l.is_manual_override ? 1 : 0, l.similarity_score ?? null, l.snapshot_path ?? null);
+      }
+    }
+    persisted.logs = nextLogs;
+
+    // Incremental Daily Attendance (upsert changed/new only; preserves historical rows > 180 days)
+    const nextDaily = new Map<number, string>();
+    const upsertDaily = sqlite.prepare(`
+      INSERT INTO daily_attendance (id, student_id, tanggal, jam_masuk, jam_keluar, status, manual_override_by, manual_override_at, catatan)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(student_id, tanggal) DO UPDATE SET
+        jam_masuk = excluded.jam_masuk,
+        jam_keluar = excluded.jam_keluar,
+        status = excluded.status,
+        manual_override_by = excluded.manual_override_by,
+        manual_override_at = excluded.manual_override_at,
+        catatan = excluded.catatan
+    `);
+    for (const d of db.daily_attendance) {
+      const sig = dailySignature(d);
+      nextDaily.set(d.id, sig);
+      if (persisted.daily.get(d.id) !== sig) {
+        upsertDaily.run(d.id, d.student_id, d.tanggal, d.jam_masuk ?? null, d.jam_keluar ?? null, d.status, d.manual_override_by ?? null, d.manual_override_at ?? null, d.catatan ?? null);
+      }
+    }
+    persisted.daily = nextDaily;
+
+    // Incremental WA Queue
+    const nextWaQ = new Map<number, string>();
+    const upsertWaQ = sqlite.prepare(`
+      INSERT INTO wa_queue (id, student_id, phone, payload_json, status, retry_count, scheduled_at, sent_at, error_msg)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        retry_count = excluded.retry_count,
+        scheduled_at = excluded.scheduled_at,
+        sent_at = excluded.sent_at,
+        error_msg = excluded.error_msg
+    `);
+    for (const q of db.wa_queue) {
+      const sig = waQueueSignature(q);
+      nextWaQ.set(q.id, sig);
+      if (persisted.waQueue.get(q.id) !== sig) {
+        upsertWaQ.run(q.id, q.student_id ?? null, q.phone, JSON.stringify(q.payload), q.status, q.retry_count, q.scheduled_at, q.sent_at ?? null, q.error_msg ?? null);
+      }
+    }
+    persisted.waQueue = nextWaQ;
+
+    // Incremental Notifications
+    const nextNotif = new Map<number, string>();
+    const upsertNotif = sqlite.prepare(`
+      INSERT INTO notifications (id, user_id, role_target, type, title, message, is_read, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET is_read = excluded.is_read
+    `);
+    for (const n of db.notifications) {
+      const sig = notifSignature(n);
+      nextNotif.set(n.id, sig);
+      if (persisted.notifications.get(n.id) !== sig) {
+        upsertNotif.run(n.id, n.user_id ?? null, n.role_target, n.type, n.title, n.message, n.is_read ? 1 : 0, n.created_at);
+      }
+    }
+    const delNotif = sqlite.prepare('DELETE FROM notifications WHERE id = ?');
+    for (const prevId of persisted.notifications.keys()) {
+      if (!nextNotif.has(prevId)) delNotif.run(prevId);
+    }
+    persisted.notifications = nextNotif;
+
+    // Append-only Guest Access Logs
+    const insGuest = sqlite.prepare(`
+      INSERT INTO guest_access_logs (id, ip, timestamp, success, nisn_attempted)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
+    `);
+    for (const g of db.guest_access_logs) {
+      if (!persisted.guestLogs.has(g.id)) {
+        insGuest.run(g.id, g.ip, g.timestamp, g.success ? 1 : 0, g.nisn_attempted);
+        persisted.guestLogs.add(g.id);
+      }
+    }
+
+    sqlite.exec('COMMIT');
+  } catch (err) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // ignore rollback failure
+    }
+    throw err;
+  }
+}
+
+function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
   sqlite.exec('BEGIN IMMEDIATE');
   try {
     sqlite.exec(`
@@ -1010,7 +1569,6 @@ export function saveDb(db: AppDatabase): void {
       insExc.run(ex.id, ex.tanggal, ex.scope, ex.ref_id ?? null, ex.tipe, ex.catatan, ex.jam_masuk_override ?? null, ex.jam_keluar_override ?? null);
     }
 
-    // Preserve historical attendance_logs beyond the 3000-row read cap while upserting current window
     const insLog = sqlite.prepare(`
       INSERT INTO attendance_logs (id, student_id, gate_id, camera_id, timestamp, tipe, status, is_manual_override, similarity_score, snapshot_path)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1029,7 +1587,6 @@ export function saveDb(db: AppDatabase): void {
       insLog.run(l.id, l.student_id, l.gate_id, l.camera_id, l.timestamp, l.tipe, l.status, l.is_manual_override ? 1 : 0, l.similarity_score ?? null, l.snapshot_path ?? null);
     }
 
-    // Preserve daily_attendance older than window while cleanly syncing active 180-day window
     const cutoffDaily = dailyWindowCutoffDate();
     sqlite.prepare('DELETE FROM daily_attendance WHERE tanggal >= ?').run(cutoffDaily);
     const insDaily = sqlite.prepare(`
@@ -1186,6 +1743,7 @@ export function deleteStudentFromSqlite(studentId: number): void {
   sqlite.prepare('DELETE FROM face_update_history WHERE student_id = ?').run(studentId);
   sqlite.prepare('DELETE FROM face_update_reviews WHERE student_id = ?').run(studentId);
   sqlite.prepare('DELETE FROM students WHERE id = ?').run(studentId);
+  persisted.students.delete(studentId);
 }
 
 export function runStorageCleanup(db: AppDatabase): { freedMb: number } {
@@ -1432,6 +1990,7 @@ export function restoreFromBackupBuffer(rawInput: Buffer): AppDatabase {
       }
     }
     fs.copyFileSync(testTmp, SQLITE_FILE);
+    invalidateDbCache();
   } finally {
     try {
       if (fs.existsSync(testTmp)) fs.unlinkSync(testTmp);

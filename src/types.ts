@@ -325,6 +325,14 @@ export interface WorkerStatusResponse {
   model_loaded: boolean;
   expected_embedding_dims: number;
   active_workers: number;
+  indexed_students?: number;
+  automation?: {
+    daily_scheduler_active: boolean;
+    wa_worker_active: boolean;
+    auto_backup_enabled: boolean;
+    auto_update_enabled: boolean;
+    python_gallery_synced?: boolean;
+  };
   cameras: WorkerCameraStat[];
 }
 

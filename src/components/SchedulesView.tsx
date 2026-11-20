@@ -294,7 +294,7 @@ export const SchedulesView: React.FC<SchedulesViewProps> = ({
           </button>
         </form>
 
-        <div className="overflow-x-auto">
+        <div tabIndex={0} role="region" aria-label="Daftar Jadwal Masuk dan Pulang" className="table-wrapper">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">

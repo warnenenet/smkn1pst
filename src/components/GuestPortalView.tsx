@@ -120,22 +120,27 @@ export const GuestPortalView: React.FC<GuestPortalViewProps> = ({
             )}
 
             <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
+              <div className="field-group">
                 <label htmlFor="guest-nisn" className="block text-xs font-medium text-slate-700 mb-1">NISN Siswa</label>
                 <input
                   id="guest-nisn"
+                  name="nisn"
                   type="text"
+                  inputMode="numeric"
                   required
+                  autoComplete="off"
+                  enterKeyHint="next"
                   placeholder="Contoh: 0081122001"
                   value={nisn}
                   onChange={(e) => setNisn(e.target.value)}
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-xs font-mono"
                 />
               </div>
-              <div>
+              <div className="field-group">
                 <label htmlFor="guest-dob" className="block text-xs font-medium text-slate-700 mb-1">Tanggal Lahir</label>
                 <input
                   id="guest-dob"
+                  name="tanggal_lahir"
                   type="date"
                   required
                   value={tanggalLahir}
@@ -143,24 +148,28 @@ export const GuestPortalView: React.FC<GuestPortalViewProps> = ({
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-xs font-mono"
                 />
               </div>
-              <div>
+              <div className="field-group">
                 <label htmlFor="guest-month" className="block text-xs font-medium text-slate-700 mb-1">Bulan Rekap</label>
                 <input
                   id="guest-month"
+                  name="month"
                   type="month"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
                   className="w-full border border-slate-300 rounded-md px-3 py-2 text-xs font-mono"
                 />
               </div>
-              <div>
+              <div className="field-group">
                 <label htmlFor="guest-captcha" className="block text-xs font-medium text-slate-700 mb-1">
                   Verifikasi: Berapa <strong className="font-mono">{captchaNums.a} + {captchaNums.b}</strong> ?
                 </label>
                 <input
                   id="guest-captcha"
+                  name="captcha"
                   type="number"
+                  inputMode="numeric"
                   required
+                  enterKeyHint="done"
                   placeholder="Jawaban angka"
                   value={captchaAns}
                   onChange={(e) => setCaptchaAns(e.target.value)}
@@ -207,33 +216,35 @@ export const GuestPortalView: React.FC<GuestPortalViewProps> = ({
                 </div>
               </div>
 
-              <table className="w-full text-left text-xs mt-4">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-500">
-                    <th className="py-2 font-medium">Tanggal</th>
-                    <th className="py-2 font-medium">Jam Masuk</th>
-                    <th className="py-2 font-medium">Jam Keluar</th>
-                    <th className="py-2 font-medium text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {result.records.map((r) => (
-                    <tr key={r.id}>
-                      <td className="py-2 font-mono tabular-nums text-slate-800">{r.tanggal}</td>
-                      <td className="py-2 font-mono tabular-nums text-slate-600">{r.jam_masuk ?? '-'}</td>
-                      <td className="py-2 font-mono tabular-nums text-slate-600">{r.jam_keluar ?? '-'}</td>
-                      <td className="py-2 text-right font-semibold text-slate-900">{r.status}</td>
+              <div tabIndex={0} role="region" aria-label="Rekap Kehadiran Bulanan Siswa" className="table-wrapper mt-4">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500">
+                      <th className="py-2 font-medium">Tanggal</th>
+                      <th className="py-2 font-medium">Jam Masuk</th>
+                      <th className="py-2 font-medium">Jam Keluar</th>
+                      <th className="py-2 font-medium text-right">Status</th>
                     </tr>
-                  ))}
-                  {result.records.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="py-6 text-center text-slate-500">
-                        Belum ada catatan absensi pada bulan ini.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {result.records.map((r) => (
+                      <tr key={r.id}>
+                        <td className="py-2 font-mono tabular-nums text-slate-800">{r.tanggal}</td>
+                        <td className="py-2 font-mono tabular-nums text-slate-600">{r.jam_masuk ?? '-'}</td>
+                        <td className="py-2 font-mono tabular-nums text-slate-600">{r.jam_keluar ?? '-'}</td>
+                        <td className="py-2 text-right font-semibold text-slate-900">{r.status}</td>
+                      </tr>
+                    ))}
+                    {result.records.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-slate-500">
+                          Belum ada catatan absensi pada bulan ini.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </section>
           )}
         </div>

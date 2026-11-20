@@ -188,7 +188,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({ db }) => {
             </div>
           )}
         </div>
-        <div className="overflow-x-auto">
+        <div tabIndex={0} role="region" aria-label="Laporan Rekap Kehadiran Siswa" className="table-wrapper">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-200 text-slate-500">

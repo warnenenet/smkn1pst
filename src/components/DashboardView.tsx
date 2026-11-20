@@ -186,23 +186,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </section>
 
       {/* Live Face AI & RTSP Worker Monitor */}
-      <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+      <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <Activity className="w-4 h-4 text-emerald-700" />
             <h2 className="text-sm font-semibold text-slate-900">
-              Monitor Engine Face AI &amp; Worker RTSP Live
+              Monitor Engine Face AI &amp; Otomasi Sistem
             </h2>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs font-mono">
             <span className={isProd ? 'text-emerald-700 font-semibold' : 'text-amber-700 font-semibold'}>
-              {isProd ? 'MODE PRODUKSI' : 'MODE UJI / DEMO'}
+              {isProd ? 'PRODUKSI' : 'MODE UJI'}
             </span>
             <span className="text-slate-600">
               Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong> ({expectedDims}-D)
             </span>
             <span className="text-slate-600">
-              WIB: <strong className="text-slate-900">{workerStatus?.server_time_wib?.slice(11, 19) ?? '-'}</strong>
+              Indeks RAM: <strong className="text-slate-900 tabular-nums">{workerStatus?.indexed_students ?? 0}</strong> vektor
+            </span>
+            <span className="text-slate-600">
+              WIB: <strong className="text-slate-900 tabular-nums">{workerStatus?.server_time_wib?.slice(11, 19) ?? '-'}</strong>
             </span>
             <span className="text-slate-600">
               Model AI:{' '}
@@ -216,8 +219,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100 text-xs">
+          <div className="rounded-md bg-slate-50 border border-slate-200/80 px-3 py-2">
+            <div className="text-[11px] text-slate-500">Scheduler Harian WIB</div>
+            <div className="font-semibold text-emerald-700 mt-0.5">
+              {workerStatus?.automation?.daily_scheduler_active === false ? 'Nonaktif' : 'Otomatis (60 dtk)'}
+            </div>
+          </div>
+          <div className="rounded-md bg-slate-50 border border-slate-200/80 px-3 py-2">
+            <div className="text-[11px] text-slate-500">Antrean WhatsApp</div>
+            <div className={`font-semibold mt-0.5 ${db.settings.wa_auto_dispatch_enabled ? 'text-emerald-700' : 'text-slate-700'}`}>
+              {db.settings.wa_auto_dispatch_enabled ? 'Auto-Kirim Aktif' : 'Manual / Dijeda'}
+            </div>
+          </div>
+          <div className="rounded-md bg-slate-50 border border-slate-200/80 px-3 py-2">
+            <div className="text-[11px] text-slate-500">Auto-Backup SQLite</div>
+            <div className={`font-semibold mt-0.5 ${db.settings.auto_backup_enabled !== false ? 'text-emerald-700' : 'text-slate-700'}`}>
+              {db.settings.auto_backup_enabled !== false ? 'Harian (.sqlite.gz)' : 'Nonaktif'}
+            </div>
+          </div>
+          <div className="rounded-md bg-slate-50 border border-slate-200/80 px-3 py-2">
+            <div className="text-[11px] text-slate-500">Auto-Update GitHub</div>
+            <div className={`font-semibold mt-0.5 ${workerStatus?.automation?.auto_update_enabled ? 'text-emerald-700' : 'text-slate-600'}`}>
+              {workerStatus?.automation?.auto_update_enabled ? 'Aktif (Per 1 Jam)' : 'Opsional (Env Off)'}
+            </div>
+          </div>
+        </div>
+
         {workerStatus && workerStatus.cameras.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div tabIndex={0} role="region" aria-label="Status Worker Kamera RTSP Live" className="table-wrapper">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
@@ -298,9 +328,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {storageTone.label} · {storagePct}%
             </span>
           </div>
-          <div className="w-full h-2.5 bg-slate-100 rounded-md overflow-hidden">
-            <div className={`h-full ${storageTone.bar} transition-all duration-300`} style={{ width: `${storagePct}%` }} />
-          </div>
+          <progress
+            max={100}
+            value={storagePct}
+            aria-label={`Penggunaan storage ${storageGb.toFixed(2)} GB dari 10 GB`}
+            style={{
+              ['--progress-fill' as string]: storageGb < 7 ? '#059669' : storageGb <= 9 ? '#d97706' : '#dc2626',
+            }}
+            className="storage-progress"
+          />
           <p className="text-xs text-slate-500 mt-3">
             Hanya 1 best snapshot per cluster dan maks 3 versi history per siswa (&gt;4 bulan auto-hapus). Cache TTS dibatasi 200 MB.
           </p>
@@ -317,7 +353,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Kelola WA &amp; Antrean ({waPending} pending)
             </button>
           </div>
-          <div className="overflow-x-auto">
+          <div tabIndex={0} role="region" aria-label="Status Akun WhatsApp Gateway" className="table-wrapper">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">
@@ -364,7 +400,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Atur Kamera
             </button>
           </div>
-          <div className="overflow-x-auto">
+          <div tabIndex={0} role="region" aria-label="Status Kamera Gerbang" className="table-wrapper">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-200 text-slate-500">

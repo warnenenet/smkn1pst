@@ -14,8 +14,10 @@ import {
   deleteAuthSession,
   deleteStudentFromSqlite,
   getBackupFilePath,
+  getCachedClusterFaceIndex,
   getSessionUserId,
   hashPassword,
+  invalidateDbCache,
   listBackups,
   loadDb,
   purgeDemoRowsFromSqlite,
@@ -75,11 +77,14 @@ import {
   isNonSpaResourcePath,
   shouldServeProductionBuild,
 } from './src/lib/staticConfig.ts';
+import { stripEmbeddingsForBootstrap } from './src/lib/uiRefreshGuard.ts';
+import { findBestFaceMatch } from './src/lib/faceIndex.ts';
 import type { AcademicTransitionType, AppDatabase, AttendanceStatus, Student, User, UserRole } from './src/types';
 
 const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001';
 const execFileAsync = promisify(execFile);
 const SERVER_START_MS = Date.now();
+let pythonGallerySynced = false;
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));
@@ -354,7 +359,20 @@ app.get('/api/health', async (_req, res) => {
 });
 
 app.get('/api/worker/status', requireAuth(), (_req, res) => {
-  res.json(getNodeWorkerStatus(loadDb()));
+  const db = loadDb();
+  const base = getNodeWorkerStatus(db);
+  const autoUpdateEnabled =
+    process.env.AUTO_UPDATE_ENABLED === '1' || process.env.AUTO_UPDATE_ENABLED === 'true';
+  res.json({
+    ...base,
+    automation: {
+      daily_scheduler_active: true,
+      wa_worker_active: Boolean(db.settings.wa_auto_dispatch_enabled),
+      auto_backup_enabled: db.settings.auto_backup_enabled !== false,
+      auto_update_enabled: autoUpdateEnabled,
+      python_gallery_synced: pythonGallerySynced,
+    },
+  });
 });
 
 app.get('/api/auth/me', (req, res) => {
@@ -452,9 +470,10 @@ app.get('/api/tts', async (req, res) => {
 
 app.get('/api/bootstrap', requireAuth(), (_req, res) => {
   const db = loadDb();
+  const lite = stripEmbeddingsForBootstrap(db);
   res.json({
-    ...db,
-    users: db.users.map(sanitizeUser),
+    ...lite,
+    users: lite.users.map(sanitizeUser),
   });
 });
 
@@ -1414,17 +1433,14 @@ function processFaceEvent(payload: {
     let bestClusterSim = -1;
     let topClusterAnySim = 0;
     let clusterDimMismatch = 0;
-    for (const c of db.anonymous_clusters) {
-      if ((c.status !== 'PENDING' && c.status !== 'READY') || !Array.isArray(embedding)) continue;
-      if (!Array.isArray(c.centroid) || c.centroid.length !== embedding.length) {
-        clusterDimMismatch += 1;
-        continue;
-      }
-      const cSim = cosineSimilarity(embedding, c.centroid);
-      if (cSim > topClusterAnySim) topClusterAnySim = cSim;
-      if (cSim >= db.settings.threshold_clustering && cSim > bestClusterSim) {
-        bestClusterSim = cSim;
-        bestCluster = c;
+    if (Array.isArray(embedding) && embedding.length > 0) {
+      const clusterIdx = getCachedClusterFaceIndex(db.anonymous_clusters);
+      const clusterMatch = findBestFaceMatch(clusterIdx, embedding, db.settings.threshold_clustering);
+      topClusterAnySim = clusterMatch.topAnySimilarity;
+      clusterDimMismatch = clusterMatch.dimMismatchCount;
+      if (clusterMatch.bestId !== null) {
+        bestCluster = db.anonymous_clusters.find((c) => c.id === clusterMatch.bestId) ?? null;
+        bestClusterSim = clusterMatch.bestSimilarity;
       }
     }
 
@@ -2224,6 +2240,8 @@ app.post('/api/system/activate-production', requireAuth(['ADMIN']), (req, res) =
   saveDb(db);
   if (production_mode && cleanDemoData) {
     purgeDemoRowsFromSqlite(removedIds, onlyDemo);
+    invalidateDbCache();
+    db = loadDb();
   }
   triggerPythonCameraReload();
   refreshNodeRtspWorkers().catch(() => {});
@@ -2881,6 +2899,50 @@ async function start() {
   setInterval(executeDailyTick, 60_000);
   setTimeout(executeMaintenanceTick, 10_000);
   setInterval(executeMaintenanceTick, 6 * 3600_000);
+
+  // Auto-sync galeri 5000+ siswa ke Python InsightFace saat service boot/pulih + prewarm TTS offline
+  const executeAutoAiHealTick = async () => {
+    try {
+      const db = loadDb();
+      if (panggilCooldown.size > 1000) {
+        const now = Date.now();
+        for (const [k, ts] of panggilCooldown.entries()) {
+          if (now - ts > 600_000) panggilCooldown.delete(k);
+        }
+      }
+      const enrolledCount = db.students.filter(
+        (s) => s.status !== 'LULUS' && Array.isArray(s.embedding) && s.embedding.length > 0
+      ).length;
+      const pyHealth = await callFaceService<{ ok?: boolean; gallery_size?: number }>('/health');
+      if (pyHealth?.ok) {
+        if (enrolledCount > 0 && (pyHealth.gallery_size ?? 0) === 0) {
+          await callFaceService('/cameras/reload', {});
+          console.log(`[AutoSync] Memulihkan galeri ${enrolledCount} wajah ke InsightFace Python.`);
+        }
+        pythonGallerySynced = true;
+      } else {
+        pythonGallerySynced = false;
+      }
+    } catch {
+      pythonGallerySynced = false;
+    }
+  };
+  setTimeout(() => void executeAutoAiHealTick(), 8000);
+  setInterval(() => void executeAutoAiHealTick(), 60_000);
+
+  if (isPiperAvailable()) {
+    setTimeout(() => {
+      try {
+        const db = loadDb();
+        const names = db.students.filter((s) => s.status !== 'LULUS').map((s) => s.nickname || s.nama);
+        if (names.length > 0) {
+          prewarmStudentNamesTts(names.slice(0, 500));
+        }
+      } catch {
+        // ignore prewarm failure
+      }
+    }, 15_000);
+  }
 
   // Auto-update GitHub terjadwal opsional (default 60 menit = 1 jam sekali bila AUTO_UPDATE_ENABLED=1)
   const autoUpdateEnabled =

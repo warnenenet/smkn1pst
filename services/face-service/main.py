@@ -44,6 +44,9 @@ analyzer_init_lock = threading.Lock()
 analyzer_initialized = False
 gallery_lock = threading.Lock()
 gallery_cache: List[Dict[str, Any]] = []
+gallery_matrix: Optional[np.ndarray] = None
+gallery_ids: Optional[np.ndarray] = None
+gallery_dims: int = 0
 settings_cache: Dict[str, Any] = {
     "threshold_confidence": 0.80,
     "threshold_recognition": 0.70,
@@ -125,12 +128,62 @@ def cosine_sim(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (na * nb))
 
 
-def match_1_to_n(query_emb: List[float], gallery: List[Dict[str, Any]]) -> Tuple[Optional[int], float]:
+def rebuild_gallery_matrix_locked(students: List[Dict[str, Any]]) -> None:
+    global gallery_matrix, gallery_ids, gallery_dims
+    rows: List[np.ndarray] = []
+    ids: List[int] = []
+    target_dim = 0
+    for item in students:
+        emb = item.get("embedding")
+        if not emb:
+            continue
+        vec = np.asarray(emb, dtype=np.float32)
+        if vec.ndim != 1 or vec.shape[0] == 0:
+            continue
+        norm = float(np.linalg.norm(vec))
+        if norm <= 1e-12:
+            continue
+        if target_dim == 0:
+            target_dim = int(vec.shape[0])
+        if int(vec.shape[0]) != target_dim:
+            continue
+        rows.append(vec / norm)
+        ids.append(int(item["id"]))
+
+    if rows:
+        gallery_matrix = np.vstack(rows).astype(np.float32, copy=False)
+        gallery_ids = np.asarray(ids, dtype=np.int64)
+        gallery_dims = target_dim
+    else:
+        gallery_matrix = None
+        gallery_ids = None
+        gallery_dims = 0
+
+
+def match_1_to_n(
+    query_emb: List[float],
+    gallery: List[Dict[str, Any]],
+    cached_matrix: Optional[np.ndarray] = None,
+    cached_ids: Optional[np.ndarray] = None,
+) -> Tuple[Optional[int], float]:
+    q = np.asarray(query_emb, dtype=np.float32)
+    q_norm = float(np.linalg.norm(q))
+    if q_norm <= 1e-12:
+        return None, 0.0
+    q = q / q_norm
+
+    # Jalur utama BLAS/NumPy O(N*D) pre-normalized matrix @ query (< 0.5 ms untuk 5.000 x 512 wajah)
+    if cached_matrix is not None and cached_ids is not None and cached_matrix.shape[0] > 0 and cached_matrix.shape[1] == q.shape[0]:
+        sims = cached_matrix @ q
+        best_idx = int(np.argmax(sims))
+        best_sim = float(sims[best_idx])
+        return int(cached_ids[best_idx]), max(0.0, best_sim)
+
     if not gallery:
         return None, 0.0
 
-    # Gunakan Rust binary statis jika tersedia untuk akselerasi 1:N hingga 5000+ siswa
-    if os.path.isfile(RUST_ACCEL_BIN) and os.access(RUST_ACCEL_BIN, os.X_OK):
+    # Opsional Rust subprocess hanya jika diaktifkan eksplisit via USE_RUST_SUBPROCESS=1
+    if os.environ.get("USE_RUST_SUBPROCESS") == "1" and os.path.isfile(RUST_ACCEL_BIN) and os.access(RUST_ACCEL_BIN, os.X_OK):
         try:
             payload = json.dumps({"query": query_emb, "gallery": gallery})
             proc = subprocess.run(
@@ -146,20 +199,13 @@ def match_1_to_n(query_emb: List[float], gallery: List[Dict[str, Any]]) -> Tuple
         except Exception:
             pass
 
-    # Fallback ke NumPy tervektorisasi
-    q = np.asarray(query_emb, dtype=np.float32)
-    q_norm = np.linalg.norm(q)
-    if q_norm <= 1e-12:
-        return None, 0.0
-    q = q / q_norm
-
     best_id: Optional[int] = None
     best_sim = -1.0
     for item in gallery:
         v = np.asarray(item["embedding"], dtype=np.float32)
         if v.shape != q.shape:
             continue
-        vn = np.linalg.norm(v)
+        vn = float(np.linalg.norm(v))
         if vn <= 1e-12:
             continue
         sim = float(np.dot(q, v / vn))
@@ -181,12 +227,14 @@ def detect_faces(img: np.ndarray) -> List[Any]:
 def sync_gallery_and_settings() -> None:
     global gallery_cache, settings_cache
     try:
-        with httpx.Client(timeout=5.0) as client:
+        with httpx.Client(timeout=8.0) as client:
             resp = client.get(f"{WEB_BACKEND_URL}/api/internal/gallery")
             if resp.status_code == 200:
                 data = resp.json()
+                students = data.get("students", [])
                 with gallery_lock:
-                    gallery_cache = data.get("students", [])
+                    gallery_cache = students
+                    rebuild_gallery_matrix_locked(students)
                     if isinstance(data.get("settings"), dict):
                         settings_cache.update(data["settings"])
     except Exception:
@@ -339,6 +387,8 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                 tracked = tracker.update(boxes, now)
                 with gallery_lock:
                     cur_gallery = list(gallery_cache)
+                    cur_mat = gallery_matrix
+                    cur_ids = gallery_ids
 
                 h_img, w_img = frame.shape[:2]
                 for f, (track_id, should_dispatch) in zip(valid_faces, tracked):
@@ -367,7 +417,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                         continue
 
                     emb = f.normed_embedding.astype(np.float32).tolist()
-                    best_id, sim = match_1_to_n(emb, cur_gallery)
+                    best_id, sim = match_1_to_n(emb, cur_gallery, cur_mat, cur_ids)
                     recognized_id = best_id if (best_id is not None and sim >= rec_thresh) else None
 
                     if recognized_id is not None:
