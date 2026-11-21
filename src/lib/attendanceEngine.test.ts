@@ -507,11 +507,16 @@ test('pixel capture helpers normalize width, JPEG quality, FFmpeg filter, and de
     normalizeMinFaceSize,
     buildFfmpegCaptureVideoFilter,
     describeCaptureResolutionMode,
+    parseResolutionDimensions,
+    formatManualResolution,
+    computeCalibratedMinFacePx,
   } = await import('./attendanceEngine');
 
   assert.equal(normalizeMinFaceSize(undefined), 60);
-  assert.equal(normalizeMinFaceSize(10), 20);
-  assert.equal(normalizeMinFaceSize(500), 400);
+  assert.equal(normalizeMinFaceSize(10), 16);
+  assert.equal(normalizeMinFaceSize(100), 100);
+  assert.equal(normalizeMinFaceSize(500), 500);
+  assert.equal(normalizeMinFaceSize(9999), 4096);
   assert.equal(normalizeMinFaceSize(75.4), 75);
 
   assert.equal(normalizeCaptureMaxWidth(undefined), 1280);
@@ -519,7 +524,7 @@ test('pixel capture helpers normalize width, JPEG quality, FFmpeg filter, and de
   assert.equal(normalizeCaptureMaxWidth(-50), 0);
   assert.equal(normalizeCaptureMaxWidth(1921), 1920);
   assert.equal(normalizeCaptureMaxWidth(100), 320);
-  assert.equal(normalizeCaptureMaxWidth(9999), 3840);
+  assert.equal(normalizeCaptureMaxWidth(9999), 7680);
 
   assert.equal(normalizeCaptureJpegQuality(undefined), 86);
   assert.equal(normalizeCaptureJpegQuality(10), 50);
@@ -533,6 +538,34 @@ test('pixel capture helpers normalize width, JPEG quality, FFmpeg filter, and de
   assert.equal(describeCaptureResolutionMode(1280), '1280 px (HD 720p)');
   assert.equal(describeCaptureResolutionMode(1920), '1920 px (Full HD 1080p)');
   assert.equal(describeCaptureResolutionMode(0), 'Native (Asli Kamera)');
+
+  assert.deepEqual(parseResolutionDimensions('2304x1296'), { width: 2304, height: 1296 });
+  assert.deepEqual(parseResolutionDimensions('invalid'), { width: 1920, height: 1080 });
+  assert.equal(formatManualResolution(1921, 1081), '1920x1080');
+
+  // 100 px di kamera 1920x1080 saat capture di-scale ke 1280 px -> efektif 67 px di frame AI
+  const scaled = computeCalibratedMinFacePx({
+    cameraResolution: '1920x1080',
+    globalMinFaceSize: 60,
+    cameraMinFaceSize: 100,
+    globalCaptureMaxWidth: 1280,
+    cameraCaptureMaxWidth: null,
+  });
+  assert.equal(scaled.targetCameraPx, 100);
+  assert.equal(scaled.effectiveFrameWidth, 1280);
+  assert.equal(scaled.effectiveMinFacePx, 67);
+  assert.equal(scaled.widthPercent, 5.2);
+
+  // Jika capture diset Native (0) per kamera -> efektif tepat 100 px
+  const nativeCal = computeCalibratedMinFacePx({
+    cameraResolution: '1920x1080',
+    globalMinFaceSize: 60,
+    cameraMinFaceSize: 100,
+    globalCaptureMaxWidth: 1280,
+    cameraCaptureMaxWidth: 0,
+  });
+  assert.equal(nativeCal.effectiveFrameWidth, 1920);
+  assert.equal(nativeCal.effectiveMinFacePx, 100);
 });
 
 test('manual cluster curation removes mismatched hits, promotes primary photo, and merges groups cleanly', async () => {

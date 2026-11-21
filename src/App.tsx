@@ -672,6 +672,10 @@ export default function App() {
                 await apiPost('/api/cameras', payload);
                 notify('Kamera ditambahkan.');
               }}
+              onUpdateCamera={async (id, payload) => {
+                await apiPost(`/api/cameras/${id}`, payload, 'PUT');
+                notify(`Kalibrasi kamera #${id} disimpan.`);
+              }}
               onToggleCamera={async (id, aktif) => {
                 await apiPost(`/api/cameras/${id}`, { aktif }, 'PUT');
                 notify('Status kamera diperbarui.');

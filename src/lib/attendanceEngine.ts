@@ -1022,7 +1022,7 @@ export function normalizeCaptureMaxWidth(rawValue: unknown): number {
   if (!Number.isFinite(num)) return 1280;
   const rounded = Math.round(num);
   if (rounded <= 0) return 0; // 0 = Resolusi asli kamera (Native tanpa resize)
-  const clamped = Math.min(3840, Math.max(320, rounded));
+  const clamped = Math.min(7680, Math.max(320, rounded));
   // FFmpeg libx264/mjpeg -2 scale bekerja bersih pada lebar genap
   return clamped % 2 === 0 ? clamped : clamped - 1;
 }
@@ -1036,7 +1036,83 @@ export function normalizeCaptureJpegQuality(rawValue: unknown): number {
 export function normalizeMinFaceSize(rawValue: unknown): number {
   const num = Number(rawValue);
   if (!Number.isFinite(num)) return 60;
-  return Math.min(400, Math.max(20, Math.round(num)));
+  return Math.min(4096, Math.max(16, Math.round(num)));
+}
+
+export function parseResolutionDimensions(resolusi: string | null | undefined): { width: number; height: number } {
+  const match = String(resolusi || '').match(/(\d{3,4})\s*[xX×]\s*(\d{3,4})/);
+  if (!match) return { width: 1920, height: 1080 };
+  const width = Math.min(7680, Math.max(160, Number(match[1]) || 1920));
+  const height = Math.min(4320, Math.max(120, Number(match[2]) || 1080));
+  return { width, height };
+}
+
+export function formatManualResolution(width: number, height: number): string {
+  const rawW = Number.isFinite(Number(width)) ? Math.round(Number(width)) : 1920;
+  const rawH = Number.isFinite(Number(height)) ? Math.round(Number(height)) : 1080;
+  const wClamped = Math.min(7680, Math.max(160, rawW));
+  const hClamped = Math.min(4320, Math.max(120, rawH));
+  const wEven = wClamped % 2 === 0 ? wClamped : wClamped - 1;
+  const hEven = hClamped % 2 === 0 ? hClamped : hClamped - 1;
+  return `${wEven}x${hEven}`;
+}
+
+export function resolveCameraCaptureWidth(
+  cameraResolution: string | null | undefined,
+  globalCaptureMaxWidth: number,
+  cameraCaptureMaxWidth?: number | null
+): number {
+  const { width: camWidth } = parseResolutionDimensions(cameraResolution);
+  const configured =
+    cameraCaptureMaxWidth !== null && cameraCaptureMaxWidth !== undefined && Number.isFinite(Number(cameraCaptureMaxWidth))
+      ? normalizeCaptureMaxWidth(cameraCaptureMaxWidth)
+      : normalizeCaptureMaxWidth(globalCaptureMaxWidth);
+  if (configured === 0) return camWidth;
+  return Math.min(camWidth, configured);
+}
+
+export function computeCalibratedMinFacePx(params: {
+  cameraResolution: string | null | undefined;
+  globalMinFaceSize: number;
+  cameraMinFaceSize?: number | null;
+  globalCaptureMaxWidth: number;
+  cameraCaptureMaxWidth?: number | null;
+}): {
+  targetCameraPx: number;
+  cameraWidth: number;
+  cameraHeight: number;
+  effectiveFrameWidth: number;
+  effectiveFrameHeight: number;
+  scaleRatio: number;
+  effectiveMinFacePx: number;
+  widthPercent: number;
+} {
+  const { width: cameraWidth, height: cameraHeight } = parseResolutionDimensions(params.cameraResolution);
+  const targetCameraPx = normalizeMinFaceSize(
+    params.cameraMinFaceSize !== null && params.cameraMinFaceSize !== undefined
+      ? params.cameraMinFaceSize
+      : params.globalMinFaceSize
+  );
+  const effectiveFrameWidth = resolveCameraCaptureWidth(
+    params.cameraResolution,
+    params.globalCaptureMaxWidth,
+    params.cameraCaptureMaxWidth
+  );
+  const scaleRatio = cameraWidth > 0 ? Math.min(1, effectiveFrameWidth / cameraWidth) : 1;
+  const effectiveFrameHeight = Math.max(2, Math.round(cameraHeight * scaleRatio));
+  const effectiveMinFacePx = Math.max(16, Math.round(targetCameraPx * scaleRatio));
+  const widthPercent = Math.round((targetCameraPx / Math.max(1, cameraWidth)) * 1000) / 10;
+
+  return {
+    targetCameraPx,
+    cameraWidth,
+    cameraHeight,
+    effectiveFrameWidth,
+    effectiveFrameHeight,
+    scaleRatio,
+    effectiveMinFacePx,
+    widthPercent,
+  };
 }
 
 export function buildFfmpegCaptureVideoFilter(fps: number, maxWidth: number): string {

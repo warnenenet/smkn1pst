@@ -1,7 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Download, HardDriveUpload, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { AppDatabase, BackupEntry, SettingsMap, TTSMode, UserRole, WorkerStatusResponse } from '../types';
-import { describeCaptureResolutionMode } from '../lib/attendanceEngine';
+import {
+  computeCalibratedMinFacePx,
+  describeCaptureResolutionMode,
+  normalizeCaptureMaxWidth,
+  normalizeMinFaceSize,
+} from '../lib/attendanceEngine';
 import { shouldSyncFormFromServer } from '../lib/uiRefreshGuard';
 
 interface SettingsUsersViewProps {
@@ -240,10 +245,8 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               const normalizedForm: SettingsMap = {
                 ...form,
                 min_snapshot_quality: Math.max(0.7, Math.min(0.99, Number(form.min_snapshot_quality) || 0.7)),
-                min_face_size: Math.max(20, Math.min(400, Math.round(Number(form.min_face_size) || 60))),
-                capture_max_width: Number.isFinite(Number(form.capture_max_width))
-                  ? Number(form.capture_max_width)
-                  : 1280,
+                min_face_size: normalizeMinFaceSize(form.min_face_size),
+                capture_max_width: normalizeCaptureMaxWidth(form.capture_max_width ?? 1280),
                 capture_jpeg_quality: Math.max(50, Math.min(98, Math.round(Number(form.capture_jpeg_quality) || 86))),
               };
               await onSaveSettings(normalizedForm);
@@ -306,26 +309,77 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
             />
           </div>
           <div className="field-group">
-            <label htmlFor="set-min-face" className="block text-xs text-slate-600 mb-1">Batas Pixel Wajah Capture (Min px, 20–400)</label>
-            <input id="set-min-face" type="number" min="20" max="400" value={form.min_face_size} onChange={(e) => updateForm('min_face_size', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+            <label htmlFor="set-min-face" className="block text-xs text-slate-600 mb-1">
+              Bounding Wajah Global (px di Resolusi Kamera, bebas 16–4096)
+            </label>
+            <input
+              id="set-min-face"
+              type="number"
+              min="16"
+              max="4096"
+              value={form.min_face_size}
+              onChange={(e) => updateForm('min_face_size', Number(e.target.value))}
+              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
+            />
+            {(() => {
+              const previewCal = computeCalibratedMinFacePx({
+                cameraResolution: '1920x1080',
+                globalMinFaceSize: form.min_face_size,
+                globalCaptureMaxWidth: form.capture_max_width ?? 1280,
+              });
+              return (
+                <div className="text-[11px] text-slate-500 font-mono mt-1 tabular-nums">
+                  Acuan 1080p: {previewCal.targetCameraPx} px ({previewCal.widthPercent}% lebar) → AI efektif {previewCal.effectiveMinFacePx} px (@{previewCal.effectiveFrameWidth} px)
+                </div>
+              );
+            })()}
           </div>
           <div className="field-group">
             <label htmlFor="set-capture-width" className="block text-xs text-slate-600 mb-1">
               Resolusi Pixel Capture RTSP ({describeCaptureResolutionMode(form.capture_max_width ?? 1280)})
             </label>
-            <select
-              id="set-capture-width"
-              value={String(form.capture_max_width ?? 1280)}
-              onChange={(e) => updateForm('capture_max_width', Number(e.target.value))}
-              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono bg-white"
-            >
-              <option value="640">640 px (360p — Hemat CPU &amp; Bandwidth)</option>
-              <option value="960">960 px (540p — Seimbang)</option>
-              <option value="1280">1280 px (HD 720p — Default Sistem)</option>
-              <option value="1920">1920 px (Full HD 1080p — Gerbang Lebar)</option>
-              <option value="2560">2560 px (2K QHD — Jarak Jauh)</option>
-              <option value="0">Asli Kamera / Native (Tanpa Resize)</option>
-            </select>
+            {(() => {
+              const presets = [0, 640, 960, 1280, 1920, 2560, 3840];
+              const curCap = Number(form.capture_max_width ?? 1280);
+              const isCustom = !presets.includes(curCap);
+              return (
+                <div className="space-y-1.5">
+                  <select
+                    id="set-capture-width"
+                    value={isCustom ? 'CUSTOM' : String(curCap)}
+                    onChange={(e) => {
+                      if (e.target.value === 'CUSTOM') {
+                        updateForm('capture_max_width', isCustom ? curCap : 1440);
+                      } else {
+                        updateForm('capture_max_width', Number(e.target.value));
+                      }
+                    }}
+                    className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono bg-white"
+                  >
+                    <option value="640">640 px (360p — Hemat CPU &amp; Bandwidth)</option>
+                    <option value="960">960 px (540p — Seimbang)</option>
+                    <option value="1280">1280 px (HD 720p — Default Sistem)</option>
+                    <option value="1920">1920 px (Full HD 1080p — Gerbang Lebar)</option>
+                    <option value="2560">2560 px (2K QHD — Jarak Jauh)</option>
+                    <option value="3840">3840 px (4K UHD)</option>
+                    <option value="0">Asli Kamera / Native (Tanpa Resize)</option>
+                    <option value="CUSTOM">Custom Manual (Isi Pixel Lebar Bebas)</option>
+                  </select>
+                  {isCustom && (
+                    <input
+                      aria-label="Lebar Pixel Capture Custom"
+                      type="number"
+                      min="320"
+                      max="7680"
+                      step="2"
+                      value={curCap}
+                      onChange={(e) => updateForm('capture_max_width', Number(e.target.value))}
+                      className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
+                    />
+                  )}
+                </div>
+              );
+            })()}
           </div>
           <div className="field-group">
             <label htmlFor="set-capture-jpeg" className="block text-xs text-slate-600 mb-1">Kualitas JPEG Snapshot Capture (%)</label>

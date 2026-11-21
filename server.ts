@@ -56,6 +56,7 @@ import {
   cosineSimilarity,
   evaluateAttendanceRecognition,
   evaluateFaceMaintenanceProgress,
+  formatManualResolution,
   formatWaMessage,
   getJakartaNowParts,
   maskRtspCredentials,
@@ -69,6 +70,7 @@ import {
   normalizeWaPhone,
   parseFfmpegStreamOutput,
   parseKelasHierarchy,
+  parseResolutionDimensions,
   passesSnapshotQualityThreshold,
   promoteHitInClusterState,
   removeHitFromClusterState,
@@ -1692,19 +1694,36 @@ app.post('/api/internal/face-event', (req, res) => {
 
 app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
   const db = loadDb();
-  const { nama_kamera, gate_id, rtsp_url, resolusi = '1920x1080', fps = 5, aktif = true } = req.body;
+  const {
+    nama_kamera,
+    gate_id,
+    rtsp_url,
+    resolusi = '1920x1080',
+    fps = 5,
+    aktif = true,
+    min_face_size = null,
+    capture_max_width = null,
+  } = req.body;
+  const parsedRes = parseResolutionDimensions(String(resolusi));
+  const normResolusi = formatManualResolution(parsedRes.width, parsedRes.height);
   const isDummy = !rtsp_url || String(rtsp_url).startsWith('dummy://');
   const cam = {
     id: nextId(db.cameras),
     nama_kamera: String(nama_kamera),
     gate_id: Number(gate_id),
     rtsp_url: String(rtsp_url),
-    resolusi: String(resolusi),
-    fps: Number(fps),
+    resolusi: normResolusi,
+    fps: Math.max(1, Math.min(30, Math.round(Number(fps) || 5))),
     aktif: Boolean(aktif),
     status: (isDummy || !aktif ? 'OFFLINE' : 'ONLINE') as 'ONLINE' | 'OFFLINE',
     last_error: isDummy ? 'Dummy / URL RTSP belum dikonfigurasi' : null,
     last_online_at: isDummy ? null : getJakartaNowParts().dateTimeStr,
+    min_face_size: min_face_size !== null && min_face_size !== undefined && min_face_size !== ''
+      ? normalizeMinFaceSize(min_face_size)
+      : null,
+    capture_max_width: capture_max_width !== null && capture_max_width !== undefined && capture_max_width !== ''
+      ? normalizeCaptureMaxWidth(capture_max_width)
+      : null,
   };
   db.cameras.push(cam);
   saveDb(db);
@@ -1772,8 +1791,10 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
       cam.status = 'ONLINE';
       cam.last_error = null;
       cam.last_online_at = nowStr;
-      if (meta.resolusi !== '-') cam.resolusi = meta.resolusi;
-      if (meta.fps > 0) cam.fps = Math.round(meta.fps);
+      if ((!cam.resolusi || cam.resolusi === '-') && meta.resolusi !== '-') {
+        cam.resolusi = meta.resolusi;
+      }
+      if (meta.fps > 0 && !cam.fps) cam.fps = Math.round(meta.fps);
       saveDb(db);
     }
 
@@ -1815,12 +1836,34 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
     res.status(404).json({ error: 'Kamera tidak ditemukan.' });
     return;
   }
+  let nextResolusi = cam.resolusi;
+  if (req.body.resolusi !== undefined && String(req.body.resolusi).trim() !== '') {
+    const parsedRes = parseResolutionDimensions(String(req.body.resolusi));
+    nextResolusi = formatManualResolution(parsedRes.width, parsedRes.height);
+  }
+  let nextMinFace = cam.min_face_size ?? null;
+  if (req.body.min_face_size !== undefined) {
+    nextMinFace =
+      req.body.min_face_size === null || req.body.min_face_size === ''
+        ? null
+        : normalizeMinFaceSize(req.body.min_face_size);
+  }
+  let nextCapWidth = cam.capture_max_width ?? null;
+  if (req.body.capture_max_width !== undefined) {
+    nextCapWidth =
+      req.body.capture_max_width === null || req.body.capture_max_width === ''
+        ? null
+        : normalizeCaptureMaxWidth(req.body.capture_max_width);
+  }
   Object.assign(cam, {
-    nama_kamera: req.body.nama_kamera ?? cam.nama_kamera,
-    rtsp_url: req.body.rtsp_url ?? cam.rtsp_url,
-    resolusi: req.body.resolusi ?? cam.resolusi,
-    fps: req.body.fps !== undefined ? Number(req.body.fps) : cam.fps,
+    nama_kamera: req.body.nama_kamera !== undefined ? String(req.body.nama_kamera).trim() || cam.nama_kamera : cam.nama_kamera,
+    gate_id: req.body.gate_id !== undefined ? Number(req.body.gate_id) || cam.gate_id : cam.gate_id,
+    rtsp_url: req.body.rtsp_url !== undefined ? String(req.body.rtsp_url).trim() : cam.rtsp_url,
+    resolusi: nextResolusi,
+    fps: req.body.fps !== undefined ? Math.max(1, Math.min(30, Math.round(Number(req.body.fps) || cam.fps))) : cam.fps,
     aktif: req.body.aktif !== undefined ? Boolean(req.body.aktif) : cam.aktif,
+    min_face_size: nextMinFace,
+    capture_max_width: nextCapWidth,
   });
   const isDummy = !cam.rtsp_url || cam.rtsp_url.startsWith('dummy://');
   cam.status = !cam.aktif || isDummy ? 'OFFLINE' : 'ONLINE';

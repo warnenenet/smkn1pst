@@ -361,7 +361,9 @@ function getSqlite(): DatabaseSync {
         aktif INTEGER NOT NULL,
         status TEXT NOT NULL,
         last_error TEXT,
-        last_online_at TEXT
+        last_online_at TEXT,
+        min_face_size INTEGER,
+        capture_max_width INTEGER
       );
       CREATE TABLE IF NOT EXISTS schedules (
         id INTEGER PRIMARY KEY,
@@ -541,6 +543,8 @@ function getSqlite(): DatabaseSync {
     };
     ensureColumn('attendance_logs', 'snapshot_path', 'TEXT');
     ensureColumn('anonymous_clusters', 'hit_snapshots_json', "TEXT NOT NULL DEFAULT '[]'");
+    ensureColumn('cameras', 'min_face_size', 'INTEGER');
+    ensureColumn('cameras', 'capture_max_width', 'INTEGER');
     schemaInitialized = true;
   }
   return sqliteDb;
@@ -779,6 +783,8 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     status: r.status as Camera['status'],
     last_error: r.last_error ? String(r.last_error) : null,
     last_online_at: r.last_online_at ? String(r.last_online_at) : null,
+    min_face_size: r.min_face_size !== null && r.min_face_size !== undefined ? Number(r.min_face_size) : null,
+    capture_max_width: r.capture_max_width !== null && r.capture_max_width !== undefined ? Number(r.capture_max_width) : null,
   }));
 
   const schedules = (sqlite.prepare('SELECT * FROM schedules ORDER BY id').all() as Array<Record<string, unknown>>).map((r) => ({
@@ -1170,11 +1176,24 @@ export function saveDb(db: AppDatabase): void {
     if (persisted.smallHashes.cameras !== hashCameras) {
       sqlite.exec('DELETE FROM cameras');
       const insCam = sqlite.prepare(`
-        INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, capture_max_width)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const c of db.cameras) {
-        insCam.run(c.id, c.nama_kamera, c.gate_id, c.rtsp_url, c.resolusi, c.fps, c.aktif ? 1 : 0, c.status, c.last_error ?? null, c.last_online_at ?? null);
+        insCam.run(
+          c.id,
+          c.nama_kamera,
+          c.gate_id,
+          c.rtsp_url,
+          c.resolusi,
+          c.fps,
+          c.aktif ? 1 : 0,
+          c.status,
+          c.last_error ?? null,
+          c.last_online_at ?? null,
+          c.min_face_size ?? null,
+          c.capture_max_width ?? null
+        );
       }
       persisted.smallHashes.cameras = hashCameras;
     }
@@ -1549,11 +1568,24 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
     }
 
     const insCam = sqlite.prepare(`
-      INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, capture_max_width)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const c of db.cameras) {
-      insCam.run(c.id, c.nama_kamera, c.gate_id, c.rtsp_url, c.resolusi, c.fps, c.aktif ? 1 : 0, c.status, c.last_error ?? null, c.last_online_at ?? null);
+      insCam.run(
+        c.id,
+        c.nama_kamera,
+        c.gate_id,
+        c.rtsp_url,
+        c.resolusi,
+        c.fps,
+        c.aktif ? 1 : 0,
+        c.status,
+        c.last_error ?? null,
+        c.last_online_at ?? null,
+        c.min_face_size ?? null,
+        c.capture_max_width ?? null
+      );
     }
 
     const insSched = sqlite.prepare(`

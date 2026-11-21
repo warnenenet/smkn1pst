@@ -77,6 +77,8 @@ export interface Camera {
   status: 'ONLINE' | 'OFFLINE' | 'ERROR';
   last_error: string | null;
   last_online_at: string | null;
+  min_face_size?: number | null;
+  capture_max_width?: number | null;
 }
 
 export interface Schedule {

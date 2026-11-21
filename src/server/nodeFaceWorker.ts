@@ -5,13 +5,13 @@ import { createRequire } from 'module';
 import jpeg from 'jpeg-js';
 import {
   buildFfmpegCaptureVideoFilter,
+  computeCalibratedMinFacePx,
   computeQualityScore,
   extractJpegFramesFromChunk,
   getJakartaNowParts,
   maskRtspCredentials,
   normalizeCaptureJpegQuality,
   normalizeCaptureMaxWidth,
-  normalizeMinFaceSize,
   passesSnapshotQualityThreshold,
 } from '../lib/attendanceEngine.ts';
 import { findBestFaceMatch } from '../lib/faceIndex.ts';
@@ -393,7 +393,15 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
               if (faces.length === 0) continue;
 
               const effMinConf = Math.min(db.settings.threshold_confidence, 0.5);
-              const effMinSize = normalizeMinFaceSize(db.settings.min_face_size);
+              const liveCam = db.cameras.find((c) => c.id === cam.id) ?? cam;
+              const calibrated = computeCalibratedMinFacePx({
+                cameraResolution: liveCam.resolusi,
+                globalMinFaceSize: db.settings.min_face_size,
+                cameraMinFaceSize: liveCam.min_face_size,
+                globalCaptureMaxWidth: db.settings.capture_max_width,
+                cameraCaptureMaxWidth: liveCam.capture_max_width,
+              });
+              const effMinSize = calibrated.effectiveMinFacePx;
               let passedCount = 0;
               let droppedCount = 0;
 
@@ -628,7 +636,6 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
   }
 
   const db = managerDeps.loadDb();
-  const desiredCaptureWidth = normalizeCaptureMaxWidth(db.settings.capture_max_width);
   const desired = new Map<number, Camera>();
   for (const cam of db.cameras) {
     const url = String(cam.rtsp_url || '').trim();
@@ -640,7 +647,10 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
   for (const cid of Array.from(workers.keys())) {
     const existing = workers.get(cid)!;
     const nextCam = desired.get(cid);
-    if (!nextCam || nextCam.rtsp_url !== existing.camera.rtsp_url || existing.captureMaxWidth !== desiredCaptureWidth) {
+    const camCaptureWidth = nextCam
+      ? normalizeCaptureMaxWidth(nextCam.capture_max_width ?? db.settings.capture_max_width)
+      : 0;
+    if (!nextCam || nextCam.rtsp_url !== existing.camera.rtsp_url || existing.captureMaxWidth !== camCaptureWidth) {
       stopSingleWorker(cid);
     } else {
       existing.camera = nextCam;
@@ -651,9 +661,10 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
 
   for (const [cid, cam] of desired.entries()) {
     if (!workers.has(cid)) {
+      const camCaptureWidth = normalizeCaptureMaxWidth(cam.capture_max_width ?? db.settings.capture_max_width);
       const runtime: WorkerRuntime = {
         camera: cam,
-        captureMaxWidth: desiredCaptureWidth,
+        captureMaxWidth: camCaptureWidth,
         stop: false,
         child: null,
         timeoutFlag: '-stimeout',

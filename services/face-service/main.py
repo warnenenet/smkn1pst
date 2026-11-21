@@ -348,7 +348,18 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     continue
                 last_proc = now
 
-                max_capture_w = int(settings_cache.get("capture_max_width", 1280) or 0)
+                cam_res_parts = str(cam.get("resolusi", "1920x1080")).lower().split("x")
+                try:
+                    cam_native_w = max(160, min(7680, int(cam_res_parts[0])))
+                except Exception:
+                    cam_native_w = max(160, int(frame.shape[1]))
+
+                cam_cap_override = cam.get("capture_max_width")
+                if cam_cap_override is not None:
+                    max_capture_w = int(cam_cap_override or 0)
+                else:
+                    max_capture_w = int(settings_cache.get("capture_max_width", 1280) or 0)
+
                 if max_capture_w > 0 and frame.shape[1] > max_capture_w:
                     scale_ratio = float(max_capture_w) / float(frame.shape[1])
                     new_h = max(2, int(round(frame.shape[0] * scale_ratio)) & ~1)
@@ -359,7 +370,11 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     continue
 
                 min_conf = min(float(settings_cache.get("threshold_confidence", 0.80)), 0.50)
-                min_size = max(20, min(400, int(settings_cache.get("min_face_size", 60) or 60)))
+                cam_min_override = cam.get("min_face_size")
+                raw_target_px = cam_min_override if cam_min_override is not None else settings_cache.get("min_face_size", 60)
+                target_camera_px = max(16, min(4096, int(raw_target_px or 60)))
+                frame_scale_ratio = min(1.0, float(frame.shape[1]) / float(cam_native_w)) if cam_native_w > 0 else 1.0
+                min_size = max(16, min(4096, int(round(target_camera_px * frame_scale_ratio))))
                 rec_thresh = float(settings_cache.get("threshold_recognition", 0.70))
 
                 valid_faces = []
