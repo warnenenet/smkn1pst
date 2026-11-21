@@ -615,6 +615,26 @@ export default function App() {
                 await apiPost(`/api/clusters/${cid}`, {}, 'DELETE');
                 notify(`Cluster anonim #${cid} dihapus.`);
               }}
+              onRemoveClusterHit={async (cid, payload) => {
+                const res = await apiPost(`/api/clusters/${cid}/hits/remove`, payload);
+                notify(
+                  res.deleted_cluster
+                    ? `Foto terakhir dibuang dan Cluster #${cid} dihapus.`
+                    : `Foto wajah dikeluarkan dari Cluster #${cid}.`
+                );
+              }}
+              onSetPrimaryClusterHit={async (cid, payload) => {
+                await apiPost(`/api/clusters/${cid}/hits/set-primary`, payload);
+                notify(`Foto acuan utama Cluster #${cid} diperbarui.`);
+              }}
+              onSplitClusterHit={async (cid, payload) => {
+                const res = await apiPost(`/api/clusters/${cid}/hits/split`, payload);
+                notify(`Foto dipisahkan dari Cluster #${cid} menjadi Cluster Baru #${res.new_cluster_id}.`);
+              }}
+              onMergeCluster={async (sourceCid, targetCid) => {
+                await apiPost(`/api/clusters/${sourceCid}/merge`, { target_cluster_id: targetCid });
+                notify(`Cluster #${sourceCid} berhasil digabungkan ke Cluster #${targetCid}.`);
+              }}
             />
           )}
 

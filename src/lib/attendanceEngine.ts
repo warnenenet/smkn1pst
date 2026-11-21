@@ -1,5 +1,7 @@
 import type {
+  AnonymousCluster,
   AttendanceLog,
+  ClusterStatus,
   DailyAttendance,
   GateType,
   Kelas,
@@ -746,6 +748,8 @@ export interface HitSnapshotRecord {
   similarity: number;
   camera_id: number | null;
   detected_at: string;
+  embedding?: number[];
+  has_embedding?: boolean;
 }
 
 export function appendClusterHitSnapshot(
@@ -778,10 +782,282 @@ export function appendClusterHitSnapshot(
   return { hits: kept, removedPaths };
 }
 
+function getNormalizedClusterHits(cluster: AnonymousCluster): HitSnapshotRecord[] {
+  if (Array.isArray(cluster.hit_snapshots) && cluster.hit_snapshots.length > 0) {
+    return cluster.hit_snapshots.map((h) => ({ ...h }));
+  }
+  if (!cluster.best_snapshot_path) return [];
+  return [
+    {
+      snapshot_path: cluster.best_snapshot_path,
+      quality_score: cluster.best_quality_score,
+      similarity: 1,
+      camera_id: cluster.last_camera_id,
+      detected_at: cluster.last_seen,
+      embedding: Array.isArray(cluster.best_embedding) && cluster.best_embedding.length > 0 ? cluster.best_embedding : undefined,
+    },
+  ];
+}
+
+function recomputeCentroidFromHits(hits: HitSnapshotRecord[], fallbackCentroid: number[]): number[] {
+  const withEmb = hits.filter((h) => Array.isArray(h.embedding) && h.embedding.length > 0);
+  if (withEmb.length === 0) return fallbackCentroid;
+  let centroid = [...withEmb[0].embedding!];
+  let bestQ = withEmb[0].quality_score || 0.7;
+  for (let i = 1; i < withEmb.length; i++) {
+    const q = withEmb[i].quality_score || 0.7;
+    centroid = blendFaceEmbeddings(centroid, withEmb[i].embedding!, bestQ, q);
+    bestQ = Math.max(bestQ, q);
+  }
+  return centroid;
+}
+
+export function removeHitFromClusterState(params: {
+  cluster: AnonymousCluster;
+  snapshotPath?: string;
+  hitIndex?: number;
+  readyHits: number;
+  readyDays: number;
+}): {
+  found: boolean;
+  deletedCluster: boolean;
+  removedHit: HitSnapshotRecord | null;
+  shouldRemoveFile: boolean;
+  updatedCluster: AnonymousCluster | null;
+} {
+  const { cluster, snapshotPath, hitIndex, readyHits, readyDays } = params;
+  const hits = getNormalizedClusterHits(cluster);
+  let targetIdx = -1;
+  if (typeof snapshotPath === 'string' && snapshotPath.length > 0) {
+    targetIdx = hits.findIndex((h) => h.snapshot_path === snapshotPath);
+  }
+  if (targetIdx === -1 && typeof hitIndex === 'number' && hitIndex >= 0 && hitIndex < hits.length) {
+    targetIdx = hitIndex;
+  }
+  if (targetIdx === -1) {
+    return { found: false, deletedCluster: false, removedHit: null, shouldRemoveFile: false, updatedCluster: null };
+  }
+
+  const removedHit = hits[targetIdx];
+  const remainingHits = hits.filter((_, i) => i !== targetIdx);
+  if (remainingHits.length === 0) {
+    return {
+      found: true,
+      deletedCluster: true,
+      removedHit,
+      shouldRemoveFile: Boolean(removedHit.snapshot_path),
+      updatedCluster: null,
+    };
+  }
+
+  const bestHit = remainingHits.reduce((best, cur) => (cur.quality_score > best.quality_score ? cur : best), remainingHits[0]);
+  const nextHitCount = Math.max(remainingHits.length, cluster.hit_count - 1);
+  const distinctDaySet = new Set(remainingHits.map((h) => String(h.detected_at || '').slice(0, 10)).filter(Boolean));
+  const nextDistinctDays = Math.max(1, Math.min(cluster.distinct_days, Math.max(distinctDaySet.size, cluster.distinct_days)));
+  const sortedDates = remainingHits.map((h) => h.detected_at).filter(Boolean).sort();
+  const nextFirstSeen = sortedDates[0] ?? cluster.first_seen;
+  const nextLastSeen = sortedDates[sortedDates.length - 1] ?? cluster.last_seen;
+
+  const nextBestEmbedding =
+    Array.isArray(bestHit.embedding) && bestHit.embedding.length > 0
+      ? bestHit.embedding
+      : removedHit.snapshot_path === cluster.best_snapshot_path
+        ? cluster.centroid
+        : cluster.best_embedding;
+
+  const nextCentroid = recomputeCentroidFromHits(remainingHits, nextBestEmbedding.length > 0 ? nextBestEmbedding : cluster.centroid);
+
+  let nextStatus: ClusterStatus = cluster.status;
+  if (cluster.status === 'READY' || cluster.status === 'PENDING') {
+    nextStatus = checkClusterReadyStatus({
+      hitCount: nextHitCount,
+      distinctDays: nextDistinctDays,
+      hasBestSnapshot: Boolean(bestHit.snapshot_path),
+      readyHits,
+      readyDays,
+    })
+      ? 'READY'
+      : 'PENDING';
+  }
+
+  const stillReferenced = remainingHits.some((h) => h.snapshot_path === removedHit.snapshot_path);
+  return {
+    found: true,
+    deletedCluster: false,
+    removedHit,
+    shouldRemoveFile: Boolean(removedHit.snapshot_path) && !stillReferenced,
+    updatedCluster: {
+      ...cluster,
+      hit_count: nextHitCount,
+      distinct_days: nextDistinctDays,
+      first_seen: nextFirstSeen,
+      last_seen: nextLastSeen,
+      best_snapshot_path: bestHit.snapshot_path,
+      best_quality_score: bestHit.quality_score,
+      best_embedding: nextBestEmbedding,
+      centroid: nextCentroid,
+      hit_snapshots: remainingHits,
+      status: nextStatus,
+      last_camera_id: remainingHits[0]?.camera_id ?? cluster.last_camera_id,
+    },
+  };
+}
+
+export function promoteHitInClusterState(params: {
+  cluster: AnonymousCluster;
+  snapshotPath?: string;
+  hitIndex?: number;
+}): { found: boolean; updatedCluster: AnonymousCluster | null } {
+  const { cluster, snapshotPath, hitIndex } = params;
+  const hits = getNormalizedClusterHits(cluster);
+  let targetIdx = -1;
+  if (typeof snapshotPath === 'string' && snapshotPath.length > 0) {
+    targetIdx = hits.findIndex((h) => h.snapshot_path === snapshotPath);
+  }
+  if (targetIdx === -1 && typeof hitIndex === 'number' && hitIndex >= 0 && hitIndex < hits.length) {
+    targetIdx = hitIndex;
+  }
+  if (targetIdx === -1) {
+    return { found: false, updatedCluster: null };
+  }
+  const chosen = hits[targetIdx];
+  return {
+    found: true,
+    updatedCluster: {
+      ...cluster,
+      best_snapshot_path: chosen.snapshot_path,
+      best_quality_score: chosen.quality_score,
+      best_embedding: Array.isArray(chosen.embedding) && chosen.embedding.length > 0 ? chosen.embedding : cluster.best_embedding,
+      hit_snapshots: hits,
+    },
+  };
+}
+
+export function mergeAnonymousClustersState(params: {
+  source: AnonymousCluster;
+  target: AnonymousCluster;
+  readyHits: number;
+  readyDays: number;
+  maxHits?: number;
+}): { merged: AnonymousCluster; removedPaths: string[] } {
+  const { source, target, readyHits, readyDays, maxHits = 12 } = params;
+  const targetHits = getNormalizedClusterHits(target);
+  const sourceHits = getNormalizedClusterHits(source);
+
+  const mergedByPath = new Map<string, HitSnapshotRecord>();
+  for (const h of [...targetHits, ...sourceHits]) {
+    if (!h.snapshot_path) continue;
+    const prev = mergedByPath.get(h.snapshot_path);
+    if (!prev || h.quality_score > prev.quality_score) {
+      mergedByPath.set(h.snapshot_path, h);
+    }
+  }
+
+  const ordered = Array.from(mergedByPath.values()).sort((a, b) =>
+    String(b.detected_at || '').localeCompare(String(a.detected_at || ''))
+  );
+  const kept = ordered.slice(0, maxHits);
+  const keptPaths = new Set(kept.map((h) => h.snapshot_path));
+  const bestFromTarget = target.best_quality_score >= source.best_quality_score ? target : source;
+  const bestSnap =
+    kept.find((h) => h.snapshot_path === bestFromTarget.best_snapshot_path)?.snapshot_path ??
+    kept[0]?.snapshot_path ??
+    bestFromTarget.best_snapshot_path;
+  if (bestSnap && !keptPaths.has(bestSnap)) {
+    keptPaths.add(bestSnap);
+  }
+  const removedPaths = ordered
+    .slice(maxHits)
+    .map((h) => h.snapshot_path)
+    .filter((p) => p && !keptPaths.has(p));
+
+  const distinctDaysSet = new Set(
+    kept.map((h) => String(h.detected_at || '').slice(0, 10)).filter(Boolean)
+  );
+  const nextHitCount = target.hit_count + source.hit_count;
+  const nextDistinctDays = Math.max(target.distinct_days, source.distinct_days, distinctDaysSet.size || 1);
+  const nextCentroid =
+    target.centroid.length > 0 && source.centroid.length === target.centroid.length
+      ? blendFaceEmbeddings(target.centroid, source.centroid, target.best_quality_score, source.best_quality_score)
+      : target.centroid.length > 0
+        ? target.centroid
+        : source.centroid;
+  const nextStatus: ClusterStatus = checkClusterReadyStatus({
+    hitCount: nextHitCount,
+    distinctDays: nextDistinctDays,
+    hasBestSnapshot: Boolean(bestSnap),
+    readyHits,
+    readyDays,
+  })
+    ? 'READY'
+    : 'PENDING';
+
+  return {
+    merged: {
+      ...target,
+      centroid: nextCentroid,
+      hit_count: nextHitCount,
+      distinct_days: nextDistinctDays,
+      first_seen: [target.first_seen, source.first_seen].filter(Boolean).sort()[0] ?? target.first_seen,
+      last_seen: [target.last_seen, source.last_seen].filter(Boolean).sort().slice(-1)[0] ?? target.last_seen,
+      best_snapshot_path: bestSnap,
+      best_quality_score: Math.max(target.best_quality_score, source.best_quality_score),
+      best_embedding:
+        bestFromTarget.best_embedding.length > 0 ? bestFromTarget.best_embedding : target.best_embedding,
+      hit_snapshots: kept,
+      status: nextStatus,
+    },
+    removedPaths,
+  };
+}
+
 export function normalizeMinSnapshotQuality(rawValue: unknown): number {
   const num = Number(rawValue);
   if (!Number.isFinite(num)) return 0.7;
   return Math.min(0.99, Math.max(0.7, Math.round(num * 100) / 100));
+}
+
+export function normalizeCaptureMaxWidth(rawValue: unknown): number {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return 1280;
+  const rounded = Math.round(num);
+  if (rounded <= 0) return 0; // 0 = Resolusi asli kamera (Native tanpa resize)
+  const clamped = Math.min(3840, Math.max(320, rounded));
+  // FFmpeg libx264/mjpeg -2 scale bekerja bersih pada lebar genap
+  return clamped % 2 === 0 ? clamped : clamped - 1;
+}
+
+export function normalizeCaptureJpegQuality(rawValue: unknown): number {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return 86;
+  return Math.min(98, Math.max(50, Math.round(num)));
+}
+
+export function normalizeMinFaceSize(rawValue: unknown): number {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num)) return 60;
+  return Math.min(400, Math.max(20, Math.round(num)));
+}
+
+export function buildFfmpegCaptureVideoFilter(fps: number, maxWidth: number): string {
+  const safeFps = Math.max(1, Math.min(15, Math.round(Number(fps) || 1)));
+  const normWidth = normalizeCaptureMaxWidth(maxWidth);
+  if (normWidth === 0) {
+    return `fps=${safeFps}`;
+  }
+  return `fps=${safeFps},scale='min(${normWidth},iw)':-2`;
+}
+
+export function describeCaptureResolutionMode(maxWidth: number): string {
+  const norm = normalizeCaptureMaxWidth(maxWidth);
+  if (norm === 0) return 'Native (Asli Kamera)';
+  if (norm === 640) return '640 px (360p)';
+  if (norm === 960) return '960 px (540p)';
+  if (norm === 1280) return '1280 px (HD 720p)';
+  if (norm === 1920) return '1920 px (Full HD 1080p)';
+  if (norm === 2560) return '2560 px (2K QHD)';
+  if (norm === 3840) return '3840 px (4K UHD)';
+  return `${norm} px (Custom)`;
 }
 
 export function passesSnapshotQualityThreshold(
@@ -796,3 +1072,4 @@ export function passesSnapshotQualityThreshold(
     score,
   };
 }
+

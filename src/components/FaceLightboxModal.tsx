@@ -10,6 +10,7 @@ export interface FaceGalleryItem {
   similarity?: number | null;
   qualityScore?: number | null;
   isReference?: boolean;
+  hasEmbedding?: boolean;
 }
 
 interface FaceLightboxModalProps {
@@ -20,6 +21,7 @@ interface FaceLightboxModalProps {
   referenceItem?: FaceGalleryItem | null;
   items: FaceGalleryItem[];
   initialIndex?: number;
+  renderItemActions?: (item: FaceGalleryItem, index: number) => React.ReactNode;
 }
 
 export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
@@ -30,6 +32,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
   referenceItem,
   items,
   initialIndex = 0,
+  renderItemActions,
 }) => {
   const titleId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -188,13 +191,13 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                     <span className="font-semibold text-emerald-400">{referenceItem.label}</span>
                     {referenceItem.meta && <span className="font-mono text-[11px] text-slate-400">{referenceItem.meta}</span>}
                   </div>
-                  <div className="flex-1 min-h-[260px] sm:min-h-[360px] max-h-[54vh] overflow-auto flex items-center justify-center bg-black/40 rounded">
+                  <div className="flex-1 min-h-[210px] sm:min-h-[250px] max-h-[42dvh] overflow-auto flex items-center justify-center bg-black/40 rounded">
                     <img
                       src={referenceItem.src}
                       alt={referenceItem.label}
                       referrerPolicy="no-referrer"
                       className={`transition-transform duration-200 rounded object-contain ${
-                        zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[50vh] max-w-full cursor-zoom-in'
+                        zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[40dvh] max-w-full cursor-zoom-in'
                       }`}
                       onClick={() => setZoom2x((v) => !v)}
                     />
@@ -226,7 +229,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex-1 min-h-[260px] sm:min-h-[360px] max-h-[54vh] overflow-auto flex items-center justify-center bg-black/40 rounded relative">
+                <div className="flex-1 min-h-[210px] sm:min-h-[250px] max-h-[42dvh] overflow-auto flex items-center justify-center bg-black/40 rounded relative">
                   {items.length > 1 && (
                     <button
                       type="button"
@@ -243,7 +246,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                     alt={current.label}
                     referrerPolicy="no-referrer"
                     className={`transition-transform duration-200 rounded object-contain ${
-                      zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[50vh] max-w-full cursor-zoom-in'
+                      zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[40dvh] max-w-full cursor-zoom-in'
                     }`}
                     onClick={() => setZoom2x((v) => !v)}
                   />
@@ -259,17 +262,23 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                     </button>
                   )}
                 </div>
+
+                {renderItemActions && (
+                  <div className="mt-2.5 pt-2.5 border-t border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                    {renderItemActions(current, Math.min(activeIndex, items.length - 1))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
           {/* Thumbnail Strip of ALL images */}
           {items.length > 1 && (
-            <div className="px-4 py-3 border-t border-slate-200 bg-slate-50">
-              <div className="text-[11px] font-semibold text-slate-600 mb-2">
+            <div className="px-4 py-2.5 border-t border-slate-200 bg-slate-50 shrink-0">
+              <div className="text-[11px] font-semibold text-slate-600 mb-1.5">
                 Semua Foto / Gambar Hit ({items.length}) — klik untuk crosscheck
               </div>
-              <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+              <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
                 {items.map((item, idx) => {
                   const selected = idx === activeIndex;
                   return (
@@ -287,7 +296,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                         src={item.src}
                         alt={item.label}
                         referrerPolicy="no-referrer"
-                        className="w-16 h-16 rounded object-cover bg-slate-100"
+                        className="w-14 h-14 rounded object-cover bg-slate-100"
                       />
                       <div className="mt-1 text-[10px] font-mono text-slate-700 truncate max-w-[68px]">
                         {typeof item.similarity === 'number'

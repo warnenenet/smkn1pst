@@ -28,7 +28,13 @@ import type {
   WaQueue,
   WaTemplate,
 } from '../types';
-import { normalizeMinSnapshotQuality, stripDemoRecordsForProduction } from '../lib/attendanceEngine.ts';
+import {
+  normalizeCaptureJpegQuality,
+  normalizeCaptureMaxWidth,
+  normalizeMinFaceSize,
+  normalizeMinSnapshotQuality,
+  stripDemoRecordsForProduction,
+} from '../lib/attendanceEngine.ts';
 import { buildFaceVectorIndex, type FaceVectorIndex } from '../lib/faceIndex.ts';
 
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
@@ -661,6 +667,8 @@ export function createInitialSeed(): AppDatabase {
       threshold_clustering: 0.70,
       min_face_size: 60,
       min_snapshot_quality: 0.70,
+      capture_max_width: 1280,
+      capture_jpeg_quality: 86,
       cluster_ready_hits: 5,
       cluster_ready_days: 1,
       cluster_sighting_interval_min: 30,
@@ -696,6 +704,9 @@ function hydrateDefaults(parsed: AppDatabase): AppDatabase {
     parsed.settings = { ...defaults, ...parsed.settings };
   }
   parsed.settings.min_snapshot_quality = normalizeMinSnapshotQuality(parsed.settings.min_snapshot_quality);
+  parsed.settings.min_face_size = normalizeMinFaceSize(parsed.settings.min_face_size);
+  parsed.settings.capture_max_width = normalizeCaptureMaxWidth(parsed.settings.capture_max_width);
+  parsed.settings.capture_jpeg_quality = normalizeCaptureJpegQuality(parsed.settings.capture_jpeg_quality);
   for (const u of parsed.users) {
     if (!u.password_hash) {
       const fallbackPwd = u.role === 'ADMIN' ? 'admin123' : u.role === 'BK' ? 'bk123' : 'guru123';

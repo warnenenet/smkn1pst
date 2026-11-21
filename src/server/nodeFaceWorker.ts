@@ -4,10 +4,14 @@ import { spawn, type ChildProcess } from 'child_process';
 import { createRequire } from 'module';
 import jpeg from 'jpeg-js';
 import {
+  buildFfmpegCaptureVideoFilter,
   computeQualityScore,
   extractJpegFramesFromChunk,
   getJakartaNowParts,
   maskRtspCredentials,
+  normalizeCaptureJpegQuality,
+  normalizeCaptureMaxWidth,
+  normalizeMinFaceSize,
   passesSnapshotQualityThreshold,
 } from '../lib/attendanceEngine.ts';
 import { findBestFaceMatch } from '../lib/faceIndex.ts';
@@ -154,7 +158,16 @@ function computeCropSharpnessNorm(rgba: Uint8Array, imgW: number, x1: number, y1
   return Math.min(1, Math.max(0.25, meanGrad / 32));
 }
 
-function encodeRgbaCropJpeg(rgba: Uint8Array, imgW: number, imgH: number, x1: number, y1: number, x2: number, y2: number): Buffer {
+function encodeRgbaCropJpeg(
+  rgba: Uint8Array,
+  imgW: number,
+  imgH: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  jpegQuality = 86
+): Buffer {
   const cx1 = Math.max(0, Math.min(imgW - 2, x1));
   const cy1 = Math.max(0, Math.min(imgH - 2, y1));
   const cx2 = Math.max(cx1 + 2, Math.min(imgW, x2));
@@ -167,7 +180,7 @@ function encodeRgbaCropJpeg(rgba: Uint8Array, imgW: number, imgH: number, x1: nu
     const srcEnd = srcStart + cw * 4;
     Buffer.from(rgba.buffer, rgba.byteOffset + srcStart, srcEnd - srcStart).copy(out, row * cw * 4);
   }
-  const encoded = jpeg.encode({ data: out, width: cw, height: ch }, 86);
+  const encoded = jpeg.encode({ data: out, width: cw, height: ch }, normalizeCaptureJpegQuality(jpegQuality));
   return Buffer.from(encoded.data);
 }
 
@@ -181,7 +194,7 @@ export interface DetectedFaceOutput {
   cropJpeg: Buffer;
 }
 
-export async function detectFacesInJpeg(jpegBuffer: Buffer): Promise<DetectedFaceOutput[]> {
+export async function detectFacesInJpeg(jpegBuffer: Buffer, jpegQuality = 86): Promise<DetectedFaceOutput[]> {
   const human = await initNodeFaceAi();
   const decoded = jpeg.decode(jpegBuffer, { useTArray: true, formatAsRGBA: true });
   const { width, height, data } = decoded;
@@ -221,7 +234,7 @@ export async function detectFacesInJpeg(jpegBuffer: Buffer): Promise<DetectedFac
     const sharpnessNorm = computeCropSharpnessNorm(data, width, x1, y1, x2, y2);
 
     const pad = Math.round(Math.max(x2 - x1, y2 - y1) * 0.45);
-    const cropJpeg = encodeRgbaCropJpeg(data, width, height, x1 - pad, y1 - pad, x2 + pad, y2 + pad);
+    const cropJpeg = encodeRgbaCropJpeg(data, width, height, x1 - pad, y1 - pad, x2 + pad, y2 + pad, jpegQuality);
 
     const emb = Array.from(f.embedding, (v) => Math.round(Number(v) * 100000) / 100000);
     facesOut.push({
@@ -288,6 +301,7 @@ export interface NodeWorkerDeps {
 
 interface WorkerRuntime {
   camera: Camera;
+  captureMaxWidth: number;
   stop: boolean;
   child: ChildProcess | null;
   stat: WorkerCameraStat;
@@ -334,8 +348,10 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
         break;
       }
 
+      const captureWidth = normalizeCaptureMaxWidth(w.captureMaxWidth);
+      const vfArg = buildFfmpegCaptureVideoFilter(1, captureWidth);
       console.log(
-        `[RTSP][Cam #${cam.id}] Memulai stream FFmpeg (fps=1, scale<=1280, timeoutFlag=${w.timeoutFlag}, url=${maskRtspCredentials(url)})`
+        `[RTSP][Cam #${cam.id}] Memulai stream FFmpeg (fps=1, capture=${captureWidth === 0 ? 'NATIVE' : `max-${captureWidth}px`}, timeoutFlag=${w.timeoutFlag}, url=${maskRtspCredentials(url)})`
       );
 
       let stderrTail = '';
@@ -371,12 +387,13 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
             }
 
             try {
-              const faces = await detectFacesInJpeg(frameBuf);
+              const db = deps.loadDb();
+              const jpegQuality = normalizeCaptureJpegQuality(db.settings.capture_jpeg_quality);
+              const faces = await detectFacesInJpeg(frameBuf, jpegQuality);
               if (faces.length === 0) continue;
 
-              const db = deps.loadDb();
               const effMinConf = Math.min(db.settings.threshold_confidence, 0.5);
-              const effMinSize = Math.min(db.settings.min_face_size, 24);
+              const effMinSize = normalizeMinFaceSize(db.settings.min_face_size);
               let passedCount = 0;
               let droppedCount = 0;
 
@@ -499,7 +516,7 @@ async function runCameraLoop(w: WorkerRuntime, deps: NodeWorkerDeps) {
           '-i',
           url,
           '-vf',
-          "fps=1,scale='min(1280,iw)':-2",
+          vfArg,
           '-q:v',
           '4',
           '-f',
@@ -611,6 +628,7 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
   }
 
   const db = managerDeps.loadDb();
+  const desiredCaptureWidth = normalizeCaptureMaxWidth(db.settings.capture_max_width);
   const desired = new Map<number, Camera>();
   for (const cam of db.cameras) {
     const url = String(cam.rtsp_url || '').trim();
@@ -622,7 +640,7 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
   for (const cid of Array.from(workers.keys())) {
     const existing = workers.get(cid)!;
     const nextCam = desired.get(cid);
-    if (!nextCam || nextCam.rtsp_url !== existing.camera.rtsp_url) {
+    if (!nextCam || nextCam.rtsp_url !== existing.camera.rtsp_url || existing.captureMaxWidth !== desiredCaptureWidth) {
       stopSingleWorker(cid);
     } else {
       existing.camera = nextCam;
@@ -635,6 +653,7 @@ export async function refreshNodeRtspWorkers(): Promise<void> {
     if (!workers.has(cid)) {
       const runtime: WorkerRuntime = {
         camera: cam,
+        captureMaxWidth: desiredCaptureWidth,
         stop: false,
         child: null,
         timeoutFlag: '-stimeout',
@@ -692,6 +711,8 @@ export function getNodeWorkerStatus(db: AppDatabase): {
   production_mode: boolean;
   model_loaded: boolean;
   expected_embedding_dims: number;
+  capture_max_width: number;
+  capture_jpeg_quality: number;
   active_workers: number;
   indexed_students: number;
   cameras: WorkerCameraStat[];
@@ -702,6 +723,8 @@ export function getNodeWorkerStatus(db: AppDatabase): {
       ? 'NODE_WASM_LIVE'
       : 'IDLE';
   const indexedStudents = getCachedStudentFaceIndex(db.students).totalIndexed;
+  const captureMaxWidth = normalizeCaptureMaxWidth(db.settings.capture_max_width);
+  const captureJpegQuality = normalizeCaptureJpegQuality(db.settings.capture_jpeg_quality);
 
   const cameras: WorkerCameraStat[] = db.cameras.map((cam) => {
     const nodeWorker = workers.get(cam.id);
@@ -737,6 +760,8 @@ export function getNodeWorkerStatus(db: AppDatabase): {
     production_mode: Boolean(db.settings.production_mode),
     model_loaded: pythonActive ? true : Boolean(humanSingleton),
     expected_embedding_dims: pythonActive ? 512 : 1024,
+    capture_max_width: captureMaxWidth,
+    capture_jpeg_quality: captureJpegQuality,
     active_workers: cameras.filter((c) => c.connected).length,
     indexed_students: indexedStudents,
     cameras,

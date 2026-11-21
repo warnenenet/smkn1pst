@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Activity, CheckCheck, ExternalLink, HardDrive, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
-import { getJakartaNowParts, summarizeEmbeddingDimensions } from '../lib/attendanceEngine';
+import { describeCaptureResolutionMode, getJakartaNowParts, summarizeEmbeddingDimensions } from '../lib/attendanceEngine';
 import type { AppDatabase, WorkerStatusResponse } from '../types';
 
 interface DashboardViewProps {
@@ -200,6 +200,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
             <span className="text-slate-600">
               Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong> ({expectedDims}-D)
+            </span>
+            <span className="text-slate-600">
+              Capture: <strong className="text-slate-900">{describeCaptureResolutionMode(workerStatus?.capture_max_width ?? db.settings.capture_max_width ?? 1280)}</strong> · Min Wajah: <strong className="text-slate-900 tabular-nums">{db.settings.min_face_size} px</strong>
             </span>
             <span className="text-slate-600">
               Indeks RAM: <strong className="text-slate-900 tabular-nums">{workerStatus?.indexed_students ?? 0}</strong> vektor

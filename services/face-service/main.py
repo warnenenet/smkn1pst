@@ -53,6 +53,8 @@ settings_cache: Dict[str, Any] = {
     "threshold_clustering": 0.70,
     "min_face_size": 60,
     "min_snapshot_quality": 0.70,
+    "capture_max_width": 1280,
+    "capture_jpeg_quality": 86,
     "weight_confidence": 0.30,
     "weight_size": 0.25,
     "weight_sharpness": 0.25,
@@ -346,12 +348,18 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     continue
                 last_proc = now
 
+                max_capture_w = int(settings_cache.get("capture_max_width", 1280) or 0)
+                if max_capture_w > 0 and frame.shape[1] > max_capture_w:
+                    scale_ratio = float(max_capture_w) / float(frame.shape[1])
+                    new_h = max(2, int(round(frame.shape[0] * scale_ratio)) & ~1)
+                    frame = cv2.resize(frame, (max_capture_w, new_h), interpolation=cv2.INTER_AREA)
+
                 faces = detect_faces(frame)
                 if not faces:
                     continue
 
                 min_conf = min(float(settings_cache.get("threshold_confidence", 0.80)), 0.50)
-                min_size = min(int(settings_cache.get("min_face_size", 60)), 24)
+                min_size = max(20, min(400, int(settings_cache.get("min_face_size", 60) or 60)))
                 rec_thresh = float(settings_cache.get("threshold_recognition", 0.70))
 
                 valid_faces = []
@@ -436,8 +444,9 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
                     snap_name = f"cam{cam_id}_t{track_id}_{int(now)}.jpg"
                     snap_path = SNAPSHOT_DIR / snap_name
+                    jpeg_q = max(50, min(98, int(settings_cache.get("capture_jpeg_quality", 86) or 86)))
                     if crop.size > 0:
-                        cv2.imwrite(str(snap_path), crop, [int(cv2.IMWRITE_JPEG_QUALITY), 88])
+                        cv2.imwrite(str(snap_path), crop, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_q])
 
                     try:
                         with httpx.Client(timeout=4.0) as client:

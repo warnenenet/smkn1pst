@@ -53,6 +53,12 @@ export function stripEmbeddingsForBootstrap(db: AppDatabase): AppDatabase {
       ...c,
       centroid: [],
       best_embedding: [],
+      hit_snapshots: Array.isArray(c.hit_snapshots)
+        ? c.hit_snapshots.map(({ embedding, has_embedding, ...rest }) => ({
+            ...rest,
+            has_embedding: Boolean(has_embedding || (Array.isArray(embedding) && embedding.length > 0)),
+          }))
+        : [],
     })),
     face_update_history: db.face_update_history.map((h) => ({
       ...h,

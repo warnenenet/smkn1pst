@@ -143,6 +143,8 @@ export interface ClusterHitSnapshot {
   similarity: number;
   camera_id: number | null;
   detected_at: string;
+  embedding?: number[];
+  has_embedding?: boolean;
 }
 
 export interface AnonymousCluster {
@@ -267,6 +269,8 @@ export interface SettingsMap {
   threshold_clustering: number;
   min_face_size: number;
   min_snapshot_quality: number;
+  capture_max_width: number;
+  capture_jpeg_quality: number;
   cluster_ready_hits: number;
   cluster_ready_days: number;
   cluster_sighting_interval_min: number;
@@ -324,6 +328,8 @@ export interface WorkerStatusResponse {
   production_mode: boolean;
   model_loaded: boolean;
   expected_embedding_dims: number;
+  capture_max_width?: number;
+  capture_jpeg_quality?: number;
   active_workers: number;
   indexed_students?: number;
   automation?: {

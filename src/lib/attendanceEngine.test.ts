@@ -499,3 +499,122 @@ test('passesSnapshotQualityThreshold enforces minimum 70% quality gate and calib
   assert.ok(clearGateScore >= 0.7, `Expected clear CCTV score >= 0.70, got ${clearGateScore}`);
   assert.ok(blurrySmallScore < 0.7, `Expected blurry CCTV score < 0.70, got ${blurrySmallScore}`);
 });
+
+test('pixel capture helpers normalize width, JPEG quality, FFmpeg filter, and descriptions', async () => {
+  const {
+    normalizeCaptureMaxWidth,
+    normalizeCaptureJpegQuality,
+    normalizeMinFaceSize,
+    buildFfmpegCaptureVideoFilter,
+    describeCaptureResolutionMode,
+  } = await import('./attendanceEngine');
+
+  assert.equal(normalizeMinFaceSize(undefined), 60);
+  assert.equal(normalizeMinFaceSize(10), 20);
+  assert.equal(normalizeMinFaceSize(500), 400);
+  assert.equal(normalizeMinFaceSize(75.4), 75);
+
+  assert.equal(normalizeCaptureMaxWidth(undefined), 1280);
+  assert.equal(normalizeCaptureMaxWidth(0), 0);
+  assert.equal(normalizeCaptureMaxWidth(-50), 0);
+  assert.equal(normalizeCaptureMaxWidth(1921), 1920);
+  assert.equal(normalizeCaptureMaxWidth(100), 320);
+  assert.equal(normalizeCaptureMaxWidth(9999), 3840);
+
+  assert.equal(normalizeCaptureJpegQuality(undefined), 86);
+  assert.equal(normalizeCaptureJpegQuality(10), 50);
+  assert.equal(normalizeCaptureJpegQuality(120), 98);
+  assert.equal(normalizeCaptureJpegQuality(92), 92);
+
+  assert.equal(buildFfmpegCaptureVideoFilter(1, 1280), "fps=1,scale='min(1280,iw)':-2");
+  assert.equal(buildFfmpegCaptureVideoFilter(5, 1920), "fps=5,scale='min(1920,iw)':-2");
+  assert.equal(buildFfmpegCaptureVideoFilter(2, 0), 'fps=2');
+
+  assert.equal(describeCaptureResolutionMode(1280), '1280 px (HD 720p)');
+  assert.equal(describeCaptureResolutionMode(1920), '1920 px (Full HD 1080p)');
+  assert.equal(describeCaptureResolutionMode(0), 'Native (Asli Kamera)');
+});
+
+test('manual cluster curation removes mismatched hits, promotes primary photo, and merges groups cleanly', async () => {
+  const {
+    removeHitFromClusterState,
+    promoteHitInClusterState,
+    mergeAnonymousClustersState,
+  } = await import('./attendanceEngine');
+
+  const clusterA = {
+    id: 10,
+    centroid: [1, 0, 0],
+    hit_count: 5,
+    distinct_days: 1,
+    first_seen: '2026-11-20 07:00:00',
+    last_seen: '2026-11-20 07:05:00',
+    best_snapshot_path: '/data/snapshots/a1.jpg',
+    best_quality_score: 0.9,
+    best_embedding: [1, 0, 0],
+    hit_snapshots: [
+      { snapshot_path: '/data/snapshots/a1.jpg', quality_score: 0.9, similarity: 1, camera_id: 1, detected_at: '2026-11-20 07:00:00', embedding: [1, 0, 0] },
+      { snapshot_path: '/data/snapshots/a2.jpg', quality_score: 0.85, similarity: 0.88, camera_id: 1, detected_at: '2026-11-20 07:03:00', embedding: [0.9, 0.435, 0] },
+      { snapshot_path: '/data/snapshots/wrong.jpg', quality_score: 0.78, similarity: 0.72, camera_id: 1, detected_at: '2026-11-20 07:05:00', embedding: [0, 1, 0] },
+    ],
+    status: 'READY' as const,
+    named_student_id: null,
+    last_camera_id: 1,
+  };
+
+  // Buang foto salah (wrong.jpg) -> turun hit_count ke 4 -> status ikut turun ke PENDING jika target readyHits=5
+  const removed = removeHitFromClusterState({
+    cluster: clusterA,
+    snapshotPath: '/data/snapshots/wrong.jpg',
+    readyHits: 5,
+    readyDays: 1,
+  });
+  assert.equal(removed.found, true);
+  assert.equal(removed.deletedCluster, false);
+  assert.equal(removed.shouldRemoveFile, true);
+  assert.equal(removed.updatedCluster?.hit_snapshots?.length, 2);
+  assert.equal(removed.updatedCluster?.hit_count, 4);
+  assert.equal(removed.updatedCluster?.status, 'PENDING');
+  assert.equal(removed.updatedCluster?.best_snapshot_path, '/data/snapshots/a1.jpg');
+
+  // Jadikan a2.jpg sebagai foto acuan
+  const promoted = promoteHitInClusterState({
+    cluster: removed.updatedCluster!,
+    snapshotPath: '/data/snapshots/a2.jpg',
+  });
+  assert.equal(promoted.found, true);
+  assert.equal(promoted.updatedCluster?.best_snapshot_path, '/data/snapshots/a2.jpg');
+
+  // Gabungkan 2 grup anonim
+  const clusterB = {
+    ...clusterA,
+    id: 11,
+    hit_count: 2,
+    best_snapshot_path: '/data/snapshots/b1.jpg',
+    best_quality_score: 0.82,
+    hit_snapshots: [
+      { snapshot_path: '/data/snapshots/b1.jpg', quality_score: 0.82, similarity: 1, camera_id: 2, detected_at: '2026-11-20 07:10:00', embedding: [0.95, 0.31, 0] },
+    ],
+    status: 'PENDING' as const,
+  };
+  const merged = mergeAnonymousClustersState({
+    source: clusterB,
+    target: promoted.updatedCluster!,
+    readyHits: 5,
+    readyDays: 1,
+  });
+  assert.equal(merged.merged.hit_count, 6);
+  assert.equal(merged.merged.status, 'READY');
+  assert.equal(merged.merged.hit_snapshots?.length, 3);
+
+  // Menghapus satu-satunya hit menghapus cluster
+  const lastRemoved = removeHitFromClusterState({
+    cluster: clusterB,
+    snapshotPath: '/data/snapshots/b1.jpg',
+    readyHits: 5,
+    readyDays: 1,
+  });
+  assert.equal(lastRemoved.deletedCluster, true);
+});
+
+

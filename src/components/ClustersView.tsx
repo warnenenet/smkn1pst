@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Trash2, ZoomIn } from 'lucide-react';
+import { GitMerge, Split, Star, Trash2, ZoomIn } from 'lucide-react';
 import type { AnonymousCluster, AppDatabase, WorkerStatusResponse } from '../types';
 import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
 
@@ -20,6 +20,10 @@ interface ClustersViewProps {
   ) => Promise<void>;
   onMarkVisitor: (clusterId: number, payload: { nama: string; kategori: 'TAMU' | 'STAF'; catatan: string }) => Promise<void>;
   onDeleteCluster?: (clusterId: number) => Promise<void>;
+  onRemoveClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
+  onSetPrimaryClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
+  onSplitClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
+  onMergeCluster?: (sourceClusterId: number, targetClusterId: number) => Promise<void>;
 }
 
 export const ClustersView: React.FC<ClustersViewProps> = ({
@@ -29,28 +33,29 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
   onCreateStudentFromCluster,
   onMarkVisitor,
   onDeleteCluster,
+  onRemoveClusterHit,
+  onSetPrimaryClusterHit,
+  onSplitClusterHit,
+  onMergeCluster,
 }) => {
   const readyClusters = db.anonymous_clusters.filter((c) => c.status === 'READY');
   const pendingClusters = db.anonymous_clusters
     .filter((c) => c.status === 'PENDING')
     .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
+  const activeClusters = [...readyClusters, ...pendingClusters];
 
   const [queryMap, setQueryMap] = useState<Record<number, string>>({});
   const [suggestionsMap, setSuggestionsMap] = useState<Record<number, AutocompleteItem[]>>({});
   const [selectedStudentMap, setSelectedStudentMap] = useState<Record<number, number>>({});
   const [modeMap, setModeMap] = useState<Record<number, 'assign' | 'new' | 'visitor'>>({});
   const [expandedPendingMap, setExpandedPendingMap] = useState<Record<number, boolean>>({});
+  const [mergeTargetMap, setMergeTargetMap] = useState<Record<number, string>>({});
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
   // New student / visitor drafts per cluster
   const [newDraft, setNewDraft] = useState<Record<number, { nis: string; nisn: string; nama: string; kelas_id: string; tanggal_lahir: string; wa_ortu: string }>>({});
   const [visDraft, setVisDraft] = useState<Record<number, { nama: string; kategori: 'TAMU' | 'STAF'; catatan: string }>>({});
-  const [lightboxState, setLightboxState] = useState<{
-    title: string;
-    subtitle: string;
-    referenceItem: FaceGalleryItem;
-    items: FaceGalleryItem[];
-    initialIndex: number;
-  } | null>(null);
+  const [lightboxTarget, setLightboxTarget] = useState<{ clusterId: number; initialIndex: number } | null>(null);
 
   const targetHits = Math.max(1, db.settings.cluster_ready_hits ?? 5);
   const targetDays = Math.max(1, db.settings.cluster_ready_days ?? 1);
@@ -66,43 +71,47 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
               similarity: 1,
               camera_id: c.last_camera_id,
               detected_at: c.last_seen,
+              has_embedding: false,
             },
           ];
     return rawHits.map((h, idx) => {
       const camName = db.cameras.find((cm) => cm.id === h.camera_id)?.nama_kamera ?? 'Kamera Gerbang';
       return {
         src: h.snapshot_path,
-        label: h.snapshot_path === c.best_snapshot_path ? `Hit #${idx + 1} (Terbaik)` : `Hit #${idx + 1}`,
+        label: h.snapshot_path === c.best_snapshot_path ? `Hit #${idx + 1} (Acuan)` : `Hit #${idx + 1}`,
         timestamp: h.detected_at,
         cameraName: camName,
         similarity: h.similarity,
         qualityScore: h.quality_score,
+        isReference: h.snapshot_path === c.best_snapshot_path,
+        hasEmbedding: Boolean(h.has_embedding || (Array.isArray(h.embedding) && h.embedding.length > 0)),
       };
     });
   };
 
   const openClusterLightbox = (c: AnonymousCluster, index = 0) => {
-    const items = getClusterHits(c);
-    setLightboxState({
-      title: `Cluster Anonim #${c.id} (${c.status}) — Dobel Crosscheck Semua Hit`,
-      subtitle: `${c.hit_count}x terdeteksi · ${c.distinct_days} hari berbeda · Threshold clustering ${db.settings.threshold_clustering}`,
-      referenceItem: {
-        src: c.best_snapshot_path,
-        label: 'Foto Terbaik Cluster (Acuan)',
-        meta: `Skor ${(c.best_quality_score * 100).toFixed(1)}% · ${c.last_seen}`,
-      },
-      items,
-      initialIndex: index,
-    });
+    setLightboxTarget({ clusterId: c.id, initialIndex: index });
+  };
+
+  const runBusy = async (key: string, fn: () => Promise<void>) => {
+    setBusyKey(key);
+    try {
+      await fn();
+    } finally {
+      setBusyKey(null);
+    }
   };
 
   const renderHitsGallery = (c: AnonymousCluster) => {
     const hits = getClusterHits(c);
+    const otherClusters = activeClusters.filter((other) => other.id !== c.id);
+    const selectedMergeId = mergeTargetMap[c.id] ?? String(otherClusters[0]?.id ?? '');
+
     return (
-      <div className="pt-2 border-t border-slate-100 space-y-2">
+      <div className="pt-2 border-t border-slate-100 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-semibold text-slate-700">
-            Gambar Hit yang Dinyatakan Sama ({hits.length} foto tersimpan dari {c.hit_count} hit)
+            Anggota Foto Grup ({hits.length} foto tersimpan dari {c.hit_count} hit)
           </span>
           <button
             type="button"
@@ -110,38 +119,109 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline"
           >
             <ZoomIn className="w-3.5 h-3.5" />
-            Perbesar &amp; Crosscheck Semua
+            Nilai Satu Set &amp; Crosscheck
           </button>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1">
-          {hits.map((h, idx) => (
-            <button
-              key={`${c.id}-${h.src}-${idx}`}
-              type="button"
-              onClick={() => openClusterLightbox(c, idx)}
-              aria-label={`Perbesar ${h.label} untuk Cluster #${c.id}`}
-              className="group shrink-0 rounded-md border border-slate-200 hover:border-blue-500 p-1 bg-slate-50 text-left transition-colors"
-            >
-              <div className="relative">
-                <img
-                  src={h.src}
-                  alt={`${h.label} Cluster ${c.id}`}
-                  referrerPolicy="no-referrer"
-                  className="w-16 h-16 rounded object-cover bg-slate-200"
-                />
-                <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white rounded p-0.5 opacity-80 group-hover:opacity-100">
-                  <ZoomIn className="w-3 h-3" />
-                </span>
+        <div className="flex items-start gap-2.5 overflow-x-auto pb-1">
+          {hits.map((h, idx) => {
+            const isPrimary = h.src === c.best_snapshot_path;
+            const removeKey = `rm-${c.id}-${idx}`;
+            const promoteKey = `prom-${c.id}-${idx}`;
+            return (
+              <div
+                key={`${c.id}-${h.src}-${idx}`}
+                className={`shrink-0 rounded-md border p-1.5 bg-slate-50 transition-colors w-[92px] ${
+                  isPrimary ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => openClusterLightbox(c, idx)}
+                  aria-label={`Perbesar ${h.label} untuk Cluster #${c.id}`}
+                  className="group relative block w-full text-left"
+                >
+                  <img
+                    src={h.src}
+                    alt={`${h.label} Cluster ${c.id}`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-16 rounded object-cover bg-slate-200"
+                  />
+                  <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white rounded p-0.5 opacity-80 group-hover:opacity-100">
+                    <ZoomIn className="w-3 h-3" />
+                  </span>
+                </button>
+                <div className="mt-1 text-[10px] font-mono text-slate-700 truncate tabular-nums">
+                  {isPrimary ? 'ACUAN' : typeof h.similarity === 'number' ? `Sim ${Math.round(h.similarity * 100)}%` : h.label}
+                </div>
+                <div className="text-[9px] font-mono text-slate-400 truncate tabular-nums">
+                  {h.timestamp ? h.timestamp.slice(11, 16) : '-'}
+                </div>
+                <div className="mt-1.5 flex items-center gap-1">
+                  {!isPrimary && onSetPrimaryClusterHit && (
+                    <button
+                      type="button"
+                      disabled={busyKey !== null}
+                      onClick={() =>
+                        runBusy(promoteKey, () => onSetPrimaryClusterHit(c.id, { snapshot_path: h.src, hit_index: idx }))
+                      }
+                      aria-label={`Jadikan Hit #${idx + 1} sebagai foto acuan Cluster #${c.id}`}
+                      title="Jadikan foto acuan grup"
+                      className="flex-1 inline-flex items-center justify-center gap-0.5 py-1 text-[10px] font-medium bg-white border border-slate-200 hover:border-emerald-500 hover:text-emerald-700 text-slate-700 rounded disabled:opacity-50"
+                    >
+                      <Star className="w-2.5 h-2.5" /> Acuan
+                    </button>
+                  )}
+                  {onRemoveClusterHit && (
+                    <button
+                      type="button"
+                      disabled={busyKey !== null}
+                      onClick={() =>
+                        runBusy(removeKey, () => onRemoveClusterHit(c.id, { snapshot_path: h.src, hit_index: idx }))
+                      }
+                      aria-label={`Buang Hit #${idx + 1} dari Cluster #${c.id}`}
+                      title="Buang wajah ini karena berbeda orang / blur"
+                      className={`${isPrimary || !onSetPrimaryClusterHit ? 'flex-1' : ''} inline-flex items-center justify-center gap-0.5 px-1.5 py-1 text-[10px] font-medium bg-white border border-red-200 hover:bg-red-50 text-red-700 rounded disabled:opacity-50`}
+                    >
+                      <Trash2 className="w-2.5 h-2.5" />
+                      {isPrimary ? 'Buang' : ''}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="mt-1 text-[10px] font-mono text-slate-700 truncate max-w-[64px]">
-                {typeof h.similarity === 'number' ? `Sim ${Math.round(h.similarity * 100)}%` : h.label}
-              </div>
-              <div className="text-[9px] font-mono text-slate-400 truncate max-w-[64px]">
-                {h.timestamp ? h.timestamp.slice(11, 16) : '-'}
-              </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
+
+        {onMergeCluster && otherClusters.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
+            <label htmlFor={`merge-${c.id}`} className="text-slate-500">
+              Gabungkan grup ini ke:
+            </label>
+            <select
+              id={`merge-${c.id}`}
+              value={selectedMergeId}
+              onChange={(e) => setMergeTargetMap((p) => ({ ...p, [c.id]: e.target.value }))}
+              className="border border-slate-300 rounded px-2 py-1 text-[11px] bg-white font-mono"
+            >
+              {otherClusters.map((oc) => (
+                <option key={oc.id} value={oc.id}>
+                  #{oc.id} ({oc.status} · {oc.hit_count} hit)
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busyKey !== null || !selectedMergeId}
+              onClick={() =>
+                selectedMergeId &&
+                runBusy(`merge-${c.id}`, () => onMergeCluster(c.id, Number(selectedMergeId)))
+              }
+              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 rounded border border-slate-300 disabled:opacity-50"
+            >
+              <GitMerge className="w-3 h-3" /> Gabungkan
+            </button>
+          </div>
+        )}
       </div>
     );
   };
@@ -456,12 +536,12 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                       </span>
                     </button>
                     <div className="text-xs space-y-1 flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                         <h3 className="text-sm font-semibold text-slate-900">
                           Anonim #{c.id} <span className="text-amber-700 font-mono text-xs">(PENDING)</span>
                         </h3>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono tabular-nums text-slate-700 font-semibold">
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono tabular-nums text-slate-700 font-semibold whitespace-nowrap">
                             Skor {c.best_quality_score.toFixed(3)}
                           </span>
                           {onDeleteCluster && (
@@ -477,11 +557,11 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center justify-between text-[11px] font-mono text-slate-600 tabular-nums">
-                        <span>
+                      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[11px] font-mono text-slate-600 tabular-nums">
+                        <span className="whitespace-nowrap">
                           Progres Hit: <strong>{c.hit_count} / {targetHits}</strong>
                         </span>
-                        <span>
+                        <span className="whitespace-nowrap">
                           Hari: <strong>{c.distinct_days} / {targetDays}</strong>
                         </span>
                       </div>
@@ -517,15 +597,105 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
         )}
       </section>
 
-      <FaceLightboxModal
-        isOpen={Boolean(lightboxState)}
-        onClose={() => setLightboxState(null)}
-        title={lightboxState?.title ?? ''}
-        subtitle={lightboxState?.subtitle}
-        referenceItem={lightboxState?.referenceItem}
-        items={lightboxState?.items ?? []}
-        initialIndex={lightboxState?.initialIndex ?? 0}
-      />
+      {(() => {
+        const activeCluster = lightboxTarget
+          ? activeClusters.find((c) => c.id === lightboxTarget.clusterId) ?? null
+          : null;
+        const lightboxItems = activeCluster ? getClusterHits(activeCluster) : [];
+        return (
+          <FaceLightboxModal
+            isOpen={Boolean(activeCluster && lightboxItems.length > 0)}
+            onClose={() => setLightboxTarget(null)}
+            title={
+              activeCluster
+                ? `Cluster Anonim #${activeCluster.id} (${activeCluster.status}) — Penilaian Manual Satu Set`
+                : ''
+            }
+            subtitle={
+              activeCluster
+                ? `${activeCluster.hit_count}x terdeteksi · ${activeCluster.distinct_days} hari berbeda · Bandingkan dengan Foto Acuan lalu buang wajah yang tidak sama`
+                : undefined
+            }
+            referenceItem={
+              activeCluster
+                ? {
+                    src: activeCluster.best_snapshot_path,
+                    label: 'Foto Terbaik Cluster (Acuan)',
+                    meta: `Skor ${(activeCluster.best_quality_score * 100).toFixed(1)}% · ${activeCluster.last_seen}`,
+                  }
+                : null
+            }
+            items={lightboxItems}
+            initialIndex={lightboxTarget?.initialIndex ?? 0}
+            renderItemActions={
+              activeCluster
+                ? (item, itemIdx) => {
+                    const isPrimary = item.src === activeCluster.best_snapshot_path;
+                    return (
+                      <>
+                        <span className="text-[11px] text-slate-300">
+                          {isPrimary
+                            ? 'Foto ini sedang menjadi acuan utama grup.'
+                            : 'Apakah wajah ini sama dengan Foto Acuan di sebelah kiri?'}
+                        </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!isPrimary && onSetPrimaryClusterHit && (
+                            <button
+                              type="button"
+                              disabled={busyKey !== null}
+                              onClick={() =>
+                                runBusy(`lb-prom-${activeCluster.id}-${itemIdx}`, () =>
+                                  onSetPrimaryClusterHit(activeCluster.id, { snapshot_path: item.src, hit_index: itemIdx })
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
+                            >
+                              <Star className="w-3.5 h-3.5" /> Jadikan Foto Acuan
+                            </button>
+                          )}
+                          {lightboxItems.length > 1 && item.hasEmbedding && onSplitClusterHit && (
+                            <button
+                              type="button"
+                              disabled={busyKey !== null}
+                              onClick={() =>
+                                runBusy(`lb-split-${activeCluster.id}-${itemIdx}`, () =>
+                                  onSplitClusterHit(activeCluster.id, { snapshot_path: item.src, hit_index: itemIdx })
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+                            >
+                              <Split className="w-3.5 h-3.5" /> Pisahkan Jadi Grup Baru
+                            </button>
+                          )}
+                          {onRemoveClusterHit && (
+                            <button
+                              type="button"
+                              disabled={busyKey !== null}
+                              onClick={() =>
+                                runBusy(`lb-rm-${activeCluster.id}-${itemIdx}`, async () => {
+                                  await onRemoveClusterHit(activeCluster.id, {
+                                    snapshot_path: item.src,
+                                    hit_index: itemIdx,
+                                  });
+                                  if (lightboxItems.length <= 1) {
+                                    setLightboxTarget(null);
+                                  }
+                                })
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" /> Buang dari Grup
+                            </button>
+                          )}
+                        </div>
+                      </>
+                    );
+                  }
+                : undefined
+            }
+          />
+        );
+      })()}
     </div>
   );
 };

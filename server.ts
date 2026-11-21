@@ -59,13 +59,19 @@ import {
   formatWaMessage,
   getJakartaNowParts,
   maskRtspCredentials,
+  mergeAnonymousClustersState,
+  normalizeCaptureJpegQuality,
+  normalizeCaptureMaxWidth,
   normalizeExcelBirthDate,
+  normalizeMinFaceSize,
   normalizeMinSnapshotQuality,
   normalizeStudentStatus,
   normalizeWaPhone,
   parseFfmpegStreamOutput,
   parseKelasHierarchy,
   passesSnapshotQualityThreshold,
+  promoteHitInClusterState,
+  removeHitFromClusterState,
   resolveScheduleForStudent,
   stripDemoRecordsForProduction,
   summarizeEmbeddingDimensions,
@@ -1474,6 +1480,7 @@ function processFaceEvent(payload: {
             similarity: Math.round(Math.max(0, bestClusterSim) * 10000) / 10000,
             camera_id: cam.id,
             detected_at: nowStr,
+            embedding: Array.isArray(embedding) ? embedding : undefined,
           },
           bestCluster.best_snapshot_path,
           12
@@ -1532,6 +1539,7 @@ function processFaceEvent(payload: {
             similarity: 1,
             camera_id: cam.id,
             detected_at: nowStr,
+            embedding,
           },
         ],
         status: 'PENDING',
@@ -1948,6 +1956,171 @@ app.delete('/api/clusters/:id', requireAuth(['ADMIN', 'BK']), (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/clusters/:id/hits/remove', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const cid = Number(req.params.id);
+  const idx = db.anonymous_clusters.findIndex((c) => c.id === cid);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Cluster tidak ditemukan.' });
+    return;
+  }
+  const cluster = db.anonymous_clusters[idx];
+  const snapshotPath = typeof req.body?.snapshot_path === 'string' ? req.body.snapshot_path : undefined;
+  const hitIndex = typeof req.body?.hit_index === 'number' ? req.body.hit_index : undefined;
+
+  const result = removeHitFromClusterState({
+    cluster,
+    snapshotPath,
+    hitIndex,
+    readyHits: Math.max(1, db.settings.cluster_ready_hits ?? 5),
+    readyDays: Math.max(1, db.settings.cluster_ready_days ?? 1),
+  });
+  if (!result.found) {
+    res.status(404).json({ error: 'Foto hit tidak ditemukan di cluster ini.' });
+    return;
+  }
+  if (result.shouldRemoveFile && result.removedHit?.snapshot_path) {
+    removeSnapshotIfLocal(result.removedHit.snapshot_path);
+  }
+  if (result.deletedCluster || !result.updatedCluster) {
+    db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
+    saveDb(db);
+    res.json({ ok: true, deleted_cluster: true });
+    return;
+  }
+  db.anonymous_clusters[idx] = result.updatedCluster;
+  saveDb(db);
+  res.json({ ok: true, deleted_cluster: false, cluster: result.updatedCluster });
+});
+
+app.post('/api/clusters/:id/hits/set-primary', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const cid = Number(req.params.id);
+  const idx = db.anonymous_clusters.findIndex((c) => c.id === cid);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Cluster tidak ditemukan.' });
+    return;
+  }
+  const result = promoteHitInClusterState({
+    cluster: db.anonymous_clusters[idx],
+    snapshotPath: typeof req.body?.snapshot_path === 'string' ? req.body.snapshot_path : undefined,
+    hitIndex: typeof req.body?.hit_index === 'number' ? req.body.hit_index : undefined,
+  });
+  if (!result.found || !result.updatedCluster) {
+    res.status(404).json({ error: 'Foto hit tidak ditemukan di cluster ini.' });
+    return;
+  }
+  db.anonymous_clusters[idx] = result.updatedCluster;
+  saveDb(db);
+  res.json({ ok: true, cluster: result.updatedCluster });
+});
+
+app.post('/api/clusters/:id/hits/split', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const cid = Number(req.params.id);
+  const idx = db.anonymous_clusters.findIndex((c) => c.id === cid);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Cluster tidak ditemukan.' });
+    return;
+  }
+  const cluster = db.anonymous_clusters[idx];
+  const hitList = Array.isArray(cluster.hit_snapshots) ? cluster.hit_snapshots : [];
+  if (hitList.length <= 1) {
+    res.status(400).json({ error: 'Cluster hanya memiliki 1 foto. Gunakan hapus jika ingin membuangnya.' });
+    return;
+  }
+
+  const snapshotPath = typeof req.body?.snapshot_path === 'string' ? req.body.snapshot_path : undefined;
+  const hitIndex = typeof req.body?.hit_index === 'number' ? req.body.hit_index : undefined;
+  let targetHitIdx = snapshotPath ? hitList.findIndex((h) => h.snapshot_path === snapshotPath) : -1;
+  if (targetHitIdx === -1 && typeof hitIndex === 'number' && hitIndex >= 0 && hitIndex < hitList.length) {
+    targetHitIdx = hitIndex;
+  }
+  if (targetHitIdx === -1) {
+    res.status(404).json({ error: 'Foto hit tidak ditemukan di cluster ini.' });
+    return;
+  }
+  const targetHit = hitList[targetHitIdx];
+  const hitEmbedding = Array.isArray(targetHit.embedding) && targetHit.embedding.length > 0 ? targetHit.embedding : null;
+  if (!hitEmbedding) {
+    res.status(400).json({
+      error: 'Foto lama ini belum menyimpan vektor embedding terpisah. Gunakan tombol "Buang dari Grup" untuk menghapusnya.',
+    });
+    return;
+  }
+
+  const removed = removeHitFromClusterState({
+    cluster,
+    snapshotPath: targetHit.snapshot_path,
+    hitIndex: targetHitIdx,
+    readyHits: Math.max(1, db.settings.cluster_ready_hits ?? 5),
+    readyDays: Math.max(1, db.settings.cluster_ready_days ?? 1),
+  });
+  if (!removed.found || removed.deletedCluster || !removed.updatedCluster) {
+    res.status(400).json({ error: 'Gagal memisahkan foto dari grup.' });
+    return;
+  }
+  db.anonymous_clusters[idx] = removed.updatedCluster;
+
+  const newClusterId = nextId(db.anonymous_clusters);
+  const newCluster = {
+    id: newClusterId,
+    centroid: hitEmbedding,
+    hit_count: 1,
+    distinct_days: 1,
+    first_seen: targetHit.detected_at || cluster.last_seen,
+    last_seen: targetHit.detected_at || cluster.last_seen,
+    best_snapshot_path: targetHit.snapshot_path,
+    best_quality_score: targetHit.quality_score || 0.75,
+    best_embedding: hitEmbedding,
+    hit_snapshots: [
+      {
+        snapshot_path: targetHit.snapshot_path,
+        quality_score: targetHit.quality_score || 0.75,
+        similarity: 1,
+        camera_id: targetHit.camera_id ?? cluster.last_camera_id,
+        detected_at: targetHit.detected_at || cluster.last_seen,
+        embedding: hitEmbedding,
+      },
+    ],
+    status: 'PENDING' as const,
+    named_student_id: null,
+    last_camera_id: targetHit.camera_id ?? cluster.last_camera_id,
+  };
+  db.anonymous_clusters.unshift(newCluster);
+  saveDb(db);
+  res.json({ ok: true, new_cluster_id: newClusterId });
+});
+
+app.post('/api/clusters/:id/merge', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const sourceId = Number(req.params.id);
+  const targetId = Number(req.body?.target_cluster_id);
+  if (!sourceId || !targetId || sourceId === targetId) {
+    res.status(400).json({ error: 'Pilih grup tujuan yang berbeda.' });
+    return;
+  }
+  const source = db.anonymous_clusters.find((c) => c.id === sourceId);
+  const targetIdx = db.anonymous_clusters.findIndex((c) => c.id === targetId);
+  if (!source || targetIdx === -1) {
+    res.status(404).json({ error: 'Cluster sumber atau tujuan tidak ditemukan.' });
+    return;
+  }
+  const mergedRes = mergeAnonymousClustersState({
+    source,
+    target: db.anonymous_clusters[targetIdx],
+    readyHits: Math.max(1, db.settings.cluster_ready_hits ?? 5),
+    readyDays: Math.max(1, db.settings.cluster_ready_days ?? 1),
+  });
+  db.anonymous_clusters[targetIdx] = mergedRes.merged;
+  db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== sourceId);
+  for (const droppedPath of mergedRes.removedPaths) {
+    removeSnapshotIfLocal(droppedPath);
+  }
+  saveDb(db);
+  res.json({ ok: true, target_cluster_id: targetId });
+});
+
 // Face Update Review (BK)
 app.post('/api/face-reviews/:id/approve', requireAuth(['ADMIN', 'BK']), (req, res) => {
   const db = loadDb();
@@ -2215,8 +2388,20 @@ app.post('/api/settings', requireAuth(['ADMIN']), (req, res) => {
   if (patch.min_snapshot_quality !== undefined) {
     patch.min_snapshot_quality = normalizeMinSnapshotQuality(patch.min_snapshot_quality);
   }
+  if (patch.min_face_size !== undefined) {
+    patch.min_face_size = normalizeMinFaceSize(patch.min_face_size);
+  }
+  if (patch.capture_max_width !== undefined) {
+    patch.capture_max_width = normalizeCaptureMaxWidth(patch.capture_max_width);
+  }
+  if (patch.capture_jpeg_quality !== undefined) {
+    patch.capture_jpeg_quality = normalizeCaptureJpegQuality(patch.capture_jpeg_quality);
+  }
   db.settings = { ...db.settings, ...patch };
   db.settings.min_snapshot_quality = normalizeMinSnapshotQuality(db.settings.min_snapshot_quality);
+  db.settings.min_face_size = normalizeMinFaceSize(db.settings.min_face_size);
+  db.settings.capture_max_width = normalizeCaptureMaxWidth(db.settings.capture_max_width);
+  db.settings.capture_jpeg_quality = normalizeCaptureJpegQuality(db.settings.capture_jpeg_quality);
   saveDb(db);
   triggerPythonCameraReload();
   refreshNodeRtspWorkers().catch(() => {});

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Download, HardDriveUpload, RefreshCw, ShieldCheck } from 'lucide-react';
 import type { AppDatabase, BackupEntry, SettingsMap, TTSMode, UserRole, WorkerStatusResponse } from '../types';
+import { describeCaptureResolutionMode } from '../lib/attendanceEngine';
 import { shouldSyncFormFromServer } from '../lib/uiRefreshGuard';
 
 interface SettingsUsersViewProps {
@@ -239,6 +240,11 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               const normalizedForm: SettingsMap = {
                 ...form,
                 min_snapshot_quality: Math.max(0.7, Math.min(0.99, Number(form.min_snapshot_quality) || 0.7)),
+                min_face_size: Math.max(20, Math.min(400, Math.round(Number(form.min_face_size) || 60))),
+                capture_max_width: Number.isFinite(Number(form.capture_max_width))
+                  ? Number(form.capture_max_width)
+                  : 1280,
+                capture_jpeg_quality: Math.max(50, Math.min(98, Math.round(Number(form.capture_jpeg_quality) || 86))),
               };
               await onSaveSettings(normalizedForm);
               lastSyncedRef.current = JSON.stringify(normalizedForm);
@@ -299,9 +305,39 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
               className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
             />
           </div>
-          <div>
-            <label htmlFor="set-min-face" className="block text-xs text-slate-600 mb-1">Ukuran Wajah Min (px)</label>
-            <input id="set-min-face" type="number" value={form.min_face_size} onChange={(e) => updateForm('min_face_size', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+          <div className="field-group">
+            <label htmlFor="set-min-face" className="block text-xs text-slate-600 mb-1">Batas Pixel Wajah Capture (Min px, 20–400)</label>
+            <input id="set-min-face" type="number" min="20" max="400" value={form.min_face_size} onChange={(e) => updateForm('min_face_size', Number(e.target.value))} className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono" />
+          </div>
+          <div className="field-group">
+            <label htmlFor="set-capture-width" className="block text-xs text-slate-600 mb-1">
+              Resolusi Pixel Capture RTSP ({describeCaptureResolutionMode(form.capture_max_width ?? 1280)})
+            </label>
+            <select
+              id="set-capture-width"
+              value={String(form.capture_max_width ?? 1280)}
+              onChange={(e) => updateForm('capture_max_width', Number(e.target.value))}
+              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono bg-white"
+            >
+              <option value="640">640 px (360p — Hemat CPU &amp; Bandwidth)</option>
+              <option value="960">960 px (540p — Seimbang)</option>
+              <option value="1280">1280 px (HD 720p — Default Sistem)</option>
+              <option value="1920">1920 px (Full HD 1080p — Gerbang Lebar)</option>
+              <option value="2560">2560 px (2K QHD — Jarak Jauh)</option>
+              <option value="0">Asli Kamera / Native (Tanpa Resize)</option>
+            </select>
+          </div>
+          <div className="field-group">
+            <label htmlFor="set-capture-jpeg" className="block text-xs text-slate-600 mb-1">Kualitas JPEG Snapshot Capture (%)</label>
+            <input
+              id="set-capture-jpeg"
+              type="number"
+              min="50"
+              max="98"
+              value={form.capture_jpeg_quality ?? 86}
+              onChange={(e) => updateForm('capture_jpeg_quality', Number(e.target.value))}
+              className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
+            />
           </div>
           <div>
             <label htmlFor="set-ready-hits" className="block text-xs text-slate-600 mb-1">Syarat READY: Min Hit Count</label>
