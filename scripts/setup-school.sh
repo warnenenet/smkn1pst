@@ -140,13 +140,19 @@ if [[ -n "$AAPANEL_PROJECT" ]]; then
   upsert_env "AAPANEL_PROJECT_NAME" "$AAPANEL_PROJECT"
 fi
 
-if [[ -d "$APP_DIR/node_modules/.bin" ]]; then
-  chmod +x "$APP_DIR"/node_modules/.bin/* 2>/dev/null || true
-fi
-
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
+  if [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]] || [[ ! -f "$APP_DIR/node_modules/express/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
+    echo "[setup-school] node_modules belum lengkap/rusak; menjalankan npm install..."
+    rm -rf "$APP_DIR/node_modules/ws" 2>/dev/null || true
+    npm install --no-audit --no-fund
+  fi
+  if [[ -d "$APP_DIR/node_modules/.bin" ]]; then
+    chmod +x "$APP_DIR"/node_modules/.bin/* 2>/dev/null || true
+  fi
   echo "[setup-school] Membangun bundle produksi Vite (dist/)..."
   npm run build
+elif [[ -d "$APP_DIR/node_modules/.bin" ]]; then
+  chmod +x "$APP_DIR"/node_modules/.bin/* 2>/dev/null || true
 fi
 
 if [[ "$(id -u)" -eq 0 ]] && [[ -d "/www/server" ]] && id -u www >/dev/null 2>&1; then

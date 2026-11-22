@@ -441,11 +441,29 @@ has_pkg_script() {
 PM="$(detect_pkg_manager)"
 log "Package manager terdeteksi: $PM"
 
+has_broken_node_modules() {
+  [[ -d "$APP_DIR/node_modules" ]] || return 0
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"ws"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]]; then
+    return 0
+  fi
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"express"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/express/package.json" ]]; then
+    return 0
+  fi
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"vite"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
+    return 0
+  fi
+  return 1
+}
+
 SHOULD_INSTALL=0
 if [[ "$INSTALL_STRATEGY" == "always" ]]; then
   SHOULD_INSTALL=1
 elif [[ "$INSTALL_STRATEGY" == "auto" ]]; then
   if [[ ! -d "$APP_DIR/node_modules" ]]; then
+    SHOULD_INSTALL=1
+  elif has_broken_node_modules; then
+    warn "Folder node_modules terdeteksi tidak lengkap/rusak (misal ws/lib/stream.js hilang); memperbaiki dengan reinstall..."
+    rm -rf "$APP_DIR/node_modules/ws" 2>/dev/null || true
     SHOULD_INSTALL=1
   elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]]; then
     if git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$'; then
