@@ -1,3 +1,4 @@
+import { APP_ROOT } from './envBootstrap.ts';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -37,7 +38,7 @@ import {
 } from '../lib/attendanceEngine.ts';
 import { buildFaceVectorIndex, type FaceVectorIndex } from '../lib/faceIndex.ts';
 
-export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
+export const DATA_DIR = path.resolve(APP_ROOT, process.env.DATA_DIR || 'data');
 export const SQLITE_FILE = path.join(DATA_DIR, 'absensi.sqlite');
 export const LEGACY_JSON_FILE = path.join(DATA_DIR, 'absensi_db.json');
 export const SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');

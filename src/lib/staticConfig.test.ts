@@ -4,6 +4,7 @@ import {
   getStaticAssetContentType,
   getStaticCacheControl,
   isNonSpaResourcePath,
+  resolveListenConfig,
   shouldServeProductionBuild,
 } from './staticConfig';
 
@@ -51,15 +52,29 @@ test('shouldServeProductionBuild chooses dist in production or bare node start, 
       argv: ['node', 'server.ts'],
       distIndexExists: false,
     }),
-    false
+    true
+  );
+  assert.equal(
+    shouldServeProductionBuild({
+      nodeEnv: 'development',
+      npmLifecycleEvent: 'start',
+      execArgv: [],
+      argv: ['node', 'server.ts'],
+      distIndexExists: false,
+    }),
+    true
   );
 });
 
-test('isNonSpaResourcePath blocks assets, api, src, and asset extensions from SPA HTML fallback', () => {
+test('isNonSpaResourcePath blocks assets, api, src, node_modules, vite dev paths, and asset extensions from SPA HTML fallback', () => {
   assert.equal(isNonSpaResourcePath('/assets/index-missing.js'), true);
   assert.equal(isNonSpaResourcePath('/src/main.tsx'), true);
   assert.equal(isNonSpaResourcePath('/api/unknown'), true);
   assert.equal(isNonSpaResourcePath('/module.mjs'), true);
+  assert.equal(isNonSpaResourcePath('/@vite/client'), true);
+  assert.equal(isNonSpaResourcePath('/@react-refresh'), true);
+  assert.equal(isNonSpaResourcePath('/node_modules/vite/dist/client/env.mjs'), true);
+  assert.equal(isNonSpaResourcePath('/node_modules/.vite/deps/react_jsx-dev-runtime.js'), true);
   assert.equal(isNonSpaResourcePath('/'), false);
   assert.equal(isNonSpaResourcePath('/ortu'), false);
   assert.equal(isNonSpaResourcePath('/login'), false);
@@ -69,4 +84,36 @@ test('isNonSpaResourcePath blocks assets, api, src, and asset extensions from SP
 test('getStaticCacheControl disables cache for index.html and makes hashed assets immutable', () => {
   assert.equal(getStaticCacheControl('/app/dist/index.html'), 'no-cache, no-store, must-revalidate');
   assert.equal(getStaticCacheControl('/app/dist/assets/index-BGWKy8BM.js'), 'public, max-age=31536000, immutable');
+});
+
+test('resolveListenConfig prioritizes CLI --port over .env PORT and supports multi-school hosts', () => {
+  assert.deepEqual(resolveListenConfig({ argv: [], env: {} }), {
+    port: 3000,
+    host: undefined,
+    autoPortFallback: false,
+  });
+  assert.deepEqual(resolveListenConfig({ argv: [], env: { PORT: '3002', HOST: '127.0.0.1' } }), {
+    port: 3002,
+    host: '127.0.0.1',
+    autoPortFallback: false,
+  });
+  assert.deepEqual(
+    resolveListenConfig({
+      argv: ['node', 'server.ts', '--port', '3015', '--host=0.0.0.0'],
+      env: { PORT: '3002', AUTO_PORT_FALLBACK: '1' },
+    }),
+    {
+      port: 3015,
+      host: '0.0.0.0',
+      autoPortFallback: true,
+    }
+  );
+  assert.deepEqual(
+    resolveListenConfig({ argv: ['node', 'server.ts', '--port=3025'], env: { PORT: '3000' } }),
+    {
+      port: 3025,
+      host: undefined,
+      autoPortFallback: false,
+    }
+  );
 });

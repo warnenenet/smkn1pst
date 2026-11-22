@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import { APP_ROOT } from './src/server/envBootstrap.ts';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
@@ -83,6 +83,7 @@ import {
   getStaticAssetContentType,
   getStaticCacheControl,
   isNonSpaResourcePath,
+  resolveListenConfig,
   shouldServeProductionBuild,
 } from './src/lib/staticConfig.ts';
 import { stripEmbeddingsForBootstrap } from './src/lib/uiRefreshGuard.ts';
@@ -116,6 +117,12 @@ app.get('/favicon.ico', (_req, res) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
+wss.on('error', (err: NodeJS.ErrnoException) => {
+  // HTTP server error listener handles EADDRINUSE fallback/exit cleanly; avoid crashing via unattached wss error.
+  if (err.code !== 'EADDRINUSE') {
+    console.error('[WebSocketServer] Error:', err.message);
+  }
+});
 
 interface WsMeta {
   cameraId: string | null;
@@ -3006,10 +3013,10 @@ app.get('/api/wa/export', requireAuth(['ADMIN', 'BK']), (_req, res) => {
 // VITE MIDDLEWARE / STATIC DIST & SPA FALLBACK
 // ============================================================================
 async function start() {
-  const appRoot = typeof import.meta.dirname === 'string' ? import.meta.dirname : process.cwd();
+  const appRoot = APP_ROOT;
   const distDir = path.resolve(appRoot, 'dist');
   const distIndexPath = path.join(distDir, 'index.html');
-  const distIndexExists = fs.existsSync(distIndexPath);
+  let distIndexExists = fs.existsSync(distIndexPath);
 
   const useProductionDist = shouldServeProductionBuild({
     nodeEnv: process.env.NODE_ENV,
@@ -3022,29 +3029,49 @@ async function start() {
   if (!useProductionDist) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      root: appRoot,
+      server: {
+        middlewareMode: true,
+        ...(process.env.DISABLE_HMR === 'true' ? { hmr: false } : {}),
+      },
       appType: 'spa',
+    });
+    app.use((req, res, next) => {
+      if (
+        req.method === 'GET' &&
+        (req.path === '/' ||
+          req.path === '/index.html' ||
+          req.path.startsWith('/@vite/') ||
+          req.path.startsWith('/src/') ||
+          !isNonSpaResourcePath(req.path))
+      ) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      }
+      next();
     });
     app.use(vite.middlewares);
     console.log('[Absensi SMK Server] Frontend mode: DEV (Vite middleware)');
-  } else if (!distIndexExists) {
-    console.error(
-      `[Absensi SMK Server] ERROR: File build produksi "${distIndexPath}" tidak ditemukan. Jalankan "npm run build" terlebih dahulu sebelum menjalankan server produksi.`
-    );
-    let viteAttached = false;
-    try {
-      const { createServer: createViteServer } = await import('vite');
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: 'spa',
-      });
-      app.use(vite.middlewares);
-      viteAttached = true;
-      console.warn('[Absensi SMK Server] Fallback sementara ke Vite middleware karena folder dist/ belum dibuat.');
-    } catch {
-      // vite not installed in --omit=dev image without dist
+  } else {
+    if (!distIndexExists && fs.existsSync(path.join(appRoot, 'index.html'))) {
+      console.warn(
+        `[Absensi SMK Server] File build produksi "${distIndexPath}" belum tersedia — menjalankan Vite production build otomatis...`
+      );
+      try {
+        const { build: viteBuild } = await import('vite');
+        await viteBuild({ root: appRoot, mode: 'production' });
+        distIndexExists = fs.existsSync(distIndexPath);
+      } catch (err) {
+        console.error(
+          '[Absensi SMK Server] Gagal menjalankan auto-build Vite produksi:',
+          err instanceof Error ? err.message : err
+        );
+      }
     }
-    if (!viteAttached) {
+
+    if (!distIndexExists) {
+      console.error(
+        `[Absensi SMK Server] ERROR: File build produksi "${distIndexPath}" tidak ditemukan. Jalankan "npm run build" terlebih dahulu sebelum menjalankan server produksi.`
+      );
       app.get('*', (_req, res) => {
         res
           .status(503)
@@ -3053,40 +3080,40 @@ async function start() {
             '<!doctype html><html lang="id"><body style="font-family:sans-serif;padding:2rem"><h1>Build Produksi Belum Tersedia</h1><p>Folder <code>dist/</code> belum dibuat. Jalankan <code>npm run build</code> lalu mulai ulang server.</p></body></html>'
           );
       });
-    }
-  } else {
-    app.use(
-      express.static(distDir, {
-        index: false,
-        setHeaders: (res, filePath) => {
-          const contentType = getStaticAssetContentType(filePath);
-          if (contentType) {
-            res.setHeader('Content-Type', contentType);
-          }
-          res.setHeader('Cache-Control', getStaticCacheControl(filePath));
-          res.setHeader('X-Content-Type-Options', 'nosniff');
-        },
-      })
-    );
+    } else {
+      app.use(
+        express.static(distDir, {
+          index: false,
+          setHeaders: (res, filePath) => {
+            const contentType = getStaticAssetContentType(filePath);
+            if (contentType) {
+              res.setHeader('Content-Type', contentType);
+            }
+            res.setHeader('Cache-Control', getStaticCacheControl(filePath));
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+          },
+        })
+      );
 
-    app.use((req, res, next) => {
-      if (req.method === 'GET' && !isNonSpaResourcePath(req.path)) {
+      app.use((req, res, next) => {
+        if (req.method === 'GET' && !isNonSpaResourcePath(req.path)) {
+          next();
+          return;
+        }
+        if (req.method === 'GET' && isNonSpaResourcePath(req.path)) {
+          res.status(404).type('text/plain; charset=utf-8').send('Asset atau endpoint tidak ditemukan.');
+          return;
+        }
         next();
-        return;
-      }
-      if (req.method === 'GET' && isNonSpaResourcePath(req.path)) {
-        res.status(404).type('text/plain; charset=utf-8').send('Asset atau endpoint tidak ditemukan.');
-        return;
-      }
-      next();
-    });
+      });
 
-    app.get('*', (_req, res) => {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.sendFile(distIndexPath);
-    });
-    console.log(`[Absensi SMK Server] Frontend mode: PRODUCTION (${distDir})`);
+      app.get('*', (_req, res) => {
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.sendFile(distIndexPath);
+      });
+      console.log(`[Absensi SMK Server] Frontend mode: PRODUCTION (${distDir})`);
+    }
   }
 
   // Jalankan worker antrean WA, restore sesi Baileys tersimpan, scheduler harian + pembersihan storage otomatis
@@ -3178,8 +3205,8 @@ async function start() {
   if (autoUpdateEnabled) {
     const intervalMin = Math.max(5, Number(process.env.AUTO_UPDATE_INTERVAL_MINUTES) || 60);
     const intervalMs = intervalMin * 60_000;
-    const scriptPath = path.resolve(process.cwd(), 'scripts/auto-update.sh');
-    const gitDirPath = path.resolve(process.cwd(), '.git');
+    const scriptPath = path.resolve(APP_ROOT, 'scripts/auto-update.sh');
+    const gitDirPath = path.resolve(APP_ROOT, '.git');
 
     const triggerScheduledAutoUpdate = async () => {
       if (!fs.existsSync(scriptPath) || !fs.existsSync(gitDirPath)) return;
@@ -3189,7 +3216,7 @@ async function start() {
         const logPath = path.join(DATA_DIR, 'auto-update.log');
         const outFd = fs.openSync(logPath, 'a');
         const child = spawn('bash', [scriptPath], {
-          cwd: process.cwd(),
+          cwd: APP_ROOT,
           detached: true,
           stdio: ['ignore', outFd, outFd],
           env: process.env,
@@ -3206,10 +3233,13 @@ async function start() {
     setInterval(() => void triggerScheduledAutoUpdate(), intervalMs);
   }
 
-  const port = Number(process.env.PORT) || 3000;
-  const listenHost = process.env.HOST?.trim();
+  const listenCfg = resolveListenConfig({ argv: process.argv, env: process.env });
+  let activePort = listenCfg.port;
+  const listenHost = listenCfg.host;
+  let portAttempts = 0;
+
   const onListen = () => {
-    console.log(`[Absensi SMK Server] Running on http://${listenHost || '0.0.0.0'}:${port}`);
+    console.log(`[Absensi SMK Server] Running on http://${listenHost || '0.0.0.0'}:${activePort}`);
     startNodeRtspWorkers({
       loadDb,
       snapshotsDir: SNAPSHOTS_DIR,
@@ -3225,11 +3255,38 @@ async function start() {
       },
     });
   };
-  if (listenHost) {
-    server.listen(port, listenHost, onListen);
-  } else {
-    server.listen(port, onListen);
-  }
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      if (listenCfg.autoPortFallback && portAttempts < 50) {
+        portAttempts++;
+        const prevPort = activePort;
+        activePort += 1;
+        console.warn(
+          `[Absensi SMK Server] Port ${prevPort} sudah dipakai aplikasi lain; mencoba port berikutnya ${activePort} (AUTO_PORT_FALLBACK=1)...`
+        );
+        setTimeout(tryListen, 100);
+        return;
+      }
+      console.error(
+        `[Absensi SMK Server] ERROR: Port ${activePort} sudah dipakai oleh aplikasi/sekolah lain (EADDRINUSE). ` +
+          `Untuk multi-domain/multi-sekolah di 1 VPS, ubah PORT di .env (mis. PORT=3001, 3002, ...), jalankan "npm run setup:school -- --domain <domain>", atau gunakan flag "--port 3001".`
+      );
+      process.exit(1);
+    }
+    throw err;
+  });
+
+  server.once('listening', onListen);
+
+  const tryListen = () => {
+    if (listenHost) {
+      server.listen(activePort, listenHost);
+    } else {
+      server.listen(activePort);
+    }
+  };
+  tryListen();
 }
 
 process.on('unhandledRejection', (reason) => {

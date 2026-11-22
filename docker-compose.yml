@@ -1,17 +1,16 @@
 services:
   absensi-smk:
     image: ${DOCKERHUB_IMAGE:-username/absensi-smk-face-ai:latest}
-    container_name: absensi-smk-face-ai
+    container_name: ${CONTAINER_NAME:-absensi-smk-face-ai}
     restart: unless-stopped
     ports:
-      # Gunakan 3080:80 agar tidak bentrok dengan Nginx aaPanel di port 80,
-      # lalu arahkan Reverse Proxy domain (misal hadir.smkpercut.store) ke http://127.0.0.1:3080
-      - "3080:80"
+      # Gunakan port berbeda per sekolah via .env (mis. HOST_PORT=3081, 3082, 3083),
+      # lalu arahkan Reverse Proxy domain masing-masing sekolah ke http://127.0.0.1:${HOST_PORT}
+      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_PORT:-3080}:80"
     environment:
       TZ: Asia/Jakarta
       NODE_ENV: production
+      APP_URL: ${APP_URL:-}
     volumes:
-      - absensi_data:/app/data
+      - ${DATA_PATH:-./data}:/app/data
 
-volumes:
-  absensi_data:

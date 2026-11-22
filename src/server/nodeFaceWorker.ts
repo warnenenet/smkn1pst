@@ -14,7 +14,9 @@ import {
   normalizeCaptureMaxWidth,
   passesSnapshotQualityThreshold,
 } from '../lib/attendanceEngine.ts';
+import { pathToFileURL } from 'url';
 import { findBestFaceMatch } from '../lib/faceIndex.ts';
+import { APP_ROOT } from './envBootstrap.ts';
 import { getCachedStudentFaceIndex } from './store.ts';
 import type { AppDatabase, Camera, WorkerCameraStat } from '../types';
 
@@ -72,8 +74,8 @@ export async function initNodeFaceAi(): Promise<HumanInstance> {
   if (humanInitPromise) return humanInitPromise;
 
   humanInitPromise = (async () => {
-    const modelDir = path.resolve(process.cwd(), 'node_modules/@vladmandic/human/models');
-    const wasmDir = path.resolve(process.cwd(), 'node_modules/@tensorflow/tfjs-backend-wasm/dist') + path.sep;
+    const modelDir = path.resolve(APP_ROOT, 'node_modules/@vladmandic/human/models');
+    const wasmDir = path.resolve(APP_ROOT, 'node_modules/@tensorflow/tfjs-backend-wasm/dist') + path.sep;
 
     if (!fetchShimApplied) {
       const origFetch = globalThis.fetch.bind(globalThis);
@@ -96,10 +98,10 @@ export async function initNodeFaceAi(): Promise<HumanInstance> {
     await tf.ready();
 
     const humanModulePath = path.resolve(
-      process.cwd(),
+      APP_ROOT,
       'node_modules/@vladmandic/human/dist/human.node-wasm.js'
     );
-    const { Human } = (await import(humanModulePath)) as {
+    const { Human } = (await import(pathToFileURL(humanModulePath).href)) as {
       Human: new (config: Record<string, unknown>) => HumanInstance;
     };
 

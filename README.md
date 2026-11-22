@@ -103,37 +103,43 @@ server {
 }
 ```
 
-### Khusus Deploy di **aaPanel** (Agar Tidak Terkena Error MIME `application/octet-stream`)
-Error `Failed to load module script ... MIME type of "application/octet-stream"` di aaPanel terjadi bila Nginx masih membaca `index.html` mentah (yang berisi `/src/main.tsx`) atau ada blok cache statis aaPanel yang mencegat request `/assets/*.js`.
+### Khusus Deploy di **aaPanel** (Anti-Error 404 `env.mjs` / `react_jsx-dev-runtime.js` & MIME `application/octet-stream`)
+Error `404` pada `/node_modules/.vite/deps/react_jsx-dev-runtime.js` & `env.mjs` (atau error MIME `application/octet-stream`) terjadi bila Node Project dijalankan memakai **`dev`** (`tsx server.ts`) alih-alih **`start`**, atau ada blok statis Nginx aaPanel yang mencegat file `.js`/`.css`.
 
-1. **Install Node.js v22 LTS** di aaPanel (**App Store → Node.js Version Manager**), karena `node server.ts` membutuhkan Node `>= 22.6` (jika terpaksa memakai Node 20, ubah command start menjadi `npx tsx server.ts`).
-2. Masuk ke terminal folder proyek (misal `/www/wwwroot/hadir.smkpercut.store`) lalu jalankan:
+1. **Install Node.js v22 LTS** di aaPanel (**App Store → Node.js Version Manager**).
+2. Masuk ke terminal folder proyek (misal `/www/wwwroot/absensi.smkpercut.store`) lalu jalankan 1 perintah setup otomatis:
    ```bash
    npm install
-   npm run build
+   npm run setup:school -- --domain absensi.smkpercut.store
    ```
-   Pastikan folder `dist/` dan file `dist/index.html` sudah terbentuk.
+   Script otomatis memilih port kosong unik (`3001`, `3002`, `3003`, dst.), membuat `.env` terisolasi, mengisolasi `DATA_DIR=./data`, mem-build folder `dist/`, dan mencetak config Nginx Reverse Proxy siap tempel.
 3. Di aaPanel → **Website → Node project → Add Node project**:
-   - **Project dir**: `/www/wwwroot/hadir.smkpercut.store`
-   - **Run opt**: `start` (atau custom: `NODE_ENV=production PORT=3000 node server.ts`)
-   - **Port**: `3000`
-   - Isi domain `hadir.smkpercut.store`, centang **Mapping**, lalu pasang **SSL**.
+   - **Project dir**: folder sekolah (misal `/www/wwwroot/absensi.smkpercut.store`)
+   - **Run opt**: **`start`** *(PENTING: jangan pilih `dev`!)*
+   - **Port**: masukkan port unik dari `.env` (misal `3001` untuk sekolah ke-1, `3002` untuk sekolah ke-2, dst.)
+   - Isi domain sekolah, centang **Mapping**, lalu pasang **SSL**.
 4. **Jika memakai Reverse Proxy manual pada Website Nginx aaPanel**:
    Buka **Site Settings → Config** di aaPanel dan **hapus/komentari** blok bawaan aaPanel seperti:
    ```nginx
    # location ~ .*\.(js|css)?$ { ... }
    ```
-   agar seluruh request (termasuk `/assets/*.js`, `/assets/*.css`, dan WebSocket `/ws`) benar-benar masuk ke `proxy_pass http://127.0.0.1:3000;` (atau `:3080` untuk Docker) dan tidak dilayani sebagai file mentah dari folder root.
-5. **Mengatasi `502 Bad Gateway` & `Permission denied` di aaPanel**:
-   - Jika memakai **Docker** (`docker-compose.yml` port `3080:80`): pastikan target Reverse Proxy adalah `http://127.0.0.1:3080` dan container sedang berjalan (`docker ps` & `curl -s http://127.0.0.1:3080/api/health`).
-   - Jika muncul error `node_modules/.bin/tsx: Permission denied` (biasanya karena `node_modules` di-upload via ZIP/FTP atau di-install sebagai `root` sedangkan Node Project aaPanel berjalan sebagai user `www`), jalankan di terminal proyek:
-     ```bash
-     chmod +x node_modules/.bin/*
-     chown -R www:www /www/wwwroot/smkn1pst
-     npm run build
-     ```
-   - Di **Run opt** Node Project aaPanel, **jangan pilih `dev`** — pilih **`start`** (`node server.ts` untuk Node `>= 22.18`), atau isi custom command `NODE_ENV=production PORT=3000 node --experimental-strip-types server.ts` (jika Node `22.6`–`22.17`) / `NODE_ENV=production PORT=3000 node node_modules/tsx/dist/cli.mjs server.ts`.
-   - Pastikan target Reverse Proxy menunjuk ke `http://127.0.0.1:3000`.
+   agar seluruh request (termasuk `/assets/*.js`, `/assets/*.css`, dan WebSocket `/ws`) benar-benar masuk ke `proxy_pass http://127.0.0.1:3001;` (sesuai `PORT` sekolah tersebut).
+
+### Deploy Banyak Domain / Banyak Sekolah di 1 Server (Tanpa Konflik Port 3000)
+Setiap folder sekolah terisolasi penuh (`PORT`, `.env`, `DATA_DIR=./data/absensi.sqlite`, `wa_auth/`, dan `snapshots/`):
+- **Mode aaPanel / Node.js**:
+  - Sekolah 1 (`/www/wwwroot/smk1.sch.id`): `npm run setup:school -- --domain smk1.sch.id` → otomatis mendapat `PORT=3001` → Reverse Proxy ke `127.0.0.1:3001`
+  - Sekolah 2 (`/www/wwwroot/smk2.sch.id`): `npm run setup:school -- --domain smk2.sch.id` → otomatis mendapat `PORT=3002` → Reverse Proxy ke `127.0.0.1:3002`
+  - Sekolah 3 (`/www/wwwroot/smk3.sch.id`): `npm run setup:school -- --domain smk3.sch.id` → otomatis mendapat `PORT=3003` → Reverse Proxy ke `127.0.0.1:3003`
+- **Mode Docker Compose**:
+  Salin `docker-compose.yml` ke folder per sekolah dan isi `.env` masing-masing:
+  ```env
+  CONTAINER_NAME="absensi-smk2"
+  HOST_PORT="3082"
+  DATA_PATH="./data"
+  APP_URL="https://smk2.sch.id"
+  ```
+  Lalu jalankan `docker compose up -d` dan arahkan Reverse Proxy domain ke `http://127.0.0.1:3082`.
 
 ---
 

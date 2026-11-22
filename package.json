@@ -12,7 +12,8 @@
     "lint": "tsc --noEmit",
     "update": "bash scripts/auto-update.sh",
     "update:check": "bash scripts/auto-update.sh --dry-run",
-    "update:cron": "bash scripts/auto-update.sh --install-cron"
+    "update:cron": "bash scripts/auto-update.sh --install-cron",
+    "setup:school": "bash scripts/setup-school.sh"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
