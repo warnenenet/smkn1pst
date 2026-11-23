@@ -14,11 +14,13 @@ import {
   ExternalLink,
   ShieldCheck,
   LogOut,
+  Rocket,
 } from 'lucide-react';
 import type { User } from '../types';
 
 export type NavTab =
   | 'dashboard'
+  | 'production-setup'
   | 'attendance'
   | 'reports'
   | 'students'
@@ -67,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     roles: Array<User['role']>;
   }> = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="w-4 h-4" />, roles: ['ADMIN', 'BK', 'GURU'] },
+    { id: 'production-setup', label: 'Setup Produksi', icon: <Rocket className="w-4 h-4" />, roles: ['ADMIN'] },
     { id: 'attendance', label: 'Absensi Harian', icon: <ClipboardCheck className="w-4 h-4" />, roles: ['ADMIN', 'BK', 'GURU'] },
     { id: 'reports', label: 'Laporan & Export', icon: <FileBarChart2 className="w-4 h-4" />, roles: ['ADMIN', 'BK', 'GURU'] },
     { id: 'students', label: 'Siswa, Jurusan & Excel', icon: <Users className="w-4 h-4" />, roles: ['ADMIN', 'BK'] },

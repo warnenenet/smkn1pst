@@ -1,6 +1,7 @@
 import type { AppDatabase } from '../types';
 
 export const CONFIG_FORM_TABS = new Set<string>([
+  'production-setup',
   'settings',
   'schedules',
   'whatsapp',

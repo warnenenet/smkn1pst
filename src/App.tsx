@@ -20,6 +20,7 @@ import { CallPageView } from './components/CallPageView';
 import { GuestPortalView } from './components/GuestPortalView';
 import { LoginView } from './components/LoginView';
 import { SetupWizardView } from './components/SetupWizardView';
+import { ProductionSetupView } from './components/ProductionSetupView';
 import { shouldPauseBackgroundBootstrap } from './lib/uiRefreshGuard';
 import type {
   AppDatabase,
@@ -33,6 +34,7 @@ import type {
 
 const TAB_TITLES: Record<NavTab, string> = {
   dashboard: 'Dashboard Utama',
+  'production-setup': 'Setup Produksi Sekolah (0% → 100%)',
   attendance: 'Absensi Harian & Koreksi BK',
   reports: 'Laporan & Export CSV / PDF',
   students: 'Manajemen Siswa, Jurusan & Excel',
@@ -45,12 +47,12 @@ const TAB_TITLES: Record<NavTab, string> = {
 };
 
 const ROLE_ALLOWED_TABS: Record<User['role'], NavTab[]> = {
-  ADMIN: ['dashboard', 'attendance', 'reports', 'students', 'clusters', 'reviews', 'cameras', 'schedules', 'whatsapp', 'settings'],
+  ADMIN: ['dashboard', 'production-setup', 'attendance', 'reports', 'students', 'clusters', 'reviews', 'cameras', 'schedules', 'whatsapp', 'settings'],
   BK: ['dashboard', 'attendance', 'reports', 'students', 'clusters', 'reviews', 'schedules', 'whatsapp'],
   GURU: ['dashboard', 'attendance', 'reports'],
 };
 
-type RouteMode = 'home' | 'ortu' | 'login' | 'setup' | 'panggil';
+type RouteMode = 'home' | 'ortu' | 'login' | 'setup' | 'production-setup' | 'panggil';
 
 function parseRoute(pathname: string): { mode: RouteMode; cameraId: number } {
   if (pathname.startsWith('/panggil/')) {
@@ -64,6 +66,9 @@ function parseRoute(pathname: string): { mode: RouteMode; cameraId: number } {
   }
   if (pathname === '/setup') {
     return { mode: 'setup', cameraId: 1 };
+  }
+  if (pathname === '/production-setup') {
+    return { mode: 'production-setup', cameraId: 1 };
   }
   return { mode: 'home', cameraId: 1 };
 }
@@ -175,7 +180,10 @@ export default function App() {
   }, [authUser, activeTab]);
 
   useEffect(() => {
-    if (authUser && routeView.mode === 'login') {
+    if (authUser && (routeView.mode === 'login' || routeView.mode === 'production-setup')) {
+      if (routeView.mode === 'production-setup' && authUser.role === 'ADMIN') {
+        setActiveTab('production-setup');
+      }
       window.history.replaceState({}, '', '/');
       setRouteView({ mode: 'home', cameraId: 1 });
     }
@@ -391,23 +399,31 @@ export default function App() {
           setSchoolName(school_name);
           setProductionMode(true);
           setAuthUser(user);
-          setActiveTab('dashboard');
+          setActiveTab('production-setup');
           window.history.replaceState({}, '', '/');
           setRouteView({ mode: 'home', cameraId: 1 });
           await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
-          notify('Setup awal selesai! Halaman instalasi kini terkunci dan akun Admin aktif.');
+          notify('Setup awal selesai! Lanjutkan checklist Setup Produksi hingga 100% siap.');
         }}
       />
     );
   }
 
-  if (routeView.mode === 'login' || routeView.mode === 'setup') {
+  if (routeView.mode === 'login' || routeView.mode === 'setup' || (routeView.mode === 'production-setup' && !authUser)) {
+    const targetProduction = routeView.mode === 'production-setup';
+    const infoBanner =
+      routeView.mode === 'setup'
+        ? 'Setup awal akun Administrator sudah selesai dan terkunci permanen. Masuk sebagai Admin untuk membuka halaman Setup Produksi.'
+        : targetProduction
+          ? 'Masuk sebagai Administrator untuk mengakses halaman Setup Produksi Sekolah.'
+          : undefined;
     return (
       <LoginView
         schoolName={schoolName}
+        infoBanner={infoBanner}
         onSuccess={async (user) => {
           setAuthUser(user);
-          setActiveTab('dashboard');
+          setActiveTab(targetProduction && user.role === 'ADMIN' ? 'production-setup' : 'dashboard');
           navigateRoute('home');
           await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
         }}
@@ -556,6 +572,35 @@ export default function App() {
               }
               onOpenPanggil={(camId) => navigateRoute('panggil', camId)}
               onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
+
+          {activeTab === 'production-setup' && (
+            <ProductionSetupView
+              db={db}
+              workerStatus={workerStatus}
+              onSaveSettings={async (patch) => {
+                await apiPost('/api/settings', patch);
+                notify('Pengaturan produksi disimpan.');
+              }}
+              onActivateProduction={handleActivateProduction}
+              onMigrateEmbeddings={async () => {
+                const res = await apiPost('/api/system/migrate-embeddings', {});
+                notify(
+                  `Migrasi non-destruktif selesai: ${res.migrated_students} siswa & ${res.migrated_clusters} cluster disinkronkan ke ${res.expected_dims}-D (${res.skipped_no_local_photo} tanpa foto lokal).`
+                );
+              }}
+              onCleanupStorage={async () => {
+                const res = await apiPost('/api/storage/cleanup');
+                const freedText =
+                  Number(res.freed_bytes || 0) >= 1024 * 1024
+                    ? `${res.freed_mb} MB`
+                    : `${Math.round(Number(res.freed_bytes || 0) / 1024)} KB`;
+                notify(`Pembersihan storage selesai (${freedText} dibebaskan).`);
+              }}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+              onOpenPanggil={(camId) => navigateRoute('panggil', camId)}
+              onOpenGuest={() => navigateRoute('ortu')}
             />
           )}
 

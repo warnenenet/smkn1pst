@@ -98,6 +98,7 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
 | `/` | Setup / Dashboard / Portal Ortu | Otomatis menampilkan **Setup Wizard** saat baru di-install (`needs_setup=true`), **Dashboard Staf** jika sudah login, atau **Portal Orang Tua** jika belum login. |
 | `/login` | Publik (dengan rate limit) | Halaman login khusus **Admin, Guru BK, dan Guru**. |
 | `/setup` | Sekali pakai saat instalasi | Setup Admin pertama ala WordPress; otomatis terkunci permanen (`HTTP 409`) begitu 1 Admin aktif dibuat. |
+| `/production-setup` | Admin (via Login) | Langsung membuka halaman **Setup Produksi Sekolah (0% → 100%)** untuk melengkapi seluruh prasyarat produksi. |
 | `/ortu` atau `/guest` | Publik (CAPTCHA + rate limit) | Orang tua / siswa cek rekap absensi bulanan dengan **NISN + Tanggal Lahir**. |
 | `/panggil/:cameraId` | Publik (Kiosk Layar Gerbang) | Tampilan layar monitor gerbang per kamera: live nama siswa masuk/keluar, tingkat kemiripan, & panggilan suara otomatis. |
 
@@ -105,6 +106,7 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
 | Menu / Tab | ADMIN | BK | GURU | Fungsi Utama |
 |---|---|---|---|---|
 | **Dashboard Utama** | Ya | Ya | Ya | Ringkasan absensi hari ini, statistik keterlambatan, status worker AI/RTSP, migrasi dimensi AI, & monitor kuota **Storage 10 GB**. |
+| **Setup Produksi** | Ya | — | — | Checklist kesiapan produksi **0% → 100%** (Admin, Siswa/AI, Kamera RTSP, Jadwal, WA/Kiosk, Backup/Hardening) & konfigurasi inti cepat. |
 | **Absensi Harian & Koreksi** | Ya | Ya | Baca | Tabel kehadiran per tanggal/jurusan/kelas, **Autocomplete cari siswa** (5.000+ siswa cepat), input cepat **SAKIT / IZIN**, override status, serta zoom foto bukti hit kamera. |
 | **Laporan & Export** | Ya | Ya | Ya | Rekap bulanan/harian per kelas atau siswa dan export **CSV** / cetak laporan. |
 | **Siswa, Jurusan & Excel** | Ya | Ya | — | Kelola jurusan, kelas, data siswa, **Import Excel** (mendukung kenaikan kelas, pindah kelas, tinggal kelas, & kelulusan otomatis), enroll foto tunggal/batch, dan uji banding 2 foto. |

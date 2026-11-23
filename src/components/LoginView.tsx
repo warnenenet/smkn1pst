@@ -4,12 +4,14 @@ import type { User } from '../types';
 
 interface LoginViewProps {
   schoolName: string;
+  infoBanner?: string;
   onSuccess: (user: User) => void;
   onBackToPortal: () => void;
 }
 
 export const LoginView: React.FC<LoginViewProps> = ({
   schoolName,
+  infoBanner,
   onSuccess,
   onBackToPortal,
 }) => {
@@ -63,6 +65,12 @@ export const LoginView: React.FC<LoginViewProps> = ({
               <p className="text-xs text-slate-500 truncate">{schoolName} · Admin, Guru BK &amp; Wali Kelas</p>
             </div>
           </div>
+
+          {infoBanner && (
+            <div className="mt-4 p-3 rounded-md bg-blue-50 border border-blue-200 text-xs text-blue-800 font-medium">
+              {infoBanner}
+            </div>
+          )}
 
           {error && (
             <div role="alert" className="mt-4 p-3 rounded-md bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
