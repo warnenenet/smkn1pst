@@ -756,7 +756,7 @@ export function appendClusterHitSnapshot(
   existingHits: HitSnapshotRecord[] | undefined,
   newHit: HitSnapshotRecord,
   bestSnapshotPath: string,
-  maxHits = 12
+  maxHits = 5
 ): { hits: HitSnapshotRecord[]; removedPaths: string[] } {
   const list = Array.isArray(existingHits) ? [...existingHits] : [];
   if (!newHit.snapshot_path) {
@@ -767,10 +767,17 @@ export function appendClusterHitSnapshot(
   if (combined.length <= maxHits) {
     return { hits: combined, removedPaths: [] };
   }
-  const kept = combined.slice(0, maxHits);
+  // Pilihan A: pertahankan foto Acuan utama + urutkan berdasar kualitas terbaik (tie-break terbaru)
+  const ranked = [...combined].sort((a, b) => {
+    if (a.snapshot_path === bestSnapshotPath) return -1;
+    if (b.snapshot_path === bestSnapshotPath) return 1;
+    if (b.quality_score !== a.quality_score) return b.quality_score - a.quality_score;
+    return String(b.detected_at || '').localeCompare(String(a.detected_at || ''));
+  });
+  const kept = ranked.slice(0, maxHits);
   const keptSet = new Set(kept.map((item) => item.snapshot_path));
   const removedPaths: string[] = [];
-  for (const dropped of combined.slice(maxHits)) {
+  for (const dropped of ranked.slice(maxHits)) {
     if (
       dropped.snapshot_path &&
       dropped.snapshot_path !== bestSnapshotPath &&
@@ -851,9 +858,9 @@ export function removeHitFromClusterState(params: {
   }
 
   const bestHit = remainingHits.reduce((best, cur) => (cur.quality_score > best.quality_score ? cur : best), remainingHits[0]);
-  const nextHitCount = Math.max(remainingHits.length, cluster.hit_count - 1);
+  const nextHitCount = Math.min(remainingHits.length, Math.max(0, cluster.hit_count - 1));
   const distinctDaySet = new Set(remainingHits.map((h) => String(h.detected_at || '').slice(0, 10)).filter(Boolean));
-  const nextDistinctDays = Math.max(1, Math.min(cluster.distinct_days, Math.max(distinctDaySet.size, cluster.distinct_days)));
+  const nextDistinctDays = Math.max(1, Math.min(cluster.distinct_days, Math.max(distinctDaySet.size, 1)));
   const sortedDates = remainingHits.map((h) => h.detected_at).filter(Boolean).sort();
   const nextFirstSeen = sortedDates[0] ?? cluster.first_seen;
   const nextLastSeen = sortedDates[sortedDates.length - 1] ?? cluster.last_seen;
@@ -869,15 +876,8 @@ export function removeHitFromClusterState(params: {
 
   let nextStatus: ClusterStatus = cluster.status;
   if (cluster.status === 'READY' || cluster.status === 'PENDING') {
-    nextStatus = checkClusterReadyStatus({
-      hitCount: nextHitCount,
-      distinctDays: nextDistinctDays,
-      hasBestSnapshot: Boolean(bestHit.snapshot_path),
-      readyHits,
-      readyDays,
-    })
-      ? 'READY'
-      : 'PENDING';
+    // Setelah foto salah / foto topi dihapus manual, kembalikan ke PENDING agar wajah terus dilatih bersih lagi
+    nextStatus = 'PENDING';
   }
 
   const stillReferenced = remainingHits.some((h) => h.snapshot_path === removedHit.snapshot_path);
@@ -900,6 +900,63 @@ export function removeHitFromClusterState(params: {
       status: nextStatus,
       last_camera_id: remainingHits[0]?.camera_id ?? cluster.last_camera_id,
     },
+  };
+}
+
+export function removeMultipleHitsFromClusterState(params: {
+  cluster: AnonymousCluster;
+  snapshotPaths: string[];
+  readyHits: number;
+  readyDays: number;
+}): {
+  removedHits: HitSnapshotRecord[];
+  removedFilePaths: string[];
+  deletedCluster: boolean;
+  updatedCluster: AnonymousCluster | null;
+} {
+  const { cluster, snapshotPaths, readyHits, readyDays } = params;
+  const targets = new Set(snapshotPaths.filter(Boolean));
+  if (targets.size === 0) {
+    return { removedHits: [], removedFilePaths: [], deletedCluster: false, updatedCluster: cluster };
+  }
+  let working: AnonymousCluster | null = cluster;
+  const removedHits: HitSnapshotRecord[] = [];
+  const candidateFiles = new Set<string>();
+  let deletedCluster = false;
+
+  for (const sp of targets) {
+    if (!working) break;
+    const res = removeHitFromClusterState({
+      cluster: working,
+      snapshotPath: sp,
+      readyHits,
+      readyDays,
+    });
+    if (!res.found) continue;
+    if (res.removedHit) {
+      removedHits.push(res.removedHit);
+      if (res.shouldRemoveFile && res.removedHit.snapshot_path) {
+        candidateFiles.add(res.removedHit.snapshot_path);
+      }
+    }
+    if (res.deletedCluster || !res.updatedCluster) {
+      working = null;
+      deletedCluster = true;
+      break;
+    }
+    working = res.updatedCluster;
+  }
+
+  const stillUsed = new Set(
+    working ? getNormalizedClusterHits(working).map((h) => h.snapshot_path) : []
+  );
+  const removedFilePaths = Array.from(candidateFiles).filter((p) => !stillUsed.has(p));
+
+  return {
+    removedHits,
+    removedFilePaths,
+    deletedCluster,
+    updatedCluster: working,
   };
 }
 
@@ -940,7 +997,7 @@ export function mergeAnonymousClustersState(params: {
   readyDays: number;
   maxHits?: number;
 }): { merged: AnonymousCluster; removedPaths: string[] } {
-  const { source, target, readyHits, readyDays, maxHits = 12 } = params;
+  const { source, target, readyHits, readyDays, maxHits = 50 } = params;
   const targetHits = getNormalizedClusterHits(target);
   const sourceHits = getNormalizedClusterHits(source);
 

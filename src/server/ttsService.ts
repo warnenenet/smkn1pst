@@ -2,15 +2,40 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import { TTS_CACHE_MAX_BYTES } from '../lib/storageBudget.ts';
+import { resolveExecutableBinary } from '../lib/staticConfig.ts';
 import { TTS_CACHE_DIR, enforceDirQuota } from './store.ts';
 
 const PIPER_BIN = process.env.PIPER_BIN || '/usr/local/piper/piper';
 const PIPER_MODEL = process.env.PIPER_MODEL || '/app/models/piper/id_ID-news_tts-medium.onnx';
-const MAX_TTS_CACHE_BYTES = 200 * 1024 * 1024; // 200 MB
+const MAX_TTS_CACHE_BYTES = TTS_CACHE_MAX_BYTES;
 const inFlightTts = new Map<string, Promise<string | null>>();
 
+function resolvePiperExecutable(): string | null {
+  const res = resolveExecutableBinary({
+    candidates: [PIPER_BIN],
+    binaryName: 'piper',
+    ops: {
+      existsSync: (p) => fs.existsSync(p),
+      isFileSync: (p) => {
+        try {
+          return fs.statSync(p).isFile();
+        } catch {
+          return false;
+        }
+      },
+      canExecuteSync: (p) => {
+        fs.accessSync(p, fs.constants.X_OK);
+        return true;
+      },
+      chmodSync: (p, mode) => fs.chmodSync(p, mode),
+    },
+  });
+  return res.foundExecutable ? res.binary : null;
+}
+
 export function isPiperAvailable(): boolean {
-  return fs.existsSync(PIPER_BIN) && fs.existsSync(PIPER_MODEL);
+  return resolvePiperExecutable() !== null && fs.existsSync(PIPER_MODEL);
 }
 
 export async function synthesizeIndonesianWav(text: string): Promise<string | null> {

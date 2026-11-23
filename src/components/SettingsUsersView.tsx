@@ -612,9 +612,9 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
                 type="password"
                 autoComplete="new-password"
                 aria-label="Password awal user"
-                minLength={6}
+                minLength={8}
                 required
-                placeholder="Password awal (min 6)"
+                placeholder="Password awal (min 8)"
                 value={uPassword}
                 onChange={(e) => setUPassword(e.target.value)}
                 className="border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
@@ -691,8 +691,8 @@ export const SettingsUsersView: React.FC<SettingsUsersViewProps> = ({
                 autoComplete="new-password"
                 aria-label="Password baru"
                 required
-                minLength={6}
-                placeholder="Password baru (min 6)"
+                minLength={8}
+                placeholder="Password baru (min 8)"
                 value={newPwd}
                 onChange={(e) => setNewPwd(e.target.value)}
                 className="border border-slate-300 rounded px-2.5 py-1.5 text-xs flex-1"

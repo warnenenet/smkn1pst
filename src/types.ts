@@ -322,6 +322,24 @@ export interface WorkerCameraStat {
   last_error: string | null;
 }
 
+export interface StorageBreakdown {
+  sqlite_bytes: number;
+  wal_bytes: number;
+  snapshots_bytes: number;
+  backups_bytes: number;
+  tts_cache_bytes: number;
+  logs_bytes: number;
+  other_bytes: number;
+  total_bytes: number;
+  rows: {
+    attendance_logs: number;
+    wa_queue: number;
+    notifications: number;
+    guest_access_logs: number;
+    auth_sessions: number;
+  };
+}
+
 export interface WorkerStatusResponse {
   engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE';
   node_env: string;
@@ -334,6 +352,7 @@ export interface WorkerStatusResponse {
   capture_jpeg_quality?: number;
   active_workers: number;
   indexed_students?: number;
+  storage_breakdown?: StorageBreakdown;
   automation?: {
     daily_scheduler_active: boolean;
     wa_worker_active: boolean;

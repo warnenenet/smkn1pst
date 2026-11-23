@@ -129,11 +129,8 @@ export const LoginView: React.FC<LoginViewProps> = ({
             </button>
           </form>
 
-          <div className="mt-5 pt-4 border-t border-slate-100 text-[11px] text-slate-500 space-y-1">
-            <div className="font-semibold text-slate-700">Akun Default Deployment (segera ganti password di Pengaturan):</div>
-            <div className="font-mono">ADMIN: admin@sekolah.local / admin123</div>
-            <div className="font-mono">BK: bk@sekolah.local / bk123</div>
-            <div className="font-mono">GURU: guru@sekolah.local / guru123</div>
+          <div className="mt-5 pt-4 border-t border-slate-100 text-[11px] text-slate-500">
+            Masuk menggunakan akun Administrator, Guru BK, atau Wali Kelas yang dibuat saat setup awal atau melalui menu Pengaturan User.
           </div>
         </section>
       </div>

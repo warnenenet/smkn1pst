@@ -37,8 +37,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const readyClusters = db.anonymous_clusters.filter((c) => c.status === 'READY').length;
   const pendingClusters = db.anonymous_clusters.filter((c) => c.status === 'PENDING').length;
 
-  const storageGb = Math.round((db.storage_bytes_simulated / (1024 * 1024 * 1024)) * 100) / 100;
-  const storagePct = Math.min(100, Math.round((storageGb / 10) * 1000) / 10);
+  const totalUsedBytes = workerStatus?.storage_breakdown?.total_bytes ?? db.storage_bytes_simulated;
+  const storageGb = Math.round((totalUsedBytes / (1024 * 1024 * 1024)) * 100) / 100;
+  const storageMb = Math.round((totalUsedBytes / (1024 * 1024)) * 100) / 100;
+  const storagePct = Math.min(100, Math.round((totalUsedBytes / (10 * 1024 * 1024 * 1024)) * 1000) / 10);
   const storageTone =
     storageGb < 7
       ? { bar: 'bg-emerald-600', text: 'text-emerald-700', label: 'Normal (< 7 GB)' }
@@ -325,7 +327,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="flex items-baseline justify-between mb-2">
             <span className={`text-xl font-bold font-mono tabular-nums ${storageTone.text}`}>
-              {storageGb.toFixed(2)} GB / 10.00 GB
+              {storageGb.toFixed(2)} GB
+              {storageGb < 0.1 && (
+                <span className="ml-1.5 text-xs font-semibold text-slate-500">({storageMb.toFixed(2)} MB)</span>
+              )}{' '}
+              / 10.00 GB
             </span>
             <span className={`text-xs font-medium ${storageTone.text}`}>
               {storageTone.label} · {storagePct}%
@@ -341,8 +347,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             className="storage-progress"
           />
           <p className="text-xs text-slate-500 mt-3">
-            Hanya 1 best snapshot per cluster dan maks 3 versi history per siswa (&gt;4 bulan auto-hapus). Cache TTS dibatasi 200 MB.
+            Batas keras 10 GB: Snapshot maks 4.5 GB (scan foto 3 hari, cluster maks 5 foto, no Base64 DB), Cache TTS 120 MB, Backup 200 MB, File Log maks 1 MB, serta auto-VACUUM SQLite.
           </p>
+          {workerStatus?.storage_breakdown && (
+            <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+              <div className="rounded bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
+                <div className="text-slate-500">SQLite + WAL</div>
+                <div className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {((workerStatus.storage_breakdown.sqlite_bytes + workerStatus.storage_breakdown.wal_bytes) / (1024 * 1024)).toFixed(2)} MB
+                </div>
+              </div>
+              <div className="rounded bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
+                <div className="text-slate-500">Snapshots &amp; Backup</div>
+                <div className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {((workerStatus.storage_breakdown.snapshots_bytes + workerStatus.storage_breakdown.backups_bytes) / (1024 * 1024)).toFixed(2)} MB
+                </div>
+              </div>
+              <div className="rounded bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
+                <div className="text-slate-500">Cache TTS &amp; Log</div>
+                <div className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {((workerStatus.storage_breakdown.tts_cache_bytes + workerStatus.storage_breakdown.logs_bytes) / (1024 * 1024)).toFixed(2)} MB
+                </div>
+              </div>
+              <div className="rounded bg-slate-50 border border-slate-200/70 px-2.5 py-1.5">
+                <div className="text-slate-500">Baris Log Aktif</div>
+                <div className="font-mono font-semibold text-slate-900 tabular-nums">
+                  {workerStatus.storage_breakdown.rows.attendance_logs +
+                    workerStatus.storage_breakdown.rows.wa_queue +
+                    workerStatus.storage_breakdown.rows.notifications +
+                    workerStatus.storage_breakdown.rows.guest_access_logs} baris
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         <section className="bg-white border border-slate-200 rounded-lg p-5">

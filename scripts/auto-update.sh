@@ -198,6 +198,21 @@ if [[ -z "$LOG_FILE" ]]; then
   fi
 fi
 
+# Jaga ukuran LOG_FILE agar tidak menumpuk (> 1 MB otomatis dipangkas ke 1.500 baris terakhir)
+rotate_log_file() {
+  local target="$1"
+  [[ -f "$target" ]] || return 0
+  local sz
+  sz="$(wc -c < "$target" 2>/dev/null || echo 0)"
+  if [[ "${sz:-0}" -gt 1048576 ]]; then
+    local tmp_log="${target}.trim.$$"
+    tail -n 1500 "$target" > "$tmp_log" 2>/dev/null && mv "$tmp_log" "$target" || rm -f "$tmp_log"
+  fi
+}
+if [[ "$ACTION" == "update" ]]; then
+  rotate_log_file "$LOG_FILE"
+fi
+
 # ------------------------------------------------------------------------------
 # Manajemen Cron Job Otomatis (Default: 1 Jam Sekali -> "0 * * * *")
 # ------------------------------------------------------------------------------
@@ -452,7 +467,32 @@ has_broken_node_modules() {
   if [[ -f "$APP_DIR/package.json" ]] && grep -q '"vite"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
     return 0
   fi
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@vladmandic/human"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@vladmandic/human/package.json" ]]; then
+    return 0
+  fi
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@tensorflow/tfjs-backend-wasm"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@tensorflow/tfjs-backend-wasm/package.json" ]]; then
+    return 0
+  fi
+  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@ffmpeg-installer/ffmpeg"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
+    return 0
+  fi
   return 1
+}
+
+fix_binary_permissions() {
+  shopt -s nullglob
+  local targets=(
+    "$APP_DIR"/node_modules/.bin/*
+    "$APP_DIR"/node_modules/@ffmpeg-installer/*/ffmpeg*
+    "$APP_DIR"/node_modules/@ffprobe-installer/*/ffprobe*
+    "$APP_DIR"/node_modules/@esbuild/*/bin/*
+    "$APP_DIR"/node_modules/esbuild/bin/*
+    "$APP_DIR"/scripts/*.sh
+  )
+  shopt -u nullglob
+  for bin_path in "${targets[@]}"; do
+    [[ -f "$bin_path" ]] && chmod +x "$bin_path" 2>/dev/null || true
+  done
 }
 
 SHOULD_INSTALL=0
@@ -487,9 +527,7 @@ else
   log "Dependensi tidak berubah; melewati tahap install."
 fi
 
-if [[ -d "$APP_DIR/node_modules/.bin" ]]; then
-  chmod +x "$APP_DIR"/node_modules/.bin/* 2>/dev/null || true
-fi
+fix_binary_permissions
 
 # ------------------------------------------------------------------------------
 # Build Produksi (Sebelum Restart)

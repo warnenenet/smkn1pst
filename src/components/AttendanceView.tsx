@@ -3,6 +3,7 @@ import { ScanEye, FileText, ZoomIn } from 'lucide-react';
 import type { AppDatabase, AttendanceStatus, UserRole } from '../types';
 import { getJakartaNowParts } from '../lib/attendanceEngine';
 import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
+import { StudentAutocomplete } from './StudentAutocomplete';
 
 interface AttendanceViewProps {
   db: AppDatabase;
@@ -42,13 +43,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   } | null>(null);
 
   // Quick Input Izin / Sakit Khusus Guru BK
-  const [bkStudentId, setBkStudentId] = useState(String(db.students[0]?.id ?? ''));
+  const [bkStudentId, setBkStudentId] = useState('');
   const [bkStatus, setBkStatus] = useState<'SAKIT' | 'IZIN'>('SAKIT');
   const [bkCatatan, setBkCatatan] = useState('');
 
   // Simulator Camera Event
   const [simCameraId, setSimCameraId] = useState(String(db.cameras[0]?.id ?? 1));
-  const [simTarget, setSimTarget] = useState(String(db.students[0]?.id ?? 1));
+  const [simTarget, setSimTarget] = useState(String(db.students[0]?.id ?? 'ANONIM'));
   const [simConf, setSimConf] = useState('0.94');
   const [simTime, setSimTime] = useState('07:05:00');
   const [simFeedback, setSimFeedback] = useState('');
@@ -112,17 +113,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </div>
             <div>
               <label htmlFor="sim-target" className="block text-xs text-slate-600 mb-1">Subjek Wajah</label>
-              <select
+              <StudentAutocomplete
                 id="sim-target"
+                students={db.students}
+                kelasList={db.kelas}
                 value={simTarget}
-                onChange={(e) => setSimTarget(e.target.value)}
-                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
-              >
-                {(filteredStudents.length > 0 ? filteredStudents : db.students).slice(0, 100).map((s) => (
-                  <option key={s.id} value={s.id}>{s.nama} ({s.nisn})</option>
-                ))}
-                <option value="ANONIM">Wajah Anonim (Tak Dikenal)</option>
-              </select>
+                onChange={setSimTarget}
+                placeholder="Cari siswa atau pilih Anonim..."
+                extraOptions={[
+                  { value: 'ANONIM', label: 'Wajah Anonim (Tak Dikenal)', meta: 'Uji Klaster' },
+                ]}
+              />
             </div>
             <div>
               <label htmlFor="sim-conf" className="block text-xs text-slate-600 mb-1">Confidence (Min 0.80)</label>
@@ -178,17 +179,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end"
           >
             <div className="sm:col-span-2">
-              <label htmlFor="bk-student" className="block text-xs text-slate-600 mb-1">Siswa</label>
-              <select
+              <label htmlFor="bk-student" className="block text-xs text-slate-600 mb-1">
+                Cari Siswa ({db.students.length.toLocaleString('id-ID')} terdaftar)
+              </label>
+              <StudentAutocomplete
                 id="bk-student"
+                students={db.students}
+                kelasList={db.kelas}
                 value={bkStudentId}
-                onChange={(e) => setBkStudentId(e.target.value)}
-                className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
-              >
-                {db.students.slice(0, 200).map((s) => (
-                  <option key={s.id} value={s.id}>{s.nama} ({s.nisn})</option>
-                ))}
-              </select>
+                onChange={setBkStudentId}
+                placeholder="Ketik nama, NISN, atau kelas..."
+              />
             </div>
             <div>
               <label htmlFor="bk-status" className="block text-xs text-slate-600 mb-1">Status Keterangan</label>
@@ -215,7 +216,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             </div>
             <button
               type="submit"
-              className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 rounded-md transition-colors whitespace-nowrap"
+              disabled={!bkStudentId}
+              className="px-4 py-2 text-xs font-semibold text-white bg-amber-700 hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-md transition-colors whitespace-nowrap"
             >
               Simpan Izin / Sakit
             </button>
@@ -245,7 +247,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             <select
               id="att-jur"
               value={jurusanId}
-              onChange={(e) => setJurusanId(e.target.value)}
+              onChange={(e) => {
+                setJurusanId(e.target.value);
+                setPage(1);
+              }}
               className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
             >
               <option value="">Semua Jurusan</option>
@@ -259,7 +264,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             <select
               id="att-kls"
               value={kelasId}
-              onChange={(e) => setKelasId(e.target.value)}
+              onChange={(e) => {
+                setKelasId(e.target.value);
+                setPage(1);
+              }}
               className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs bg-white"
             >
               <option value="">Semua Kelas</option>
@@ -275,7 +283,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               type="text"
               placeholder="Ketik nama atau NISN..."
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               className="w-full border border-slate-300 rounded-md px-2.5 py-2 text-xs"
             />
           </div>

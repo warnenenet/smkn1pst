@@ -25,6 +25,7 @@ import {
   resolveScheduleForStudent,
   stripDemoRecordsForProduction,
   validateAndNormalizeScheduleTimes,
+  type HitSnapshotRecord,
 } from './attendanceEngine';
 import type { Kelas, KelasScheduleOverride, Schedule, ScheduleException, Student } from '../types';
 
@@ -453,7 +454,7 @@ test('applyWaQuotaResetIfDue resets hourly_count per WIB hour and daily_count pe
   assert.equal(acc.daily_count, 0);
 });
 
-test('appendClusterHitSnapshot preserves hit gallery up to limit and returns pruned paths except best_snapshot_path', async () => {
+test('appendClusterHitSnapshot preserves hit gallery up to limit and drops lowest quality except best_snapshot_path', async () => {
   const { appendClusterHitSnapshot } = await import('./attendanceEngine');
   const h1 = { snapshot_path: '/data/snapshots/h1.jpg', quality_score: 0.72, similarity: 0.81, camera_id: 1, detected_at: '2026-11-19 07:00:00' };
   const h2 = { snapshot_path: '/data/snapshots/h2.jpg', quality_score: 0.91, similarity: 0.88, camera_id: 1, detected_at: '2026-11-19 07:01:00' };
@@ -464,13 +465,16 @@ test('appendClusterHitSnapshot preserves hit gallery up to limit and returns pru
   assert.equal(step1.hits.length, 3);
   assert.equal(step1.removedPaths.length, 0);
 
-  // Pushing h4 with maxHits=3 drops h1 (not best) while never removing best_snapshot_path
+  // Jika best_snapshot_path adalah h1 (meski kualitasnya 0.72), h1 tetap dilindungi dan h4 (0.78) yang terbuang
   const step2 = appendClusterHitSnapshot(step1.hits, h4, '/data/snapshots/h1.jpg', 3);
   assert.equal(step2.hits.length, 3);
-  assert.deepEqual(step2.removedPaths, []);
+  assert.ok(step2.hits.some((h) => h.snapshot_path === '/data/snapshots/h1.jpg'));
+  assert.deepEqual(step2.removedPaths, ['/data/snapshots/h4.jpg']);
 
+  // Jika h2 adalah best_snapshot_path, h1 (kualitas terendah 0.72) digantikan oleh h4 (0.78)
   const step3 = appendClusterHitSnapshot(step1.hits, h4, '/data/snapshots/h2.jpg', 3);
   assert.deepEqual(step3.removedPaths, ['/data/snapshots/h1.jpg']);
+  assert.ok(step3.hits.some((h) => h.snapshot_path === '/data/snapshots/h4.jpg'));
 });
 
 test('passesSnapshotQualityThreshold enforces minimum 70% quality gate and calibrates realistic CCTV faces', async () => {
@@ -595,7 +599,7 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
     last_camera_id: 1,
   };
 
-  // Buang foto salah (wrong.jpg) -> turun hit_count ke 4 -> status ikut turun ke PENDING jika target readyHits=5
+  // Buang foto salah / topi -> hit_count disinkronkan ke sisa foto (2) dan status langsung kembali ke PENDING untuk training lanjut
   const removed = removeHitFromClusterState({
     cluster: clusterA,
     snapshotPath: '/data/snapshots/wrong.jpg',
@@ -606,7 +610,7 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
   assert.equal(removed.deletedCluster, false);
   assert.equal(removed.shouldRemoveFile, true);
   assert.equal(removed.updatedCluster?.hit_snapshots?.length, 2);
-  assert.equal(removed.updatedCluster?.hit_count, 4);
+  assert.equal(removed.updatedCluster?.hit_count, 2);
   assert.equal(removed.updatedCluster?.status, 'PENDING');
   assert.equal(removed.updatedCluster?.best_snapshot_path, '/data/snapshots/a1.jpg');
 
@@ -622,7 +626,7 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
   const clusterB = {
     ...clusterA,
     id: 11,
-    hit_count: 2,
+    hit_count: 3,
     best_snapshot_path: '/data/snapshots/b1.jpg',
     best_quality_score: 0.82,
     hit_snapshots: [
@@ -636,7 +640,7 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
     readyHits: 5,
     readyDays: 1,
   });
-  assert.equal(merged.merged.hit_count, 6);
+  assert.equal(merged.merged.hit_count, 5);
   assert.equal(merged.merged.status, 'READY');
   assert.equal(merged.merged.hit_snapshots?.length, 3);
 
@@ -648,6 +652,49 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
     readyDays: 1,
   });
   assert.equal(lastRemoved.deletedCluster, true);
+
+  // Pilihan A: Maksimal 5 foto train kualitas terbaik; sisanya otomatis terhapus
+  const { appendClusterHitSnapshot: appendHit, removeMultipleHitsFromClusterState: removeBatch } = await import('./attendanceEngine');
+  let rollingHits: HitSnapshotRecord[] = [...(clusterA.hit_snapshots ?? [])];
+  const prunedFiles: string[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const res = appendHit(
+      rollingHits,
+      {
+        snapshot_path: `/data/snapshots/train_${i}.jpg`,
+        quality_score: 0.72 + i * 0.02,
+        similarity: 0.85,
+        camera_id: 1,
+        detected_at: `2026-11-20 07:${String(i).padStart(2, '0')}:00`,
+      },
+      clusterA.best_snapshot_path,
+      5
+    );
+    rollingHits = res.hits;
+    prunedFiles.push(...res.removedPaths);
+  }
+  assert.equal(rollingHits.length, 5);
+  assert.ok(prunedFiles.length >= 8);
+  assert.ok(rollingHits.some((h) => h.snapshot_path === clusterA.best_snapshot_path));
+  assert.ok(rollingHits.some((h) => h.snapshot_path === '/data/snapshots/train_10.jpg'));
+
+  const batchCluster = {
+    ...clusterA,
+    hit_count: 10,
+    hit_snapshots: rollingHits,
+  };
+  const batchRes = removeBatch({
+    cluster: batchCluster,
+    snapshotPaths: ['/data/snapshots/train_10.jpg', '/data/snapshots/train_9.jpg'],
+    readyHits: 5,
+    readyDays: 1,
+  });
+  assert.equal(batchRes.deletedCluster, false);
+  assert.equal(batchRes.removedHits.length, 2);
+  assert.equal(batchRes.updatedCluster?.hit_snapshots?.length, 3);
+  assert.equal(batchRes.updatedCluster?.status, 'PENDING');
+  assert.equal(batchRes.removedFilePaths.length, 2);
 });
+
 
 

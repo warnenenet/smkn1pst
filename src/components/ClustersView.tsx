@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { GitMerge, Split, Star, Trash2, ZoomIn } from 'lucide-react';
+import { Star, Trash2, ZoomIn } from 'lucide-react';
 import type { AnonymousCluster, AppDatabase, WorkerStatusResponse } from '../types';
 import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
 
@@ -22,8 +22,6 @@ interface ClustersViewProps {
   onDeleteCluster?: (clusterId: number) => Promise<void>;
   onRemoveClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
   onSetPrimaryClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
-  onSplitClusterHit?: (clusterId: number, payload: { snapshot_path: string; hit_index: number }) => Promise<void>;
-  onMergeCluster?: (sourceClusterId: number, targetClusterId: number) => Promise<void>;
 }
 
 export const ClustersView: React.FC<ClustersViewProps> = ({
@@ -35,8 +33,6 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
   onDeleteCluster,
   onRemoveClusterHit,
   onSetPrimaryClusterHit,
-  onSplitClusterHit,
-  onMergeCluster,
 }) => {
   const readyClusters = db.anonymous_clusters.filter((c) => c.status === 'READY');
   const pendingClusters = db.anonymous_clusters
@@ -49,11 +45,12 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
   const [selectedStudentMap, setSelectedStudentMap] = useState<Record<number, number>>({});
   const [modeMap, setModeMap] = useState<Record<number, 'assign' | 'new' | 'visitor'>>({});
   const [expandedPendingMap, setExpandedPendingMap] = useState<Record<number, boolean>>({});
-  const [mergeTargetMap, setMergeTargetMap] = useState<Record<number, string>>({});
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  // New student / visitor drafts per cluster
-  const [newDraft, setNewDraft] = useState<Record<number, { nis: string; nisn: string; nama: string; kelas_id: string; tanggal_lahir: string; wa_ortu: string }>>({});
+  // Draft siswa baru / tamu per cluster
+  const [newDraft, setNewDraft] = useState<
+    Record<number, { nis: string; nisn: string; nama: string; kelas_id: string; tanggal_lahir: string; wa_ortu: string }>
+  >({});
   const [visDraft, setVisDraft] = useState<Record<number, { nama: string; kategori: 'TAMU' | 'STAF'; catatan: string }>>({});
   const [lightboxTarget, setLightboxTarget] = useState<{ clusterId: number; initialIndex: number } | null>(null);
 
@@ -63,7 +60,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
   const getClusterHits = (c: AnonymousCluster): FaceGalleryItem[] => {
     const rawHits =
       Array.isArray(c.hit_snapshots) && c.hit_snapshots.length > 0
-        ? c.hit_snapshots
+        ? c.hit_snapshots.slice(0, 5)
         : [
             {
               snapshot_path: c.best_snapshot_path,
@@ -104,14 +101,12 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
 
   const renderHitsGallery = (c: AnonymousCluster) => {
     const hits = getClusterHits(c);
-    const otherClusters = activeClusters.filter((other) => other.id !== c.id);
-    const selectedMergeId = mergeTargetMap[c.id] ?? String(otherClusters[0]?.id ?? '');
 
     return (
-      <div className="pt-2 border-t border-slate-100 space-y-2.5">
+      <div className="pt-2.5 border-t border-slate-100 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-semibold text-slate-700">
-            Anggota Foto Grup ({hits.length} foto tersimpan dari {c.hit_count} hit)
+            Foto Train Wajah ({hits.length}/5 foto terbaik)
           </span>
           <button
             type="button"
@@ -119,43 +114,58 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline"
           >
             <ZoomIn className="w-3.5 h-3.5" />
-            Nilai Satu Set &amp; Crosscheck
+            Perbesar &amp; Zoom Crosscheck
           </button>
         </div>
-        <div className="flex items-start gap-2.5 overflow-x-auto pb-1">
+
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {hits.map((h, idx) => {
             const isPrimary = h.src === c.best_snapshot_path;
             const removeKey = `rm-${c.id}-${idx}`;
             const promoteKey = `prom-${c.id}-${idx}`;
+            const simPct = typeof h.similarity === 'number' ? Math.round(h.similarity * 100) : null;
+            const qualPct = typeof h.qualityScore === 'number' ? Math.round(h.qualityScore * 100) : null;
+            const simColorClass =
+              isPrimary
+                ? 'text-emerald-800 font-semibold'
+                : simPct !== null && simPct < 60
+                  ? 'text-red-700 font-semibold'
+                  : simPct !== null && simPct < 75
+                    ? 'text-amber-700 font-semibold'
+                    : 'text-slate-700';
+
             return (
               <div
                 key={`${c.id}-${h.src}-${idx}`}
-                className={`shrink-0 rounded-md border p-1.5 bg-slate-50 transition-colors w-[92px] ${
-                  isPrimary ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200'
+                className={`rounded-md border p-1.5 transition-colors ${
+                  isPrimary ? 'border-emerald-400 bg-emerald-50/40' : 'border-slate-200 bg-slate-50'
                 }`}
               >
                 <button
                   type="button"
                   onClick={() => openClusterLightbox(c, idx)}
-                  aria-label={`Perbesar ${h.label} untuk Cluster #${c.id}`}
+                  aria-label={`Perbesar Hit #${idx + 1} untuk Cluster #${c.id}`}
                   className="group relative block w-full text-left"
                 >
                   <img
                     src={h.src}
                     alt={`${h.label} Cluster ${c.id}`}
                     referrerPolicy="no-referrer"
-                    className="w-full h-16 rounded object-cover bg-slate-200"
+                    className="w-full h-20 rounded object-cover bg-slate-200"
                   />
-                  <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white rounded p-0.5 opacity-80 group-hover:opacity-100">
+                  <span className="absolute bottom-1 right-1 bg-slate-900/75 text-white rounded p-0.5 opacity-85 group-hover:opacity-100">
                     <ZoomIn className="w-3 h-3" />
                   </span>
                 </button>
-                <div className="mt-1 text-[10px] font-mono text-slate-700 truncate tabular-nums">
-                  {isPrimary ? 'ACUAN' : typeof h.similarity === 'number' ? `Sim ${Math.round(h.similarity * 100)}%` : h.label}
+
+                <div className={`mt-1 text-[10px] font-mono truncate tabular-nums ${simColorClass}`}>
+                  {isPrimary ? 'ACUAN' : simPct !== null ? `Match ${simPct}%` : h.label}
                 </div>
-                <div className="text-[9px] font-mono text-slate-400 truncate tabular-nums">
-                  {h.timestamp ? h.timestamp.slice(11, 16) : '-'}
+                <div className="flex items-center justify-between gap-1 text-[9px] font-mono text-slate-500 tabular-nums">
+                  <span>{qualPct !== null ? `Q ${qualPct}%` : '-'}</span>
+                  <span>{h.timestamp ? h.timestamp.slice(11, 16) : '-'}</span>
                 </div>
+
                 <div className="mt-1.5 flex items-center gap-1">
                   {!isPrimary && onSetPrimaryClusterHit && (
                     <button
@@ -165,7 +175,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                         runBusy(promoteKey, () => onSetPrimaryClusterHit(c.id, { snapshot_path: h.src, hit_index: idx }))
                       }
                       aria-label={`Jadikan Hit #${idx + 1} sebagai foto acuan Cluster #${c.id}`}
-                      title="Jadikan foto acuan grup"
+                      title="Jadikan foto acuan utama"
                       className="flex-1 inline-flex items-center justify-center gap-0.5 py-1 text-[10px] font-medium bg-white border border-slate-200 hover:border-emerald-500 hover:text-emerald-700 text-slate-700 rounded disabled:opacity-50"
                     >
                       <Star className="w-2.5 h-2.5" /> Acuan
@@ -178,12 +188,12 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                       onClick={() =>
                         runBusy(removeKey, () => onRemoveClusterHit(c.id, { snapshot_path: h.src, hit_index: idx }))
                       }
-                      aria-label={`Buang Hit #${idx + 1} dari Cluster #${c.id}`}
-                      title="Buang wajah ini karena berbeda orang / blur"
+                      aria-label={`Hapus Hit #${idx + 1} dari Cluster #${c.id}`}
+                      title="Hapus foto jika bukan wajahnya / hanya topi / blur"
                       className={`${isPrimary || !onSetPrimaryClusterHit ? 'flex-1' : ''} inline-flex items-center justify-center gap-0.5 px-1.5 py-1 text-[10px] font-medium bg-white border border-red-200 hover:bg-red-50 text-red-700 rounded disabled:opacity-50`}
                     >
                       <Trash2 className="w-2.5 h-2.5" />
-                      {isPrimary ? 'Buang' : ''}
+                      Hapus
                     </button>
                   )}
                 </div>
@@ -191,37 +201,6 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             );
           })}
         </div>
-
-        {onMergeCluster && otherClusters.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[11px]">
-            <label htmlFor={`merge-${c.id}`} className="text-slate-500">
-              Gabungkan grup ini ke:
-            </label>
-            <select
-              id={`merge-${c.id}`}
-              value={selectedMergeId}
-              onChange={(e) => setMergeTargetMap((p) => ({ ...p, [c.id]: e.target.value }))}
-              className="border border-slate-300 rounded px-2 py-1 text-[11px] bg-white font-mono"
-            >
-              {otherClusters.map((oc) => (
-                <option key={oc.id} value={oc.id}>
-                  #{oc.id} ({oc.status} · {oc.hit_count} hit)
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={busyKey !== null || !selectedMergeId}
-              onClick={() =>
-                selectedMergeId &&
-                runBusy(`merge-${c.id}`, () => onMergeCluster(c.id, Number(selectedMergeId)))
-              }
-              className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-800 rounded border border-slate-300 disabled:opacity-50"
-            >
-              <GitMerge className="w-3 h-3" /> Gabungkan
-            </button>
-          </div>
-        )}
       </div>
     );
   };
@@ -390,14 +369,14 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
       <div className="bg-white border border-slate-200 rounded-lg p-4 text-xs text-slate-600 space-y-1.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span>
-            Siswa anonim yang melewati kamera CCTV akan dikelompokkan otomatis hingga memenuhi syarat <strong className="text-slate-900">&ge; {targetHits} hit match</strong> (status <strong className="text-slate-900">READY</strong>) agar diberi nama oleh Guru BK.
+            Setiap wajah anonim menyimpan maksimal <strong className="text-slate-900">5 foto train kualitas terbaik</strong> (foto berlebih otomatis dihapus). Klik foto untuk memperbesar &amp; zoom, lalu hapus jika ada foto yang salah orang atau hanya menangkap topi/bagian tidak sesuai.
           </span>
           <span className="font-mono font-semibold text-slate-900 tabular-nums">
             Siap Dinamai (READY): {readyClusters.length} · Sedang Dilatih (PENDING): {pendingClusters.length}
           </span>
         </div>
         <p className="text-slate-500">
-          Hanya foto wajah dengan kualitas <strong>&ge; {Math.round((db.settings.min_snapshot_quality ?? 0.7) * 100)}%</strong> yang diambil &amp; disimpan kamera. Setelah diberi nama, embedding terbaik digabung (centroid blending) dan sistem terus melakukan auto-maintenance di semua CCTV hingga target optimal <strong>&ge; {Math.round((db.settings.face_maintenance_target ?? 0.8) * 100)}%</strong>.
+          Jika foto salah/topi dihapus saat koreksi, grup otomatis kembali ke status <strong>PENDING</strong> agar kamera dapat melanjutkan training wajah bersih sampai mencapai <strong>&ge; {targetHits} hit</strong>.
         </p>
         {workerStatus && (
           <div className="pt-1.5 mt-1 border-t border-slate-100 flex flex-wrap items-center gap-3 text-[11px] font-mono text-slate-600">
@@ -427,7 +406,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
           <div className="bg-white border border-slate-200 rounded-lg p-6 text-center">
             <p className="text-sm font-medium text-slate-700">Belum ada cluster wajah anonim berstatus READY.</p>
             <p className="text-xs text-slate-500 mt-1">
-              Wajah anonim promosi ke READY otomatis setelah &ge; {targetHits} hit match &amp; &ge; {targetDays} hari berbeda. Deteksi hit ke-1 s/d ke-{Math.max(1, targetHits - 1)} tampil langsung di bagian <strong>Sedang Dilatih Live (PENDING)</strong> di bawah.
+              Wajah anonim promosi ke READY setelah &ge; {targetHits} hit match &amp; &ge; {targetDays} hari berbeda. Deteksi sementara tampil di bagian <strong>Sedang Dilatih Live (PENDING)</strong> di bawah.
             </p>
           </div>
         ) : (
@@ -493,20 +472,20 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
         )}
       </section>
 
-      {/* Section 2: PENDING live training clusters (Hit 1..4) */}
+      {/* Section 2: PENDING live training clusters */}
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-900">
-            Baru Terdeteksi / Sedang Dilatih Live — PENDING ({pendingClusters.length})
+            Sedang Dilatih Live — PENDING ({pendingClusters.length})
           </h2>
           <span className="text-xs text-slate-500">
-            Setiap kali wajah baru melewati kamera RTSP, progres hit (1/{targetHits}) tercatat di sini secara real-time.
+            Wajah baru yang tertangkap RTSP terus dilatih di sini hingga siap dinamai.
           </span>
         </div>
 
         {pendingClusters.length === 0 ? (
           <div className="bg-white border border-slate-200 rounded-lg p-5 text-xs text-slate-500 text-center">
-            Belum ada deteksi wajah anonim yang sedang dalam tahap pengumpulan hit (PENDING).
+            Belum ada deteksi wajah anonim berstatus PENDING.
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -608,19 +587,19 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             onClose={() => setLightboxTarget(null)}
             title={
               activeCluster
-                ? `Cluster Anonim #${activeCluster.id} (${activeCluster.status}) — Penilaian Manual Satu Set`
+                ? `Cluster Anonim #${activeCluster.id} (${activeCluster.status}) — Crosscheck & Zoom`
                 : ''
             }
             subtitle={
               activeCluster
-                ? `${activeCluster.hit_count}x terdeteksi · ${activeCluster.distinct_days} hari berbeda · Bandingkan dengan Foto Acuan lalu buang wajah yang tidak sama`
+                ? `${lightboxItems.length}/5 foto train tersimpan · Gunakan Zoom 1x/2x/3x lalu hapus jika ada foto topi atau wajah yang berbeda`
                 : undefined
             }
             referenceItem={
               activeCluster
                 ? {
                     src: activeCluster.best_snapshot_path,
-                    label: 'Foto Terbaik Cluster (Acuan)',
+                    label: 'Foto Acuan Cluster',
                     meta: `Skor ${(activeCluster.best_quality_score * 100).toFixed(1)}% · ${activeCluster.last_seen}`,
                   }
                 : null
@@ -635,8 +614,8 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                       <>
                         <span className="text-[11px] text-slate-300">
                           {isPrimary
-                            ? 'Foto ini sedang menjadi acuan utama grup.'
-                            : 'Apakah wajah ini sama dengan Foto Acuan di sebelah kiri?'}
+                            ? 'Foto ini sedang menjadi acuan utama.'
+                            : 'Apakah wajah ini sama dan bukan sekadar foto topi / blur?'}
                         </span>
                         <div className="flex flex-wrap items-center gap-2">
                           {!isPrimary && onSetPrimaryClusterHit && (
@@ -651,20 +630,6 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-emerald-700 hover:bg-emerald-600 text-white disabled:opacity-50"
                             >
                               <Star className="w-3.5 h-3.5" /> Jadikan Foto Acuan
-                            </button>
-                          )}
-                          {lightboxItems.length > 1 && item.hasEmbedding && onSplitClusterHit && (
-                            <button
-                              type="button"
-                              disabled={busyKey !== null}
-                              onClick={() =>
-                                runBusy(`lb-split-${activeCluster.id}-${itemIdx}`, () =>
-                                  onSplitClusterHit(activeCluster.id, { snapshot_path: item.src, hit_index: itemIdx })
-                                )
-                              }
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
-                            >
-                              <Split className="w-3.5 h-3.5" /> Pisahkan Jadi Grup Baru
                             </button>
                           )}
                           {onRemoveClusterHit && (
@@ -684,7 +649,7 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                               }
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
                             >
-                              <Trash2 className="w-3.5 h-3.5" /> Buang dari Grup
+                              <Trash2 className="w-3.5 h-3.5" /> Hapus Foto Ini
                             </button>
                           )}
                         </div>

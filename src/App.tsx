@@ -19,6 +19,7 @@ import { SettingsUsersView } from './components/SettingsUsersView';
 import { CallPageView } from './components/CallPageView';
 import { GuestPortalView } from './components/GuestPortalView';
 import { LoginView } from './components/LoginView';
+import { SetupWizardView } from './components/SetupWizardView';
 import { shouldPauseBackgroundBootstrap } from './lib/uiRefreshGuard';
 import type {
   AppDatabase,
@@ -49,7 +50,7 @@ const ROLE_ALLOWED_TABS: Record<User['role'], NavTab[]> = {
   GURU: ['dashboard', 'attendance', 'reports'],
 };
 
-type RouteMode = 'home' | 'ortu' | 'login' | 'panggil';
+type RouteMode = 'home' | 'ortu' | 'login' | 'setup' | 'panggil';
 
 function parseRoute(pathname: string): { mode: RouteMode; cameraId: number } {
   if (pathname.startsWith('/panggil/')) {
@@ -61,12 +62,16 @@ function parseRoute(pathname: string): { mode: RouteMode; cameraId: number } {
   if (pathname === '/login') {
     return { mode: 'login', cameraId: 1 };
   }
+  if (pathname === '/setup') {
+    return { mode: 'setup', cameraId: 1 };
+  }
   return { mode: 'home', cameraId: 1 };
 }
 
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [schoolName, setSchoolName] = useState('SMK Negeri Unggulan');
   const [productionMode, setProductionMode] = useState(true);
   const [db, setDb] = useState<AppDatabase | null>(null);
@@ -94,7 +99,9 @@ export default function App() {
           ? '/ortu'
           : mode === 'login'
             ? '/login'
-            : '/';
+            : mode === 'setup'
+              ? '/setup'
+              : '/';
     if (window.location.pathname !== target) {
       window.history.pushState({}, '', target);
     }
@@ -103,6 +110,7 @@ export default function App() {
 
   const fetchBootstrap = useCallback(async () => {
     const res = await fetch('/api/bootstrap');
+    if (res.status === 304) return;
     if (res.status === 401) {
       setAuthUser(null);
       setDb(null);
@@ -134,6 +142,7 @@ export default function App() {
         if (!active) return;
         if (data.school_name) setSchoolName(data.school_name);
         setProductionMode(Boolean(data.production_mode));
+        setNeedsSetup(Boolean(data.needs_setup));
         if (data.authenticated && data.user) {
           setAuthUser(data.user);
           await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
@@ -175,7 +184,10 @@ export default function App() {
   const activeTabRef = useRef<NavTab>(activeTab);
   useEffect(() => {
     activeTabRef.current = activeTab;
-  }, [activeTab]);
+    if (authUser && activeTab === 'clusters') {
+      void fetchBootstrap();
+    }
+  }, [activeTab, authUser, fetchBootstrap]);
 
   // Poll worker status every 10s + bootstrap every 15s (ONLY when not on config/form tabs and not typing) + WebSocket
   useEffect(() => {
@@ -186,6 +198,7 @@ export default function App() {
     let reconnectTimer: number | null = null;
     let reconnectAttempt = 0;
     let refreshInFlight = false;
+    let pendingRefreshIncludeBootstrap: boolean | null = null;
 
     const canRefreshBootstrapNow = () => {
       const el = document.activeElement as HTMLElement | null;
@@ -197,7 +210,11 @@ export default function App() {
     };
 
     const refreshAll = async (includeBootstrap: boolean) => {
-      if (disposed || refreshInFlight) return;
+      if (disposed) return;
+      if (refreshInFlight) {
+        pendingRefreshIncludeBootstrap = Boolean(pendingRefreshIncludeBootstrap || includeBootstrap);
+        return;
+      }
       const shouldFetchBoot = includeBootstrap && canRefreshBootstrapNow();
       refreshInFlight = true;
       try {
@@ -208,6 +225,11 @@ export default function App() {
         }
       } finally {
         refreshInFlight = false;
+        if (!disposed && pendingRefreshIncludeBootstrap !== null) {
+          const nextInclude = pendingRefreshIncludeBootstrap;
+          pendingRefreshIncludeBootstrap = null;
+          void refreshAll(nextInclude);
+        }
       }
     };
 
@@ -360,7 +382,26 @@ export default function App() {
     );
   }
 
-  if (routeView.mode === 'login') {
+  if (needsSetup) {
+    return (
+      <SetupWizardView
+        initialSchoolName={schoolName}
+        onSuccess={async ({ user, school_name }) => {
+          setNeedsSetup(false);
+          setSchoolName(school_name);
+          setProductionMode(true);
+          setAuthUser(user);
+          setActiveTab('dashboard');
+          window.history.replaceState({}, '', '/');
+          setRouteView({ mode: 'home', cameraId: 1 });
+          await Promise.all([fetchBootstrap(), fetchWorkerStatus()]);
+          notify('Setup awal selesai! Halaman instalasi kini terkunci dan akun Admin aktif.');
+        }}
+      />
+    );
+  }
+
+  if (routeView.mode === 'login' || routeView.mode === 'setup') {
     return (
       <LoginView
         schoolName={schoolName}
@@ -477,7 +518,20 @@ export default function App() {
               workerStatus={workerStatus}
               onCleanupStorage={async () => {
                 const res = await apiPost('/api/storage/cleanup');
-                notify(`Pembersihan storage selesai (${res.freed_mb} MB dibebaskan).`);
+                const freedText =
+                  Number(res.freed_bytes || 0) >= 1024 * 1024
+                    ? `${res.freed_mb} MB`
+                    : `${Math.round(Number(res.freed_bytes || 0) / 1024)} KB`;
+                const rl = res.removed_logs ?? {};
+                const prunedTotal =
+                  Number(rl.attendance_logs || 0) +
+                  Number(rl.wa_queue || 0) +
+                  Number(rl.notifications || 0) +
+                  Number(rl.guest_access_logs || 0) +
+                  Number(rl.auth_sessions || 0);
+                notify(
+                  `Pembersihan storage selesai (${freedText} dibebaskan, ${prunedTotal} log lama & ${Number(rl.snapshots || 0)} snapshot yatim dihapus).`
+                );
               }}
               onMarkAllRead={async () => {
                 await apiPost('/api/notifications/read-all');
@@ -619,21 +673,13 @@ export default function App() {
                 const res = await apiPost(`/api/clusters/${cid}/hits/remove`, payload);
                 notify(
                   res.deleted_cluster
-                    ? `Foto terakhir dibuang dan Cluster #${cid} dihapus.`
-                    : `Foto wajah dikeluarkan dari Cluster #${cid}.`
+                    ? `Foto terakhir dihapus dan Cluster #${cid} dibersihkan.`
+                    : `Foto dihapus dari Cluster #${cid} — status kembali PENDING untuk melanjutkan training.`
                 );
               }}
               onSetPrimaryClusterHit={async (cid, payload) => {
                 await apiPost(`/api/clusters/${cid}/hits/set-primary`, payload);
                 notify(`Foto acuan utama Cluster #${cid} diperbarui.`);
-              }}
-              onSplitClusterHit={async (cid, payload) => {
-                const res = await apiPost(`/api/clusters/${cid}/hits/split`, payload);
-                notify(`Foto dipisahkan dari Cluster #${cid} menjadi Cluster Baru #${res.new_cluster_id}.`);
-              }}
-              onMergeCluster={async (sourceCid, targetCid) => {
-                await apiPost(`/api/clusters/${sourceCid}/merge`, { target_cluster_id: targetCid });
-                notify(`Cluster #${sourceCid} berhasil digabungkan ke Cluster #${targetCid}.`);
               }}
             />
           )}

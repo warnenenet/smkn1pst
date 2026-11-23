@@ -2,7 +2,7 @@ import { APP_ROOT } from './src/server/envBootstrap.ts';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -10,16 +10,20 @@ import * as XLSX from 'xlsx';
 import {
   DATA_DIR,
   SNAPSHOTS_DIR,
+  capLogFileSize,
   createAuthSession,
   deleteAuthSession,
   deleteStudentFromSqlite,
   getBackupFilePath,
   getCachedClusterFaceIndex,
+  getDataStorageBreakdown,
+  getDbVersion,
   getSessionUserId,
   hashPassword,
   invalidateDbCache,
   listBackups,
   loadDb,
+  persistCompactPhotoDataUrl,
   purgeDemoRowsFromSqlite,
   restoreFromBackupBuffer,
   runCompactBackup,
@@ -32,7 +36,7 @@ import {
   analyzePhotoWithNodeAi,
   getNodeWorkerStatus,
   refreshNodeRtspWorkers,
-  resolveFfmpegBinary,
+  resolveFfmpegDetails,
   startNodeRtspWorkers,
   updatePythonCameraTelemetry,
 } from './src/server/nodeFaceWorker.ts';
@@ -56,6 +60,7 @@ import {
   cosineSimilarity,
   evaluateAttendanceRecognition,
   evaluateFaceMaintenanceProgress,
+  extractJpegFramesFromChunk,
   formatManualResolution,
   formatWaMessage,
   getJakartaNowParts,
@@ -74,20 +79,34 @@ import {
   passesSnapshotQualityThreshold,
   promoteHitInClusterState,
   removeHitFromClusterState,
+  removeMultipleHitsFromClusterState,
   resolveScheduleForStudent,
   stripDemoRecordsForProduction,
   summarizeEmbeddingDimensions,
   validateAndNormalizeScheduleTimes,
 } from './src/lib/attendanceEngine.ts';
 import {
+  buildFfmpegLivePreviewArgs,
+  diagnoseFfmpegError,
   getStaticAssetContentType,
   getStaticCacheControl,
   isNonSpaResourcePath,
   resolveListenConfig,
   shouldServeProductionBuild,
 } from './src/lib/staticConfig.ts';
+import {
+  buildSessionCookieHeader,
+  createRateLimiter,
+  hasActiveAdminUser,
+  isAuthorizedInternalRequest,
+  isSameOriginMutationRequest,
+  isStrongSetupPassword,
+  validateRtspStreamUrl,
+} from './src/lib/security.ts';
 import { stripEmbeddingsForBootstrap } from './src/lib/uiRefreshGuard.ts';
 import { findBestFaceMatch } from './src/lib/faceIndex.ts';
+import { createLogThrottle, pruneInMemoryLogs } from './src/lib/logRetention.ts';
+import { CLUSTER_MAX_HITS, roundEmbeddingForJson } from './src/lib/storageBudget.ts';
 import type { AcademicTransitionType, AppDatabase, AttendanceStatus, Student, User, UserRole } from './src/types';
 
 const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001';
@@ -95,15 +114,40 @@ const execFileAsync = promisify(execFile);
 const SERVER_START_MS = Date.now();
 let pythonGallerySynced = false;
 
+const loginRateLimiter = createRateLimiter(10, 15 * 60_000);
+const setupRateLimiter = createRateLimiter(8, 15 * 60_000);
+const serverLogThrottle = createLogThrottle(60_000);
+const lastCameraDbPersistMs = new Map<number, number>();
+
 const app = express();
+app.disable('x-powered-by');
+app.set('trust proxy', 'loopback');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  if (
+    req.path.startsWith('/api/') &&
+    req.headers.cookie?.includes('absensi_sid=') &&
+    !isSameOriginMutationRequest({
+      method: req.method,
+      originHeader: req.headers.origin,
+      hostHeader: req.headers.host,
+      forwardedHostHeader: req.headers['x-forwarded-host'],
+    })
+  ) {
+    res.status(403).json({ error: 'Origin permintaan tidak valid.' });
+    return;
+  }
+  next();
+});
 app.use(express.json({ limit: '25mb' }));
-app.use('/data/snapshots', express.static(SNAPSHOTS_DIR));
+app.use('/data/snapshots', express.static(SNAPSHOTS_DIR, { dotfiles: 'ignore' }));
 app.get('/favicon.ico', (_req, res) => {
-  const appRoot = typeof import.meta.dirname === 'string' ? import.meta.dirname : process.cwd();
   const candidates = [
-    path.join(appRoot, 'dist', 'favicon.ico'),
-    path.join(appRoot, 'public', 'favicon.ico'),
-    path.join(appRoot, 'favicon.ico'),
+    path.join(APP_ROOT, 'dist', 'favicon.ico'),
+    path.join(APP_ROOT, 'public', 'favicon.ico'),
+    path.join(APP_ROOT, 'favicon.ico'),
   ];
   const found = candidates.find((p) => fs.existsSync(p));
   if (found) {
@@ -336,6 +380,27 @@ function requireAuth(allowedRoles?: UserRole[]): express.RequestHandler {
   };
 }
 
+function requireInternalAccess(): express.RequestHandler {
+  return (req, res, next) => {
+    if (
+      !isAuthorizedInternalRequest({
+        remoteAddress: req.socket.remoteAddress,
+        headers: req.headers,
+        expectedToken: process.env.INTERNAL_API_TOKEN,
+      })
+    ) {
+      res.status(403).json({ error: 'Akses endpoint internal dibatasi khusus layanan lokal.' });
+      return;
+    }
+    next();
+  };
+}
+
+function isRequestHttps(req: express.Request): boolean {
+  const fwdProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim().toLowerCase();
+  return req.secure || fwdProto === 'https';
+}
+
 // ============================================================================
 // API ROUTES
 // ============================================================================
@@ -345,14 +410,23 @@ app.get('/api/health', async (_req, res) => {
   const jkt = getJakartaNowParts();
   const faceHealth = await callFaceService<Record<string, unknown>>('/health');
   const nodeWorker = getNodeWorkerStatus(db);
+  const ffmpegRes = resolveFfmpegDetails();
   const embeddingDimensions = summarizeEmbeddingDimensions(db.students, db.anonymous_clusters);
   res.json({
     ok: true,
     sqlite: true,
+    needs_setup: !hasActiveAdminUser(db.users),
     timezone: 'Asia/Jakarta',
     server_time_wib: jkt.dateTimeStr,
     uptime_sec: Math.round((Date.now() - SERVER_START_MS) / 1000),
     piper_offline: isPiperAvailable(),
+    ffmpeg_ready: ffmpegRes.foundExecutable,
+    ffmpeg_error: ffmpegRes.foundExecutable
+      ? null
+      : diagnoseFfmpegError(
+          ffmpegRes.nonExecutablePaths.length > 0 ? `spawn ${ffmpegRes.nonExecutablePaths[0]} EACCES` : 'spawn ffmpeg ENOENT',
+          ffmpegRes
+        ),
     face_service: faceHealth ?? { ok: false, mode: nodeWorker.engine },
     node_worker: nodeWorker,
     embedding_dimensions: embeddingDimensions,
@@ -380,6 +454,7 @@ app.get('/api/worker/status', requireAuth(), (_req, res) => {
     process.env.AUTO_UPDATE_ENABLED === '1' || process.env.AUTO_UPDATE_ENABLED === 'true';
   res.json({
     ...base,
+    storage_breakdown: getDataStorageBreakdown(),
     automation: {
       daily_scheduler_active: true,
       wa_worker_active: Boolean(db.settings.wa_auto_dispatch_enabled),
@@ -390,11 +465,113 @@ app.get('/api/worker/status', requireAuth(), (_req, res) => {
   });
 });
 
+app.get('/api/setup/status', (_req, res) => {
+  const db = loadDb();
+  res.json({
+    needs_setup: !hasActiveAdminUser(db.users),
+    school_name: db.settings.school_name,
+  });
+});
+
+app.post('/api/setup/initialize', (req, res) => {
+  const ip = req.ip || '127.0.0.1';
+  const rl = setupRateLimiter.checkAndConsume(ip);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfterSec));
+    res.status(429).json({ error: 'Terlalu banyak percobaan setup. Tunggu beberapa menit sebelum mencoba lagi.' });
+    return;
+  }
+
+  const db = loadDb();
+  if (hasActiveAdminUser(db.users)) {
+    res.status(409).json({ error: 'Setup awal sudah selesai dan dikunci. Silakan masuk melalui halaman Login.' });
+    return;
+  }
+
+  const schoolName = String(req.body?.school_name || '').trim();
+  const adminName = String(req.body?.admin_name || '').trim();
+  const adminEmail = String(req.body?.admin_email || '').trim().toLowerCase();
+  const adminPassword = String(req.body?.admin_password || '');
+  const createBk = Boolean(req.body?.create_bk);
+  const bkName = String(req.body?.bk_name || 'Guru BK Sekolah').trim();
+  const bkEmail = String(req.body?.bk_email || '').trim().toLowerCase();
+  const bkPassword = String(req.body?.bk_password || '');
+
+  if (schoolName.length < 3 || schoolName.length > 120) {
+    res.status(400).json({ error: 'Nama sekolah wajib diisi (minimal 3 karakter).' });
+    return;
+  }
+  if (adminName.length < 2 || adminName.length > 80) {
+    res.status(400).json({ error: 'Nama lengkap Administrator wajib diisi (minimal 2 karakter).' });
+    return;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) {
+    res.status(400).json({ error: 'Format email Administrator tidak valid.' });
+    return;
+  }
+  const pwdCheck = isStrongSetupPassword(adminPassword);
+  if (!pwdCheck.valid) {
+    res.status(400).json({ error: pwdCheck.reason });
+    return;
+  }
+
+  if (createBk) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(bkEmail) || bkEmail === adminEmail) {
+      res.status(400).json({ error: 'Email Guru BK tidak valid atau sama dengan email Administrator.' });
+      return;
+    }
+    const bkPwdCheck = isStrongSetupPassword(bkPassword);
+    if (!bkPwdCheck.valid) {
+      res.status(400).json({ error: `Password Guru BK: ${bkPwdCheck.reason}` });
+      return;
+    }
+  }
+
+  const adminUser: User = {
+    id: nextId(db.users),
+    name: adminName,
+    email: adminEmail,
+    role: 'ADMIN',
+    is_active: true,
+    password_hash: hashPassword(adminPassword),
+  };
+  db.users.push(adminUser);
+
+  if (createBk) {
+    db.users.push({
+      id: nextId(db.users),
+      name: bkName || 'Guru BK',
+      email: bkEmail,
+      role: 'BK',
+      is_active: true,
+      password_hash: hashPassword(bkPassword),
+    });
+  }
+
+  db.settings.school_name = schoolName;
+  db.settings.production_mode = true;
+  saveDb(db);
+  setupRateLimiter.reset(ip);
+
+  const session = createAuthSession(adminUser.id);
+  res.setHeader(
+    'Set-Cookie',
+    buildSessionCookieHeader({
+      cookieName: SESSION_COOKIE,
+      token: session.token,
+      maxAgeSec: 24 * 3600,
+      isHttps: isRequestHttps(req),
+    })
+  );
+  res.json({ ok: true, token: session.token, user: sanitizeUser(adminUser), school_name: schoolName });
+});
+
 app.get('/api/auth/me', (req, res) => {
   const db = loadDb();
   const auth = resolveAuthenticatedUser(req);
   res.json({
     authenticated: Boolean(auth),
+    needs_setup: !hasActiveAdminUser(db.users),
     user: auth?.user ?? null,
     school_name: db.settings.school_name,
     production_mode: Boolean(db.settings.production_mode),
@@ -402,21 +579,42 @@ app.get('/api/auth/me', (req, res) => {
 });
 
 app.post('/api/auth/login', (req, res) => {
+  const ip = req.ip || '127.0.0.1';
+  const db = loadDb();
+  if (!hasActiveAdminUser(db.users)) {
+    res.status(403).json({ error: 'Setup awal belum selesai. Silakan buat akun Administrator utama terlebih dahulu.' });
+    return;
+  }
+
   const { email, password } = req.body ?? {};
   if (!email || !password) {
     res.status(400).json({ error: 'Email dan password wajib diisi.' });
     return;
   }
-  const db = loadDb();
+
+  const rl = loginRateLimiter.checkAndConsume(ip);
+  if (!rl.allowed) {
+    res.setHeader('Retry-After', String(rl.retryAfterSec));
+    res.status(429).json({ error: 'Terlalu banyak percobaan login gagal. Coba lagi dalam 15 menit.' });
+    return;
+  }
+
   const user = db.users.find((u) => u.email.toLowerCase() === String(email).trim().toLowerCase());
   if (!user || !user.is_active || !verifyPassword(String(password), user.password_hash)) {
     res.status(401).json({ error: 'Email atau password salah, atau akun tidak aktif.' });
     return;
   }
+
+  loginRateLimiter.reset(ip);
   const session = createAuthSession(user.id);
   res.setHeader(
     'Set-Cookie',
-    `${SESSION_COOKIE}=${encodeURIComponent(session.token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${24 * 3600}`
+    buildSessionCookieHeader({
+      cookieName: SESSION_COOKIE,
+      token: session.token,
+      maxAgeSec: 24 * 3600,
+      isHttps: isRequestHttps(req),
+    })
   );
   res.json({ ok: true, token: session.token, user: sanitizeUser(user) });
 });
@@ -424,15 +622,24 @@ app.post('/api/auth/login', (req, res) => {
 app.post('/api/auth/logout', (req, res) => {
   const token = extractSessionToken(req);
   deleteAuthSession(token);
-  res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`);
+  res.setHeader(
+    'Set-Cookie',
+    buildSessionCookieHeader({
+      cookieName: SESSION_COOKIE,
+      token: '',
+      maxAgeSec: 0,
+      isHttps: isRequestHttps(req),
+    })
+  );
   res.json({ ok: true });
 });
 
 app.post('/api/auth/change-password', requireAuth(), (req, res) => {
   const authUser = (req as express.Request & { authUser?: User }).authUser!;
   const { oldPassword, newPassword } = req.body ?? {};
-  if (!oldPassword || !newPassword || String(newPassword).length < 6) {
-    res.status(400).json({ error: 'Password baru minimal 6 karakter.' });
+  const pwdCheck = isStrongSetupPassword(newPassword);
+  if (!oldPassword || !pwdCheck.valid) {
+    res.status(400).json({ error: pwdCheck.reason || 'Password baru minimal 8 karakter.' });
     return;
   }
   const db = loadDb();
@@ -483,8 +690,15 @@ app.get('/api/tts', async (req, res) => {
   }
 });
 
-app.get('/api/bootstrap', requireAuth(), (_req, res) => {
+app.get('/api/bootstrap', requireAuth(), (req, res) => {
   const db = loadDb();
+  const etag = `W/"db-v${getDbVersion()}"`;
+  res.setHeader('ETag', etag);
+  res.setHeader('Cache-Control', 'no-cache');
+  if (req.headers['if-none-match'] === etag) {
+    res.status(304).end();
+    return;
+  }
   const lite = stripEmbeddingsForBootstrap(db);
   res.json({
     ...lite,
@@ -973,7 +1187,13 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
   st.embedding_quality_score = qScore;
   st.embedding_updated_at = nowStr;
   if (photoDataUrl) {
-    st.foto_ref = String(photoDataUrl);
+    const compactPath = persistCompactPhotoDataUrl(String(photoDataUrl), `stu_${st.id}_profile`);
+    if (compactPath) {
+      if (st.foto_ref && st.foto_ref !== compactPath) {
+        removeSnapshotIfLocal(st.foto_ref);
+      }
+      st.foto_ref = compactPath;
+    }
   }
 
   db.face_update_history.push({
@@ -1021,7 +1241,15 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
     st.embedding = aiRes?.embedding ?? deterministicVecFromSeed(`${st.nisn}:${item.filename}`);
     st.embedding_quality_score = qScore;
     st.embedding_updated_at = nowStr;
-    if (item.photoDataUrl) st.foto_ref = item.photoDataUrl;
+    if (item.photoDataUrl) {
+      const compactPath = persistCompactPhotoDataUrl(String(item.photoDataUrl), `stu_${st.id}_profile`);
+      if (compactPath) {
+        if (st.foto_ref && st.foto_ref !== compactPath) {
+          removeSnapshotIfLocal(st.foto_ref);
+        }
+        st.foto_ref = compactPath;
+      }
+    }
     success++;
   }
 
@@ -1348,13 +1576,13 @@ app.delete('/api/gates/:id', requireAuth(['ADMIN']), (req, res) => {
   res.json({ ok: true });
 });
 
-// Internal Python Face Service Hooks (Loopback Container)
-app.get('/api/internal/cameras', (_req, res) => {
+// Internal Python Face Service Hooks (Loopback / X-Internal-Token)
+app.get('/api/internal/cameras', requireInternalAccess(), (_req, res) => {
   const db = loadDb();
   res.json({ cameras: db.cameras });
 });
 
-app.get('/api/internal/gallery', (_req, res) => {
+app.get('/api/internal/gallery', requireInternalAccess(), (_req, res) => {
   const db = loadDb();
   const students = db.students
     .filter((s) => Array.isArray(s.embedding) && s.embedding.length > 0 && s.status !== 'LULUS')
@@ -1365,21 +1593,31 @@ app.get('/api/internal/gallery', (_req, res) => {
 function updateCameraHeartbeat(cameraId: number, online: boolean, error: string | null): void {
   const db = loadDb();
   const cam = db.cameras.find((c) => c.id === Number(cameraId));
-  if (cam) {
-    const prevOnline = cam.status === 'ONLINE';
-    cam.status = online ? 'ONLINE' : 'OFFLINE';
-    cam.last_error = error ? String(error) : null;
-    if (online) {
-      cam.last_online_at = getJakartaNowParts().dateTimeStr;
-    }
+  if (!cam) return;
+
+  const prevOnline = cam.status === 'ONLINE';
+  const prevError = cam.last_error ?? null;
+  const nextError = error ? String(error) : null;
+  cam.status = online ? 'ONLINE' : 'OFFLINE';
+  cam.last_error = nextError;
+  if (online) {
+    cam.last_online_at = getJakartaNowParts().dateTimeStr;
+  }
+
+  const nowMs = Date.now();
+  const lastPersist = lastCameraDbPersistMs.get(cam.id) ?? 0;
+  const statusChanged = prevOnline !== online || prevError !== nextError;
+  // Hanya tulis ke SQLite saat status/error berubah atau minimal setiap 120 detik agar tidak memicu penumpukan WAL
+  if (statusChanged || nowMs - lastPersist >= 120_000) {
+    lastCameraDbPersistMs.set(cam.id, nowMs);
     saveDb(db);
-    if (prevOnline !== online) {
-      broadcastWs({ event: 'camera_heartbeat', camera_id: cam.id, online, error: cam.last_error });
-    }
+  }
+  if (statusChanged) {
+    broadcastWs({ event: 'camera_heartbeat', camera_id: cam.id, online, error: cam.last_error });
   }
 }
 
-app.post('/api/internal/cameras/:id/heartbeat', (req, res) => {
+app.post('/api/internal/cameras/:id/heartbeat', requireInternalAccess(), (req, res) => {
   const camId = Number(req.params.id);
   const body = req.body ?? {};
   const online = Boolean(body.online);
@@ -1422,9 +1660,11 @@ function processFaceEvent(payload: {
   const qualityCheck = passesSnapshotQualityThreshold(Number(quality_score), db.settings.min_snapshot_quality);
   if (!qualityCheck.passed) {
     removeSnapshotIfLocal(snapshot_rel_path);
-    console.log(
-      `[QUALITY][Cam #${cam.id}] Snapshot diabaikan: skor ${(qualityCheck.score * 100).toFixed(1)}% < batas minimal ${Math.round(qualityCheck.threshold * 100)}%`
-    );
+    if (process.env.VERBOSE_FACE_LOGS === '1' || serverLogThrottle.shouldLog(`quality:${cam.id}`)) {
+      console.log(
+        `[QUALITY][Cam #${cam.id}] Snapshot diabaikan: skor ${(qualityCheck.score * 100).toFixed(1)}% < batas minimal ${Math.round(qualityCheck.threshold * 100)}%`
+      );
+    }
     return {
       statusCode: 200,
       body: {
@@ -1489,10 +1729,10 @@ function processFaceEvent(payload: {
             similarity: Math.round(Math.max(0, bestClusterSim) * 10000) / 10000,
             camera_id: cam.id,
             detected_at: nowStr,
-            embedding: Array.isArray(embedding) ? embedding : undefined,
+            embedding: Array.isArray(embedding) ? roundEmbeddingForJson(embedding) : undefined,
           },
           bestCluster.best_snapshot_path,
-          12
+          CLUSTER_MAX_HITS
         );
         bestCluster.hit_snapshots = hitRes.hits;
         for (const droppedPath of hitRes.removedPaths) {
@@ -1548,7 +1788,7 @@ function processFaceEvent(payload: {
             similarity: 1,
             camera_id: cam.id,
             detected_at: nowStr,
-            embedding,
+            embedding: roundEmbeddingForJson(embedding),
           },
         ],
         status: 'PENDING',
@@ -1615,7 +1855,7 @@ function processFaceEvent(payload: {
       status: evalRes.logStatus,
       is_manual_override: false,
       similarity_score: Number(similarity) || undefined,
-      snapshot_path: snapshot_rel_path ? String(snapshot_rel_path) : null,
+      snapshot_path: evalRes.logType !== 'OBSERVASI' && snapshot_rel_path ? String(snapshot_rel_path) : null,
     });
     if (evalRes.updateDaily) {
       if (existingDaily) {
@@ -1653,8 +1893,23 @@ function processFaceEvent(payload: {
     embeddingUpdated = resMaint.updated;
     keptForMaintenance = resMaint.keptSnapshot;
   }
-  if (evalRes.deduplicated && !keptForMaintenance) {
-    removeSnapshotIfLocal(snapshot_rel_path);
+  if ((evalRes.deduplicated || evalRes.logType === 'OBSERVASI') && !keptForMaintenance) {
+    if (snapshot_rel_path && snapshot_rel_path !== student.foto_ref) {
+      removeSnapshotIfLocal(snapshot_rel_path);
+    }
+  }
+
+  if (db.attendance_logs.length > 3200 || db.notifications.length > 550) {
+    const trimmed = pruneInMemoryLogs({
+      attendance_logs: db.attendance_logs,
+      wa_queue: db.wa_queue,
+      notifications: db.notifications,
+      guest_access_logs: db.guest_access_logs,
+    });
+    db.attendance_logs = trimmed.attendance_logs;
+    db.wa_queue = trimmed.wa_queue;
+    db.notifications = trimmed.notifications;
+    db.guest_access_logs = trimmed.guest_access_logs;
   }
 
   saveDb(db);
@@ -1694,7 +1949,7 @@ function processFaceEvent(payload: {
   return { statusCode: 200, body: { ok: true, deduplicated: evalRes.deduplicated, embeddingUpdated } };
 }
 
-app.post('/api/internal/face-event', (req, res) => {
+app.post('/api/internal/face-event', requireInternalAccess(), (req, res) => {
   const result = processFaceEvent(req.body ?? {});
   res.status(result.statusCode).json(result.body);
 });
@@ -1711,14 +1966,19 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
     min_face_size = null,
     capture_max_width = null,
   } = req.body;
+  const rtspCheck = validateRtspStreamUrl(rtsp_url, { allowDummy: true });
+  if (!rtspCheck.valid) {
+    res.status(400).json({ error: rtspCheck.reason || 'URL RTSP kamera tidak valid.' });
+    return;
+  }
   const parsedRes = parseResolutionDimensions(String(resolusi));
   const normResolusi = formatManualResolution(parsedRes.width, parsedRes.height);
-  const isDummy = !rtsp_url || String(rtsp_url).startsWith('dummy://');
+  const isDummy = !rtspCheck.url || rtspCheck.url.startsWith('dummy://');
   const cam = {
     id: nextId(db.cameras),
-    nama_kamera: String(nama_kamera),
+    nama_kamera: String(nama_kamera || '').trim() || 'Kamera Gerbang',
     gate_id: Number(gate_id),
-    rtsp_url: String(rtsp_url),
+    rtsp_url: rtspCheck.url,
     resolusi: normResolusi,
     fps: Math.max(1, Math.min(30, Math.round(Number(fps) || 5))),
     aktif: Boolean(aktif),
@@ -1743,17 +2003,21 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
   const db = loadDb();
   const cameraId = req.body?.camera_id ? Number(req.body.camera_id) : null;
   const cam = cameraId ? db.cameras.find((c) => c.id === cameraId) : null;
-  const targetUrl = String(req.body?.rtsp_url || cam?.rtsp_url || '').trim();
+  const rawUrl = String(req.body?.rtsp_url || cam?.rtsp_url || '').trim();
+  const urlCheck = validateRtspStreamUrl(rawUrl, { allowDummy: false });
 
-  if (!targetUrl || !/^rtsps?:\/\//i.test(targetUrl)) {
-    res.status(400).json({ error: 'URL harus diawali rtsp:// atau rtsps:// (bukan dummy://).' });
+  if (!urlCheck.valid) {
+    res.status(400).json({ error: urlCheck.reason || 'URL harus diawali rtsp:// atau rtsps:// (bukan dummy://).' });
     return;
   }
+  const targetUrl = urlCheck.url;
 
-  const ffmpegBin = resolveFfmpegBinary();
-  const runCapture = (timeoutFlag: '-stimeout' | '-rw_timeout') =>
+  const initialRes = resolveFfmpegDetails();
+  let activeRes = initialRes;
+
+  const runCapture = (binPath: string, timeoutFlag: '-stimeout' | '-rw_timeout') =>
     execFileAsync(
-      ffmpegBin,
+      binPath,
       [
         '-hide_banner',
         '-loglevel', 'info',
@@ -1769,17 +2033,36 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
       { timeout: 14000, encoding: 'buffer', maxBuffer: 10 * 1024 * 1024 }
     );
 
+  const probeWithBinary = async (binPath: string) => {
+    try {
+      return await runCapture(binPath, '-stimeout');
+    } catch (firstErr) {
+      const errStderr = (firstErr as { stderr?: Buffer | string })?.stderr?.toString() || '';
+      if (/Option stimeout not found/i.test(errStderr)) {
+        return await runCapture(binPath, '-rw_timeout');
+      }
+      throw firstErr;
+    }
+  };
+
   const startedAt = Date.now();
   try {
     let frameRes;
     try {
-      frameRes = await runCapture('-stimeout');
-    } catch (firstErr) {
-      const errStderr = (firstErr as { stderr?: Buffer | string })?.stderr?.toString() || '';
-      if (/Option stimeout not found/i.test(errStderr)) {
-        frameRes = await runCapture('-rw_timeout');
+      frameRes = await probeWithBinary(activeRes.binary);
+    } catch (primaryErr) {
+      const primaryCode = (primaryErr as NodeJS.ErrnoException)?.code;
+      const primaryMsg = primaryErr instanceof Error ? primaryErr.message : '';
+      if (primaryCode === 'EACCES' || primaryCode === 'ENOENT' || /\b(EACCES|ENOENT)\b/i.test(primaryMsg)) {
+        const fallbackRes = resolveFfmpegDetails(new Set([activeRes.binary]));
+        if (fallbackRes.foundExecutable && fallbackRes.binary !== activeRes.binary) {
+          activeRes = fallbackRes;
+          frameRes = await probeWithBinary(fallbackRes.binary);
+        } else {
+          throw primaryErr;
+        }
       } else {
-        throw firstErr;
+        throw primaryErr;
       }
     }
 
@@ -1822,7 +2105,8 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
   } catch (err) {
     const stderrHint = (err as { stderr?: Buffer | string })?.stderr?.toString()?.trim().split('\n').slice(-2).join(' ') || '';
     const rawMsg = stderrHint || (err instanceof Error ? err.message : 'Gagal terhubung ke stream RTSP.');
-    const safeMsg = maskRtspCredentials(rawMsg).slice(0, 180);
+    const diagnosedMsg = diagnoseFfmpegError(rawMsg, activeRes);
+    const safeMsg = maskRtspCredentials(diagnosedMsg).slice(0, 220);
     if (cam) {
       cam.status = 'ERROR';
       cam.last_error = safeMsg;
@@ -1834,6 +2118,125 @@ app.post('/api/cameras/probe', requireAuth(['ADMIN']), async (req, res) => {
       error: `Koneksi RTSP gagal: ${safeMsg}`,
     });
   }
+});
+
+app.get('/api/cameras/preview-stream', requireAuth(['ADMIN']), (req, res) => {
+  const db = loadDb();
+  const cameraId = req.query?.camera_id ? Number(req.query.camera_id) : null;
+  const cam = cameraId ? db.cameras.find((c) => c.id === cameraId) : null;
+  const rawUrl = String(req.query?.rtsp_url || cam?.rtsp_url || '').trim();
+  const urlCheck = validateRtspStreamUrl(rawUrl, { allowDummy: false });
+  const fpsMode = String(req.query?.fps_mode || '5').trim() === 'native' ? 'native' : '5';
+  const maxWidth = req.query?.max_width ? Number(req.query.max_width) : 1280;
+
+  if (!urlCheck.valid) {
+    res.status(400).json({ error: urlCheck.reason || 'URL harus diawali rtsp:// atau rtsps:// (bukan dummy://).' });
+    return;
+  }
+  const targetUrl = urlCheck.url;
+
+  const boundary = 'ffmpegframe';
+  res.writeHead(200, {
+    'Content-Type': `multipart/x-mixed-replace; boundary=${boundary}`,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  let closed = false;
+  let activeChild: ReturnType<typeof spawn> | null = null;
+  const blockedBins = new Set<string>();
+  let timeoutFlag: '-stimeout' | '-rw_timeout' = '-stimeout';
+
+  const cleanup = () => {
+    closed = true;
+    if (activeChild && !activeChild.killed) {
+      try {
+        activeChild.kill('SIGTERM');
+      } catch {
+        // ignore kill error
+      }
+      const killTimer = setTimeout(() => {
+        if (activeChild && !activeChild.killed) {
+          try {
+            activeChild.kill('SIGKILL');
+          } catch {
+            // ignore force kill
+          }
+        }
+      }, 800);
+      killTimer.unref();
+    }
+  };
+
+  req.on('close', cleanup);
+  res.on('close', cleanup);
+
+  const launchPreview = () => {
+    if (closed) return;
+    const resolution = resolveFfmpegDetails(blockedBins.size > 0 ? blockedBins : undefined);
+    const { args } = buildFfmpegLivePreviewArgs({
+      url: targetUrl,
+      fpsMode,
+      timeoutFlag,
+      maxWidth,
+    });
+
+    const child = spawn(resolution.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    activeChild = child;
+    let remainder: Uint8Array = new Uint8Array(0);
+    let stderrTail = '';
+    let gotAnyFrame = false;
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      if (closed) return;
+      const parsed = extractJpegFramesFromChunk(remainder, chunk);
+      remainder = parsed.remainder;
+      for (const frame of parsed.frames) {
+        if (closed) break;
+        gotAnyFrame = true;
+        const header = `--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`;
+        try {
+          res.write(header);
+          res.write(frame);
+          res.write('\r\n');
+        } catch {
+          cleanup();
+          break;
+        }
+      }
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrTail = (stderrTail + chunk.toString('utf8')).slice(-500);
+    });
+
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      if (closed) return;
+      if (err.code === 'EACCES' || err.code === 'ENOENT') {
+        const alt = resolveFfmpegDetails(new Set([...blockedBins, resolution.binary]));
+        if (alt.foundExecutable && alt.binary !== resolution.binary) {
+          blockedBins.add(resolution.binary);
+          launchPreview();
+          return;
+        }
+      }
+      if (!res.writableEnded) res.end();
+    });
+
+    child.on('close', () => {
+      if (closed) return;
+      if (!gotAnyFrame && /Option stimeout not found/i.test(stderrTail) && timeoutFlag === '-stimeout') {
+        timeoutFlag = '-rw_timeout';
+        launchPreview();
+        return;
+      }
+      if (!res.writableEnded) res.end();
+    });
+  };
+
+  launchPreview();
 });
 
 app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
@@ -1862,10 +2265,19 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
         ? null
         : normalizeCaptureMaxWidth(req.body.capture_max_width);
   }
+  let nextRtspUrl = cam.rtsp_url;
+  if (req.body.rtsp_url !== undefined) {
+    const rtspCheck = validateRtspStreamUrl(req.body.rtsp_url, { allowDummy: true });
+    if (!rtspCheck.valid) {
+      res.status(400).json({ error: rtspCheck.reason || 'URL RTSP kamera tidak valid.' });
+      return;
+    }
+    nextRtspUrl = rtspCheck.url;
+  }
   Object.assign(cam, {
     nama_kamera: req.body.nama_kamera !== undefined ? String(req.body.nama_kamera).trim() || cam.nama_kamera : cam.nama_kamera,
     gate_id: req.body.gate_id !== undefined ? Number(req.body.gate_id) || cam.gate_id : cam.gate_id,
-    rtsp_url: req.body.rtsp_url !== undefined ? String(req.body.rtsp_url).trim() : cam.rtsp_url,
+    rtsp_url: nextRtspUrl,
     resolusi: nextResolusi,
     fps: req.body.fps !== undefined ? Math.max(1, Math.min(30, Math.round(Number(req.body.fps) || cam.fps))) : cam.fps,
     aktif: req.body.aktif !== undefined ? Boolean(req.body.aktif) : cam.aktif,
@@ -2043,6 +2455,52 @@ app.post('/api/clusters/:id/hits/remove', requireAuth(['ADMIN', 'BK']), (req, re
   res.json({ ok: true, deleted_cluster: false, cluster: result.updatedCluster });
 });
 
+app.post('/api/clusters/:id/hits/remove-batch', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const db = loadDb();
+  const cid = Number(req.params.id);
+  const idx = db.anonymous_clusters.findIndex((c) => c.id === cid);
+  if (idx === -1) {
+    res.status(404).json({ error: 'Cluster tidak ditemukan.' });
+    return;
+  }
+  const snapshotPaths = Array.isArray(req.body?.snapshot_paths)
+    ? req.body.snapshot_paths.filter((p: unknown): p is string => typeof p === 'string' && p.length > 0)
+    : [];
+  if (snapshotPaths.length === 0) {
+    res.status(400).json({ error: 'Pilih minimal 1 gambar untuk dihapus.' });
+    return;
+  }
+
+  const result = removeMultipleHitsFromClusterState({
+    cluster: db.anonymous_clusters[idx],
+    snapshotPaths,
+    readyHits: Math.max(1, db.settings.cluster_ready_hits ?? 5),
+    readyDays: Math.max(1, db.settings.cluster_ready_days ?? 1),
+  });
+  if (result.removedHits.length === 0) {
+    res.status(404).json({ error: 'Gambar yang dipilih tidak ditemukan pada cluster ini.' });
+    return;
+  }
+
+  for (const fp of result.removedFilePaths) {
+    removeSnapshotIfLocal(fp);
+  }
+  if (result.deletedCluster || !result.updatedCluster) {
+    db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== cid);
+    saveDb(db);
+    res.json({ ok: true, deleted_cluster: true, removed_count: result.removedHits.length });
+    return;
+  }
+  db.anonymous_clusters[idx] = result.updatedCluster;
+  saveDb(db);
+  res.json({
+    ok: true,
+    deleted_cluster: false,
+    removed_count: result.removedHits.length,
+    cluster: result.updatedCluster,
+  });
+});
+
 app.post('/api/clusters/:id/hits/set-primary', requireAuth(['ADMIN', 'BK']), (req, res) => {
   const db = loadDb();
   const cid = Number(req.params.id);
@@ -2161,6 +2619,7 @@ app.post('/api/clusters/:id/merge', requireAuth(['ADMIN', 'BK']), (req, res) => 
     target: db.anonymous_clusters[targetIdx],
     readyHits: Math.max(1, db.settings.cluster_ready_hits ?? 5),
     readyDays: Math.max(1, db.settings.cluster_ready_days ?? 1),
+    maxHits: CLUSTER_MAX_HITS,
   });
   db.anonymous_clusters[targetIdx] = mergedRes.merged;
   db.anonymous_clusters = db.anonymous_clusters.filter((c) => c.id !== sourceId);
@@ -2495,7 +2954,7 @@ function readLocalPhotoAsDataUrl(relOrData: string | null | undefined): string |
   if (relOrData.startsWith('/data/snapshots/')) {
     diskPath = path.join(DATA_DIR, relOrData.replace(/^\/data\//, ''));
   } else if (relOrData.startsWith('/src/') || relOrData.startsWith('src/')) {
-    diskPath = path.resolve(process.cwd(), relOrData.replace(/^\/+/, ''));
+    diskPath = path.resolve(APP_ROOT, relOrData.replace(/^\/+/, ''));
   }
   if (!diskPath || !fs.existsSync(diskPath)) return null;
   const ext = path.extname(diskPath).toLowerCase();
@@ -2589,10 +3048,20 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
   });
 });
 
+app.get('/api/storage/breakdown', requireAuth(['ADMIN']), (_req, res) => {
+  res.json({ ok: true, breakdown: getDataStorageBreakdown() });
+});
+
 app.post('/api/storage/cleanup', requireAuth(['ADMIN']), (_req, res) => {
   const db = loadDb();
-  const { freedMb } = runStorageCleanup(db);
-  res.json({ ok: true, freed_mb: freedMb });
+  const resCleanup = runStorageCleanup(db, { manual: true });
+  res.json({
+    ok: true,
+    freed_mb: resCleanup.freedMb,
+    freed_bytes: resCleanup.freedBytes,
+    removed_logs: resCleanup.removedLogs,
+    breakdown: resCleanup.breakdown,
+  });
 });
 
 app.get('/api/backups', requireAuth(['ADMIN']), (_req, res) => {
@@ -2864,18 +3333,29 @@ app.post('/api/users', requireAuth(['ADMIN']), (req, res) => {
     res.status(400).json({ error: 'Nama dan email wajib diisi.' });
     return;
   }
-  if (db.users.some((u) => u.email.toLowerCase() === String(email).trim().toLowerCase())) {
+  const normEmail = String(email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normEmail)) {
+    res.status(400).json({ error: 'Format email user tidak valid.' });
+    return;
+  }
+  const pwdCheck = isStrongSetupPassword(password);
+  if (!pwdCheck.valid) {
+    res.status(400).json({ error: pwdCheck.reason || 'Password user minimal 8 karakter dan tidak boleh lemah.' });
+    return;
+  }
+  if (db.users.some((u) => u.email.toLowerCase() === normEmail)) {
     res.status(409).json({ error: 'Email sudah terdaftar.' });
     return;
   }
-  const pwd = password && String(password).length >= 6 ? String(password) : 'sekolah123';
+  const allowedRoles: UserRole[] = ['ADMIN', 'BK', 'GURU'];
+  const cleanRole: UserRole = allowedRoles.includes(role) ? role : 'GURU';
   db.users.push({
     id: nextId(db.users),
     name: String(name).trim(),
-    email: String(email).trim().toLowerCase(),
-    role: role || 'GURU',
+    email: normEmail,
+    role: cleanRole,
     is_active: true,
-    password_hash: hashPassword(pwd),
+    password_hash: hashPassword(String(password)),
   });
   saveDb(db);
   res.json({ ok: true });
@@ -3214,6 +3694,7 @@ async function start() {
         const { spawn } = await import('child_process');
         fs.mkdirSync(DATA_DIR, { recursive: true });
         const logPath = path.join(DATA_DIR, 'auto-update.log');
+        capLogFileSize(logPath, 1024 * 1024);
         const outFd = fs.openSync(logPath, 'a');
         const child = spawn('bash', [scriptPath], {
           cwd: APP_ROOT,

@@ -79,6 +79,9 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
   const [probeError, setProbeError] = useState('');
   const [previewTarget, setPreviewTarget] = useState<{ label: string; camera_id?: number; rtsp_url?: string } | null>(null);
   const [previewData, setPreviewData] = useState<RtspProbeResult | null>(null);
+  const [previewMode, setPreviewMode] = useState<'5' | 'native' | 'snapshot'>('5');
+  const [streamNonce, setStreamNonce] = useState(1);
+  const [streamError, setStreamError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
 
   // Kalibrasi Manual Resolusi & Bounding Wajah per Kamera
@@ -121,7 +124,9 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
   const runProbe = async (target: { label: string; camera_id?: number; rtsp_url?: string }, updateDraftMeta = false) => {
     setProbing(true);
     setProbeError('');
+    setStreamError('');
     setPreviewTarget(target);
+    setStreamNonce((n) => n + 1);
     try {
       const res = await onProbeCamera({ camera_id: target.camera_id, rtsp_url: target.rtsp_url });
       setPreviewData(res);
@@ -145,7 +150,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
   };
 
   useEffect(() => {
-    if (!autoRefresh || !previewTarget) return;
+    if (previewMode !== 'snapshot' || !autoRefresh || !previewTarget) return;
     const timer = window.setInterval(() => {
       if (!probing) {
         runProbe(previewTarget, false).catch(() => {});
@@ -153,7 +158,19 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
     }, 2500);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, previewTarget]);
+  }, [previewMode, autoRefresh, previewTarget]);
+
+  const liveStreamUrl =
+    previewTarget && previewData?.online && previewMode !== 'snapshot'
+      ? (() => {
+          const params = new URLSearchParams();
+          if (previewTarget.camera_id) params.set('camera_id', String(previewTarget.camera_id));
+          if (previewTarget.rtsp_url) params.set('rtsp_url', previewTarget.rtsp_url);
+          params.set('fps_mode', previewMode === 'native' ? 'native' : '5');
+          params.set('nonce', String(streamNonce));
+          return `/api/cameras/preview-stream?${params.toString()}`;
+        })()
+      : null;
 
   const handleGateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -663,27 +680,95 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
 
       {/* Live Preview Panel */}
       {(previewTarget || probeError) && (
-        <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+        <section
+          aria-label={`Live Preview RTSP ${previewTarget?.label ?? ''}`}
+          className="bg-white border border-slate-200 rounded-lg p-5 space-y-4"
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold text-slate-900">
-                Live Preview Stream RTSP — {previewTarget?.label}
-              </h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-900">
+                  Live Preview Stream RTSP — {previewTarget?.label}
+                </h2>
+                {liveStreamUrl && !streamError && (
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-mono font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded">
+                    <span className="w-2 h-2 rounded-full bg-emerald-600 animate-pulse" />
+                    {previewMode === 'native' ? 'LIVE (FPS BAWAAN RTSP)' : 'LIVE (5 FPS)'}
+                  </span>
+                )}
+              </div>
               {previewData && (
                 <div className="text-xs font-mono text-slate-600 mt-0.5 tabular-nums">
-                  Status: <strong className="text-emerald-700">ONLINE</strong> · Codec: <strong>{previewData.codec}</strong> · Resolusi: <strong>{previewData.resolusi}</strong> · FPS: <strong>{previewData.fps}</strong> · Latensi: <strong>{previewData.latency_ms} ms</strong>
+                  Status: <strong className="text-emerald-700">ONLINE</strong> · Codec: <strong>{previewData.codec}</strong> · Resolusi: <strong>{previewData.resolusi}</strong> · FPS Asli Kamera: <strong>{previewData.fps}</strong> · Latensi Awal: <strong>{previewData.latency_ms} ms</strong>
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoRefresh}
-                  onChange={(e) => setAutoRefresh(e.target.checked)}
-                />
-                Auto-Refresh (2.5 dtk)
-              </label>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                role="group"
+                aria-label="Mode Kecepatan Preview RTSP"
+                className="inline-flex rounded-md border border-slate-300 bg-slate-50 p-0.5 text-xs"
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode('5');
+                    setAutoRefresh(false);
+                    setStreamError('');
+                    setStreamNonce((n) => n + 1);
+                  }}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    previewMode === '5'
+                      ? 'bg-blue-700 text-white'
+                      : 'text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  Live 5 FPS
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode('native');
+                    setAutoRefresh(false);
+                    setStreamError('');
+                    setStreamNonce((n) => n + 1);
+                  }}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    previewMode === 'native'
+                      ? 'bg-blue-700 text-white'
+                      : 'text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  Live Bawaan RTSP{previewData?.fps ? ` (${previewData.fps} FPS)` : ''}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreviewMode('snapshot');
+                    setStreamError('');
+                  }}
+                  className={`px-2.5 py-1 rounded font-medium transition-colors ${
+                    previewMode === 'snapshot'
+                      ? 'bg-slate-800 text-white'
+                      : 'text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  Snapshot
+                </button>
+              </div>
+
+              {previewMode === 'snapshot' && (
+                <label className="inline-flex items-center gap-1.5 text-xs text-slate-700 cursor-pointer px-1">
+                  <input
+                    type="checkbox"
+                    checked={autoRefresh}
+                    onChange={(e) => setAutoRefresh(e.target.checked)}
+                  />
+                  Auto-Refresh (2.5 dtk)
+                </label>
+              )}
+
               <button
                 type="button"
                 disabled={probing || !previewTarget}
@@ -691,7 +776,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                 className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-blue-700 hover:bg-blue-800 disabled:opacity-50 rounded-md"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${probing ? 'animate-spin' : ''}`} />
-                Refresh Frame
+                {previewMode === 'snapshot' ? 'Refresh Frame' : 'Sambungkan Ulang'}
               </button>
               <button
                 type="button"
@@ -701,6 +786,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                   setPreviewTarget(null);
                   setPreviewData(null);
                   setProbeError('');
+                  setStreamError('');
                 }}
                 className="p-1.5 text-slate-500 hover:text-slate-900 border border-slate-200 rounded-md"
               >
@@ -715,19 +801,43 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
             </div>
           )}
 
-          {previewData?.snapshotDataUrl && (
+          {streamError && (
+            <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-800 flex flex-wrap items-center justify-between gap-2">
+              <span>{streamError}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setStreamError('');
+                  setStreamNonce((n) => n + 1);
+                }}
+                className="px-2.5 py-1 text-xs font-semibold bg-amber-700 text-white rounded hover:bg-amber-800"
+              >
+                Coba Live Stream Lagi
+              </button>
+            </div>
+          )}
+
+          {(liveStreamUrl || previewData?.snapshotDataUrl) && (
             <div className="space-y-2">
               <img
-                src={previewData.snapshotDataUrl}
+                key={`${liveStreamUrl ?? 'snap'}-${streamNonce}`}
+                src={liveStreamUrl && !streamError ? liveStreamUrl : previewData?.snapshotDataUrl}
                 alt={`Live frame ${previewTarget?.label}`}
+                onError={() => {
+                  if (liveStreamUrl && !streamError) {
+                    setStreamError(
+                      'Aliran video live MJPEG terputus/timeout — menampilkan snapshot terakhir. Klik "Coba Live Stream Lagi" atau pilih mode Live 5 FPS.'
+                    );
+                  }
+                }}
                 className="w-full max-h-[460px] object-contain bg-slate-950 rounded-md border border-slate-200"
               />
               <p className="text-[11px] text-slate-500">
-                {previewData.face_service_online
-                  ? 'Engine InsightFace aktif dan terhubung ke kamera ini.'
-                  : workerStatus?.engine === 'NODE_WASM_LIVE'
-                    ? 'Preview FFmpeg RTSP berhasil & Worker Face AI Node (WASM) aktif memantau deteksi wajah anonim/siswa secara live dari stream kamera ini.'
-                    : 'Preview FFmpeg RTSP berhasil langsung dari kamera.'}
+                {previewMode === 'snapshot'
+                  ? 'Mode Snapshot aktif (hemat bandwidth). Pilih "Live 5 FPS" atau "Live Bawaan RTSP" di atas untuk video bergerak real-time.'
+                  : previewMode === 'native'
+                    ? 'Mode Live FPS Bawaan RTSP aktif: stream dipancarkan mengikuti FPS asli kamera (direkomendasikan 1 admin menonton bersamaan untuk hemat CPU/bandwidth).'
+                    : 'Mode Live 5 FPS aktif via FFmpeg MJPEG stream (stabil untuk uji arah hadap kamera & verifikasi gerbang).'}
               </p>
             </div>
           )}

@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import zlib from 'zlib';
+import jpeg from 'jpeg-js';
 import { DatabaseSync } from 'node:sqlite';
 import type {
   AnonymousCluster,
@@ -22,6 +23,7 @@ import type {
   Schedule,
   ScheduleException,
   SettingsMap,
+  StorageBreakdown,
   Student,
   User,
   Visitor,
@@ -37,6 +39,18 @@ import {
   stripDemoRecordsForProduction,
 } from '../lib/attendanceEngine.ts';
 import { buildFaceVectorIndex, type FaceVectorIndex } from '../lib/faceIndex.ts';
+import { pruneInMemoryLogs, truncateTextTailBytes } from '../lib/logRetention.ts';
+import {
+  BACKUPS_MAX_BYTES,
+  SNAPSHOTS_MAX_BYTES,
+  STORAGE_EMERGENCY_TRIM_BYTES,
+  STORAGE_SOFT_TARGET_BYTES,
+  STORED_SNAPSHOT_MAX_SIDE_PX,
+  TTS_CACHE_MAX_BYTES,
+  compactSecondaryRecords,
+  computeDownscaleDimensions,
+  selectSnapshotsToPruneByQuota,
+} from '../lib/storageBudget.ts';
 
 export const DATA_DIR = path.resolve(APP_ROOT, process.env.DATA_DIR || 'data');
 export const SQLITE_FILE = path.join(DATA_DIR, 'absensi.sqlite');
@@ -46,7 +60,7 @@ export const TTS_CACHE_DIR = path.join(DATA_DIR, 'tts_cache');
 export const WA_AUTH_DIR = path.join(DATA_DIR, 'wa_auth');
 export const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 
-const BACKUP_MAX_BYTES = 150 * 1024 * 1024; // Maks total folder backup 150 MB agar tidak memenuhi limit 10 GB
+const BACKUP_MAX_BYTES = BACKUPS_MAX_BYTES;
 const DAILY_WINDOW_DAYS = 180;
 
 let sqliteDb: DatabaseSync | null = null;
@@ -114,7 +128,8 @@ function studentSignature(s: Student): string {
 }
 
 function clusterSignature(c: AnonymousCluster): string {
-  return `${getEmbeddingTag(c.centroid)}|${c.hit_count}|${c.distinct_days}|${c.last_seen}|${c.best_snapshot_path}|${c.best_quality_score}|${getEmbeddingTag(c.best_embedding)}|${c.hit_snapshots?.length ?? 0}|${c.status}|${c.named_student_id ?? ''}|${c.last_camera_id ?? ''}`;
+  const hitPaths = (c.hit_snapshots ?? []).map((h) => h.snapshot_path).join(',');
+  return `${getEmbeddingTag(c.centroid)}|${c.hit_count}|${c.distinct_days}|${c.last_seen}|${c.best_snapshot_path}|${c.best_quality_score}|${getEmbeddingTag(c.best_embedding)}|${hitPaths}|${c.status}|${c.named_student_id ?? ''}|${c.last_camera_id ?? ''}`;
 }
 
 function historySignature(h: FaceUpdateHistory): string {
@@ -225,10 +240,15 @@ export function getCachedClusterFaceIndex(clusters: readonly AnonymousCluster[])
   return index;
 }
 
+export function getDbVersion(): number {
+  return dbVersion;
+}
+
 export function invalidateDbCache(): void {
   cachedDb = null;
   cachedStudentIndex = null;
   cachedClusterIndex = null;
+  dbVersion += 1;
   resetPersistedTrackers();
 }
 
@@ -283,6 +303,8 @@ function getSqlite(): DatabaseSync {
     sqliteDb.exec(`
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = NORMAL;
+      PRAGMA wal_autocheckpoint = 200;
+      PRAGMA journal_size_limit = 8388608;
       PRAGMA foreign_keys = OFF;
 
       CREATE TABLE IF NOT EXISTS app_state (
@@ -605,13 +627,183 @@ export function getDirectorySizeBytes(dirPath: string): number {
   return total;
 }
 
+export function capLogFileSize(filePath: string, maxBytes = 1024 * 1024): { truncated: boolean; savedBytes: number } {
+  try {
+    if (!fs.existsSync(filePath)) return { truncated: false, savedBytes: 0 };
+    const st = fs.statSync(filePath);
+    if (!st.isFile() || st.size <= maxBytes) return { truncated: false, savedBytes: 0 };
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const res = truncateTextTailBytes(raw, maxBytes);
+    if (!res.truncated) return { truncated: false, savedBytes: 0 };
+    fs.writeFileSync(filePath, res.content, 'utf8');
+    const afterSize = fs.statSync(filePath).size;
+    return { truncated: true, savedBytes: Math.max(0, st.size - afterSize) };
+  } catch {
+    return { truncated: false, savedBytes: 0 };
+  }
+}
+
+export function persistCompactPhotoDataUrl(
+  rawDataUrl: string | null | undefined,
+  filenameBase: string,
+  maxSide = STORED_SNAPSHOT_MAX_SIDE_PX,
+  jpegQuality = 82
+): string | null {
+  if (!rawDataUrl || typeof rawDataUrl !== 'string') return null;
+  const trimmed = rawDataUrl.trim();
+  if (!trimmed.startsWith('data:image/')) {
+    return trimmed.startsWith('/') ? trimmed : null;
+  }
+  const match = /^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/i.exec(trimmed);
+  if (!match) return null;
+
+  try {
+    const extRaw = match[1].toLowerCase();
+    const rawBuf = Buffer.from(match[2], 'base64');
+    if (rawBuf.length < 32 || rawBuf.length > 15 * 1024 * 1024) return null;
+
+    fs.mkdirSync(SNAPSHOTS_DIR, { recursive: true });
+    const safePrefix = filenameBase.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    // Downscale JPEG cleanly so 5,000 student photos stay ~10-25 KB each instead of multi-MB
+    if (extRaw === 'jpeg' || extRaw === 'jpg') {
+      const decoded = jpeg.decode(rawBuf, { useTArray: true, formatAsRGBA: true });
+      const { width, height, data } = decoded;
+      if (width > 0 && height > 0 && data.length > 0) {
+        const target = computeDownscaleDimensions(width, height, maxSide);
+        let rgbaOut: Buffer;
+        if (!target.scaled) {
+          rgbaOut = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+        } else {
+          rgbaOut = Buffer.alloc(target.width * target.height * 4);
+          for (let dy = 0; dy < target.height; dy++) {
+            const sy = Math.min(height - 1, Math.floor((dy * height) / target.height));
+            const dstRow = dy * target.width * 4;
+            const srcRow = sy * width * 4;
+            for (let dx = 0; dx < target.width; dx++) {
+              const sx = Math.min(width - 1, Math.floor((dx * width) / target.width));
+              const sIdx = srcRow + sx * 4;
+              const dIdx = dstRow + dx * 4;
+              rgbaOut[dIdx] = data[sIdx];
+              rgbaOut[dIdx + 1] = data[sIdx + 1];
+              rgbaOut[dIdx + 2] = data[sIdx + 2];
+              rgbaOut[dIdx + 3] = data[sIdx + 3];
+            }
+          }
+        }
+        const compactBuf = jpeg.encode(
+          { data: rgbaOut, width: target.width, height: target.height },
+          Math.min(82, Math.max(55, Math.round(jpegQuality)))
+        );
+        const fileName = `${safePrefix}.jpg`;
+        fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), Buffer.from(compactBuf.data));
+        return `/data/snapshots/${fileName}`;
+      }
+    }
+
+    const cleanExt = extRaw === 'png' ? 'png' : extRaw === 'webp' ? 'webp' : 'jpg';
+    const fileName = `${safePrefix}.${cleanExt}`;
+    fs.writeFileSync(path.join(SNAPSHOTS_DIR, fileName), rawBuf);
+    return `/data/snapshots/${fileName}`;
+  } catch {
+    return null;
+  }
+}
+
+export function getDataStorageBreakdown(): StorageBreakdown {
+  const safeFileSize = (p: string): number => {
+    try {
+      return fs.existsSync(p) && fs.statSync(p).isFile() ? fs.statSync(p).size : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const sqliteBytes = safeFileSize(SQLITE_FILE) + safeFileSize(`${SQLITE_FILE}-shm`);
+  const walBytes = safeFileSize(`${SQLITE_FILE}-wal`);
+  const snapshotsBytes = getDirectorySizeBytes(SNAPSHOTS_DIR);
+  const backupsBytes = getDirectorySizeBytes(BACKUPS_DIR);
+  const ttsCacheBytes = getDirectorySizeBytes(TTS_CACHE_DIR);
+  const waAuthBytes = getDirectorySizeBytes(WA_AUTH_DIR);
+
+  let logsBytes = 0;
+  let rootOtherBytes = 0;
+  try {
+    if (fs.existsSync(DATA_DIR)) {
+      for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+        const full = path.join(DATA_DIR, entry.name);
+        if (entry.isFile()) {
+          if (
+            full === SQLITE_FILE ||
+            full === `${SQLITE_FILE}-wal` ||
+            full === `${SQLITE_FILE}-shm`
+          ) {
+            continue;
+          }
+          const sz = safeFileSize(full);
+          if (entry.name.endsWith('.log') || entry.name.endsWith('.log.1')) {
+            logsBytes += sz;
+          } else {
+            rootOtherBytes += sz;
+          }
+        } else if (entry.isDirectory()) {
+          if (
+            full === SNAPSHOTS_DIR ||
+            full === BACKUPS_DIR ||
+            full === TTS_CACHE_DIR ||
+            full === WA_AUTH_DIR
+          ) {
+            continue;
+          }
+          if (entry.name === 'logs') {
+            logsBytes += getDirectorySizeBytes(full);
+          } else {
+            rootOtherBytes += getDirectorySizeBytes(full);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore scan errors
+  }
+
+  const otherBytes = waAuthBytes + rootOtherBytes;
+  const totalBytes = sqliteBytes + walBytes + snapshotsBytes + backupsBytes + ttsCacheBytes + logsBytes + otherBytes;
+
+  const rows = {
+    attendance_logs: 0,
+    wa_queue: 0,
+    notifications: 0,
+    guest_access_logs: 0,
+    auth_sessions: 0,
+  };
+  try {
+    const sqlite = getSqlite();
+    rows.attendance_logs = Number((sqlite.prepare('SELECT COUNT(*) as c FROM attendance_logs').get() as { c: number } | undefined)?.c ?? 0);
+    rows.wa_queue = Number((sqlite.prepare('SELECT COUNT(*) as c FROM wa_queue').get() as { c: number } | undefined)?.c ?? 0);
+    rows.notifications = Number((sqlite.prepare('SELECT COUNT(*) as c FROM notifications').get() as { c: number } | undefined)?.c ?? 0);
+    rows.guest_access_logs = Number((sqlite.prepare('SELECT COUNT(*) as c FROM guest_access_logs').get() as { c: number } | undefined)?.c ?? 0);
+    rows.auth_sessions = Number((sqlite.prepare('SELECT COUNT(*) as c FROM auth_sessions').get() as { c: number } | undefined)?.c ?? 0);
+  } catch {
+    // ignore count errors
+  }
+
+  return {
+    sqlite_bytes: sqliteBytes,
+    wal_bytes: walBytes,
+    snapshots_bytes: snapshotsBytes,
+    backups_bytes: backupsBytes,
+    tts_cache_bytes: ttsCacheBytes,
+    logs_bytes: logsBytes,
+    other_bytes: otherBytes,
+    total_bytes: totalBytes,
+    rows,
+  };
+}
+
 export function createInitialSeed(): AppDatabase {
   return {
-    users: [
-      { id: 1, name: 'Administrator Sekolah', email: 'admin@sekolah.local', role: 'ADMIN', is_active: true, password_hash: hashPassword('admin123') },
-      { id: 2, name: 'Ibu Sari Wulandari, S.Pd', email: 'bk@sekolah.local', role: 'BK', is_active: true, password_hash: hashPassword('bk123') },
-      { id: 3, name: 'Pak Budi Santoso', email: 'guru@sekolah.local', role: 'GURU', is_active: true, password_hash: hashPassword('guru123') },
-    ],
+    users: [],
     jurusans: [
       { id: 1, kode: 'TKJ', nama: 'Teknik Komputer & Jaringan' },
       { id: 2, kode: 'RPL', nama: 'Rekayasa Perangkat Lunak' },
@@ -712,12 +904,6 @@ function hydrateDefaults(parsed: AppDatabase): AppDatabase {
   parsed.settings.min_face_size = normalizeMinFaceSize(parsed.settings.min_face_size);
   parsed.settings.capture_max_width = normalizeCaptureMaxWidth(parsed.settings.capture_max_width);
   parsed.settings.capture_jpeg_quality = normalizeCaptureJpegQuality(parsed.settings.capture_jpeg_quality);
-  for (const u of parsed.users) {
-    if (!u.password_hash) {
-      const fallbackPwd = u.role === 'ADMIN' ? 'admin123' : u.role === 'BK' ? 'bk123' : 'guru123';
-      u.password_hash = hashPassword(fallbackPwd);
-    }
-  }
   return parsed;
 }
 
@@ -1008,7 +1194,6 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
   parsedSettings.min_snapshot_quality = normalizeMinSnapshotQuality(parsedSettings.min_snapshot_quality);
 
   const realDiskBytes = getDirectorySizeBytes(DATA_DIR);
-  const storedSimBytes = storageRow ? Number(JSON.parse(storageRow.value_json)) : 0;
 
   let loadedDb: AppDatabase = {
     users,
@@ -1032,7 +1217,7 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     notifications,
     guest_access_logs,
     settings: parsedSettings,
-    storage_bytes_simulated: Math.max(realDiskBytes, Number.isFinite(storedSimBytes) ? storedSimBytes : realDiskBytes),
+    storage_bytes_simulated: realDiskBytes,
   };
 
   // One-time idempotent cutover to Production Mode for existing demo-seeded SQLite DBs
@@ -1075,9 +1260,12 @@ export function loadDb(): AppDatabase {
 
   const sqlite = getSqlite();
 
-  // Cek apakah tabel relasional sudah terisi
+  // Cek apakah tabel relasional sudah terisi (users atau app_settings sebelum setup pertama)
   const userCountRow = sqlite.prepare('SELECT COUNT(*) as c FROM users').get() as { c: number } | undefined;
-  if ((userCountRow?.c ?? 0) > 0) {
+  const settingsRow = sqlite.prepare("SELECT 1 as ok FROM settings WHERE key = 'app_settings'").get() as
+    | { ok: number }
+    | undefined;
+  if ((userCountRow?.c ?? 0) > 0 || Boolean(settingsRow?.ok)) {
     cachedDb = hydrateDefaults(readRelationalDb(sqlite));
     seedTrackersFromDb(cachedDb);
     return cachedDb;
@@ -1790,9 +1978,40 @@ export function deleteStudentFromSqlite(studentId: number): void {
   persisted.students.delete(studentId);
 }
 
-export function runStorageCleanup(db: AppDatabase): { freedMb: number } {
-  const beforeBytes = db.storage_bytes_simulated + getDirectorySizeBytes(TTS_CACHE_DIR);
-  const fourMonthsAgoMs = Date.now() - 120 * 86_400_000;
+export function runStorageCleanup(
+  db: AppDatabase,
+  opts: { manual?: boolean } = {}
+): {
+  freedMb: number;
+  freedBytes: number;
+  removedLogs: {
+    attendance_logs: number;
+    wa_queue: number;
+    notifications: number;
+    guest_access_logs: number;
+    auth_sessions: number;
+    snapshots: number;
+    log_files_truncated: number;
+  };
+  breakdown: StorageBreakdown;
+} {
+  const beforeBytes = getDirectorySizeBytes(DATA_DIR);
+  const now = Date.now();
+  const fourMonthsAgoMs = now - 120 * 86_400_000;
+
+  // 0. Migrate any legacy Base64 data:image/* inside students.foto_ref or face_update_history to compact /data/snapshots/ JPEGs
+  for (const s of db.students) {
+    if (s.foto_ref && s.foto_ref.startsWith('data:image/')) {
+      const compactPath = persistCompactPhotoDataUrl(s.foto_ref, `stu_${s.id}_profile`);
+      if (compactPath) s.foto_ref = compactPath;
+    }
+  }
+  for (const h of db.face_update_history) {
+    if (h.snapshot_path && h.snapshot_path.startsWith('data:image/')) {
+      const compactPath = persistCompactPhotoDataUrl(h.snapshot_path, `stu_${h.student_id}_v${h.version}`);
+      if (compactPath) h.snapshot_path = compactPath;
+    }
+  }
 
   // 1. Keep max 3 version histories per student and delete > 4 months (non-canonical)
   const byStudent = new Map<number, typeof db.face_update_history>();
@@ -1814,10 +2033,9 @@ export function runStorageCleanup(db: AppDatabase): { freedMb: number } {
   }
   db.face_update_history = keptHistory;
 
-  // 2. Archive/delete expired clusters
+  // 2. Archive/delete expired clusters & apply tight compaction to secondary records
   const archiveMs = db.settings.cluster_archive_days * 86_400_000;
   const deleteMs = db.settings.cluster_delete_days * 86_400_000;
-  const now = Date.now();
   db.anonymous_clusters = db.anonymous_clusters.filter((c) => {
     const lastMs = Date.parse(c.last_seen.replace(' ', 'T'));
     if (Number.isNaN(lastMs)) return true;
@@ -1827,59 +2045,233 @@ export function runStorageCleanup(db: AppDatabase): { freedMb: number } {
     return true;
   });
 
-  // 3. Cap TTS cache at 200 MB (LRU) & rotate backups under 150 MB
-  enforceDirQuota(TTS_CACHE_DIR, 200 * 1024 * 1024);
+  // 3. Prune in-memory logs/queues cleanly (bounded RAM)
+  const memPruned = pruneInMemoryLogs(
+    {
+      attendance_logs: db.attendance_logs,
+      wa_queue: db.wa_queue,
+      notifications: db.notifications,
+      guest_access_logs: db.guest_access_logs,
+    },
+    { nowMs: now }
+  );
+  db.attendance_logs = memPruned.attendance_logs;
+  db.wa_queue = memPruned.wa_queue;
+  db.notifications = memPruned.notifications;
+  db.guest_access_logs = memPruned.guest_access_logs;
+
+  const secondaryRes = compactSecondaryRecords(
+    {
+      anonymous_clusters: db.anonymous_clusters,
+      face_update_reviews: db.face_update_reviews,
+      visitors: db.visitors,
+      attendance_logs: db.attendance_logs,
+    },
+    now
+  );
+  db.anonymous_clusters = secondaryRes.anonymous_clusters;
+  db.face_update_reviews = secondaryRes.face_update_reviews;
+  db.visitors = secondaryRes.visitors;
+  db.attendance_logs = secondaryRes.attendance_logs;
+
+  // 4. Cap TTS cache at 120 MB (LRU) & rotate backups under 200 MB
+  enforceDirQuota(TTS_CACHE_DIR, TTS_CACHE_MAX_BYTES);
   rotateBackups(db.settings.backup_retention_count ?? 2);
 
-  // 4. Prune very old attendance_logs (> 400 days) & guest_access_logs (> 30 days) directly in SQLite
+  // 5. Prune expired log & queue tables directly in SQLite (keeps SQLite compact even across years)
+  const removedLogs = {
+    attendance_logs: memPruned.removedCounts.attendance_logs,
+    wa_queue: memPruned.removedCounts.wa_queue,
+    notifications: memPruned.removedCounts.notifications,
+    guest_access_logs: memPruned.removedCounts.guest_access_logs,
+    auth_sessions: 0,
+    snapshots: 0,
+    log_files_truncated: 0,
+  };
+
   try {
     const sqlite = getSqlite();
-    const logCutoff = new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10);
-    const guestCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    sqlite.prepare('DELETE FROM attendance_logs WHERE timestamp < ?').run(logCutoff);
-    sqlite.prepare('DELETE FROM guest_access_logs WHERE timestamp < ?').run(guestCutoff);
+    const attCutoff = new Date(now - 90 * 86_400_000).toISOString().slice(0, 10);
+    const attSnapCutoff = new Date(now - 3 * 86_400_000).toISOString().slice(0, 10);
+    const dailyCutoff = new Date(now - 730 * 86_400_000).toISOString().slice(0, 10);
+    const waCutoff = new Date(now - 30 * 86_400_000).toISOString().slice(0, 19);
+    const notifReadCutoff = new Date(now - 7 * 86_400_000).toISOString().slice(0, 19);
+    const notifMaxCutoff = new Date(now - 30 * 86_400_000).toISOString().slice(0, 19);
+    const guestCutoff = new Date(now - 30 * 86_400_000).toISOString();
+
+    const rAtt = sqlite.prepare('DELETE FROM attendance_logs WHERE timestamp < ?').run(attCutoff);
+    sqlite
+      .prepare("UPDATE attendance_logs SET snapshot_path = NULL WHERE snapshot_path IS NOT NULL AND (timestamp < ? OR tipe = 'OBSERVASI')")
+      .run(attSnapCutoff);
+    sqlite.prepare('DELETE FROM daily_attendance WHERE tanggal < ?').run(dailyCutoff);
+    const rWa = sqlite
+      .prepare("DELETE FROM wa_queue WHERE status IN ('SENT', 'FAILED') AND COALESCE(sent_at, scheduled_at) < ?")
+      .run(waCutoff);
+    const rNotif = sqlite
+      .prepare('DELETE FROM notifications WHERE (is_read = 1 AND created_at < ?) OR created_at < ?')
+      .run(notifReadCutoff, notifMaxCutoff);
+    const rGuest = sqlite.prepare('DELETE FROM guest_access_logs WHERE timestamp < ?').run(guestCutoff);
+    const rSess = sqlite.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(now);
+    sqlite.exec('DELETE FROM storage_events WHERE id NOT IN (SELECT id FROM storage_events ORDER BY id DESC LIMIT 200)');
+
+    removedLogs.attendance_logs = Math.max(removedLogs.attendance_logs, Number(rAtt.changes || 0));
+    removedLogs.wa_queue = Math.max(removedLogs.wa_queue, Number(rWa.changes || 0));
+    removedLogs.notifications = Math.max(removedLogs.notifications, Number(rNotif.changes || 0));
+    removedLogs.guest_access_logs = Math.max(removedLogs.guest_access_logs, Number(rGuest.changes || 0));
+    removedLogs.auth_sessions = Number(rSess.changes || 0);
   } catch {
     // ignore cleanup query failures
   }
 
-  // 5. Prune unreferenced or expired (>30 days) local snapshot files to keep storage compact
-  try {
-    if (fs.existsSync(SNAPSHOTS_DIR)) {
-      const keepRel = new Set<string>();
-      const recentAttCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
-      for (const s of db.students) if (s.foto_ref) keepRel.add(s.foto_ref);
-      for (const h of db.face_update_history) if (h.snapshot_path) keepRel.add(h.snapshot_path);
-      for (const v of db.visitors) if (v.snapshot_path) keepRel.add(v.snapshot_path);
-      for (const c of db.anonymous_clusters) {
-        if (c.best_snapshot_path) keepRel.add(c.best_snapshot_path);
-        for (const hs of c.hit_snapshots ?? []) {
-          if (hs.snapshot_path) keepRel.add(hs.snapshot_path);
+  // Delete stripped files from secondary compaction immediately if not referenced by students/history
+  const canonicalProtected = new Set<string>();
+  const secondaryProtected = new Set<string>();
+  for (const s of db.students) if (s.foto_ref) canonicalProtected.add(s.foto_ref);
+  for (const h of db.face_update_history) {
+    if (!h.snapshot_path) continue;
+    if (h.is_canonical) canonicalProtected.add(h.snapshot_path);
+    else secondaryProtected.add(h.snapshot_path);
+  }
+  for (const c of db.anonymous_clusters) {
+    if (c.best_snapshot_path) {
+      if (c.status === 'READY' || c.status === 'PENDING') canonicalProtected.add(c.best_snapshot_path);
+      else secondaryProtected.add(c.best_snapshot_path);
+    }
+    for (const hs of c.hit_snapshots ?? []) {
+      if (hs.snapshot_path && hs.snapshot_path !== c.best_snapshot_path) {
+        secondaryProtected.add(hs.snapshot_path);
+      }
+    }
+  }
+  for (const v of db.visitors) if (v.snapshot_path) secondaryProtected.add(v.snapshot_path);
+  for (const l of db.attendance_logs) {
+    if (l.snapshot_path) secondaryProtected.add(l.snapshot_path);
+  }
+
+  for (const rel of secondaryRes.strippedSnapshotPaths) {
+    if (canonicalProtected.has(rel) || secondaryProtected.has(rel)) continue;
+    try {
+      const full = path.join(DATA_DIR, rel.replace(/^\/data\//, ''));
+      if (fs.existsSync(full) && fs.statSync(full).isFile()) {
+        fs.unlinkSync(full);
+        removedLogs.snapshots += 1;
+      }
+    } catch {
+      // ignore unlink error
+    }
+  }
+
+  // 6. Enforce tiered SNAPSHOTS_DIR quota (4.5 GB max; orphans > 24h evicted first, then oldest secondary snapshots)
+  const runSnapshotQuotaPass = (maxBytes: number) => {
+    try {
+      if (!fs.existsSync(SNAPSHOTS_DIR)) return;
+      const diskFiles = fs
+        .readdirSync(SNAPSHOTS_DIR)
+        .map((name) => {
+          const full = path.join(SNAPSHOTS_DIR, name);
+          const st = fs.statSync(full);
+          return {
+            full,
+            relPath: `/data/snapshots/${name}`,
+            isFile: st.isFile(),
+            size: st.size,
+            mtimeMs: st.mtimeMs,
+          };
+        })
+        .filter((f) => f.isFile);
+
+      const plan = selectSnapshotsToPruneByQuota({
+        files: diskFiles.map(({ relPath, size, mtimeMs }) => ({ relPath, size, mtimeMs })),
+        canonicalProtectedPaths: canonicalProtected,
+        secondaryProtectedPaths: secondaryProtected,
+        maxBytes,
+        nowMs: now,
+      });
+
+      const byRel = new Map(diskFiles.map((d) => [d.relPath, d.full]));
+      for (const rel of plan.deletePaths) {
+        const full = byRel.get(rel);
+        if (full && fs.existsSync(full)) {
+          fs.unlinkSync(full);
+          removedLogs.snapshots += 1;
         }
       }
-      for (const l of db.attendance_logs) {
-        if (l.snapshot_path && l.timestamp >= recentAttCutoff) keepRel.add(l.snapshot_path);
-      }
-      const expireMs = Date.now() - 7 * 86_400_000;
-      for (const name of fs.readdirSync(SNAPSHOTS_DIR)) {
-        const rel = `/data/snapshots/${name}`;
-        if (keepRel.has(rel)) continue;
-        const full = path.join(SNAPSHOTS_DIR, name);
-        const st = fs.statSync(full);
-        if (st.isFile() && st.mtimeMs < expireMs) {
-          fs.unlinkSync(full);
+    } catch {
+      // ignore snapshot quota error
+    }
+  };
+  runSnapshotQuotaPass(SNAPSHOTS_MAX_BYTES);
+
+  // 7. Cap any .log files under DATA_DIR (e.g. data/auto-update.log) to max 1 MB each
+  try {
+    if (fs.existsSync(DATA_DIR)) {
+      for (const entry of fs.readdirSync(DATA_DIR, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith('.log')) {
+          const capRes = capLogFileSize(path.join(DATA_DIR, entry.name), 1024 * 1024);
+          if (capRes.truncated) removedLogs.log_files_truncated += 1;
         }
       }
     }
   } catch {
-    // ignore snapshot cleanup failures
+    // ignore log cap errors
   }
 
-  const realBytes = getDirectorySizeBytes(DATA_DIR);
-  db.storage_bytes_simulated = Math.max(realBytes, Math.round(db.storage_bytes_simulated * 0.72));
+  // 8. Sync trackers, checkpoint WAL, and reclaim SQLite free pages if significant
   saveDb(db);
+  seedTrackersFromDb(db);
+  try {
+    const sqlite = getSqlite();
+    sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    const freeRow = sqlite.prepare('PRAGMA freelist_count').get() as { freelist_count?: number } | undefined;
+    const pageRow = sqlite.prepare('PRAGMA page_size').get() as { page_size?: number } | undefined;
+    const freeBytes = Number(freeRow?.freelist_count ?? 0) * Number(pageRow?.page_size ?? 4096);
+    const vacuumThreshold = opts.manual ? 512 * 1024 : 8 * 1024 * 1024;
+    if (freeBytes >= vacuumThreshold) {
+      sqlite.exec('VACUUM;');
+      sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    }
+  } catch {
+    // ignore checkpoint/vacuum failure
+  }
 
-  const afterBytes = db.storage_bytes_simulated + getDirectorySizeBytes(TTS_CACHE_DIR);
-  return { freedMb: Math.max(0, Math.round((beforeBytes - afterBytes) / (1024 * 1024))) };
+  // 9. Emergency hard-ceiling protection: if total data/ still approaches 10 GB (> 9.0 GB), shrink under 8.0 GB
+  let totalNow = getDirectorySizeBytes(DATA_DIR);
+  if (totalNow >= STORAGE_EMERGENCY_TRIM_BYTES) {
+    rotateBackups(1);
+    enforceDirQuota(TTS_CACHE_DIR, 32 * 1024 * 1024);
+    const snapSizeNow = getDirectorySizeBytes(SNAPSHOTS_DIR);
+    const overage = Math.max(0, totalNow - STORAGE_SOFT_TARGET_BYTES);
+    const emergencySnapBudget = Math.max(256 * 1024 * 1024, snapSizeNow - overage);
+    runSnapshotQuotaPass(emergencySnapBudget);
+    try {
+      const sqlite = getSqlite();
+      sqlite.exec('VACUUM; PRAGMA wal_checkpoint(TRUNCATE);');
+    } catch {
+      // ignore emergency vacuum error
+    }
+    totalNow = getDirectorySizeBytes(DATA_DIR);
+  }
+
+  try {
+    const sqlite = getSqlite();
+    db.storage_bytes_simulated = totalNow;
+    sqlite
+      .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+      .run('storage_bytes_simulated', JSON.stringify(totalNow));
+    persisted.smallHashes.settings = JSON.stringify(db.settings) + '|' + String(db.storage_bytes_simulated);
+    sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+  } catch {
+    db.storage_bytes_simulated = getDirectorySizeBytes(DATA_DIR);
+  }
+
+  const afterBytes = getDirectorySizeBytes(DATA_DIR);
+  const freedBytes = Math.max(0, beforeBytes - afterBytes);
+  return {
+    freedMb: Math.max(0, Math.round(freedBytes / (1024 * 1024))),
+    freedBytes,
+    removedLogs,
+    breakdown: getDataStorageBreakdown(),
+  };
 }
 
 export function enforceDirQuota(dirPath: string, maxBytes: number): void {

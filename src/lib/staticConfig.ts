@@ -124,3 +124,200 @@ export function resolveListenConfig(params: {
 
   return { port, host, autoPortFallback };
 }
+
+export interface BinaryProbeOps {
+  existsSync: (filePath: string) => boolean;
+  isFileSync: (filePath: string) => boolean;
+  canExecuteSync: (filePath: string) => boolean;
+  chmodSync?: (filePath: string, mode: number) => void;
+}
+
+export interface ExecutableResolution {
+  binary: string;
+  foundExecutable: boolean;
+  candidatesChecked: string[];
+  repairedPaths: string[];
+  nonExecutablePaths: string[];
+}
+
+export function resolveExecutableBinary(params: {
+  candidates: Array<string | null | undefined>;
+  binaryName: string;
+  envPath?: string;
+  pathDelimiter?: string;
+  ops: BinaryProbeOps;
+}): ExecutableResolution {
+  const { candidates, binaryName, envPath = '', pathDelimiter = path.delimiter, ops } = params;
+
+  const rawList: string[] = [];
+  for (const c of candidates) {
+    const trimmed = typeof c === 'string' ? c.trim() : '';
+    if (trimmed) rawList.push(trimmed);
+  }
+  if (envPath && binaryName) {
+    for (const dir of envPath.split(pathDelimiter)) {
+      const cleanDir = dir.trim();
+      if (cleanDir) {
+        rawList.push(path.join(cleanDir, binaryName));
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const item of rawList) {
+    if (!seen.has(item)) {
+      seen.add(item);
+      ordered.push(item);
+    }
+  }
+
+  const candidatesChecked: string[] = [];
+  const repairedPaths: string[] = [];
+  const nonExecutablePaths: string[] = [];
+
+  for (const candidate of ordered) {
+    candidatesChecked.push(candidate);
+    let exists = false;
+    try {
+      exists = ops.existsSync(candidate) && ops.isFileSync(candidate);
+    } catch {
+      exists = false;
+    }
+    if (!exists) continue;
+
+    let executable = false;
+    try {
+      executable = ops.canExecuteSync(candidate);
+    } catch {
+      executable = false;
+    }
+
+    if (!executable && ops.chmodSync) {
+      try {
+        ops.chmodSync(candidate, 0o755);
+        executable = ops.canExecuteSync(candidate);
+        if (executable) {
+          repairedPaths.push(candidate);
+        }
+      } catch {
+        executable = false;
+      }
+    }
+
+    if (executable) {
+      return {
+        binary: candidate,
+        foundExecutable: true,
+        candidatesChecked,
+        repairedPaths,
+        nonExecutablePaths,
+      };
+    }
+
+    nonExecutablePaths.push(candidate);
+  }
+
+  return {
+    binary: binaryName,
+    foundExecutable: false,
+    candidatesChecked,
+    repairedPaths,
+    nonExecutablePaths,
+  };
+}
+
+export function diagnoseFfmpegError(
+  rawMessage: string,
+  resolution: Pick<ExecutableResolution, 'binary' | 'nonExecutablePaths' | 'foundExecutable'>
+): string {
+  const msg = String(rawMessage || '').trim();
+  const isEacces = /\bEACCES\b|permission denied/i.test(msg);
+  if (isEacces) {
+    const targetPath = resolution.nonExecutablePaths[0] || resolution.binary;
+    return (
+      `Izin eksekusi FFmpeg ditolak (EACCES) pada "${targetPath}". ` +
+      `Jalankan di terminal server: chmod +x "${targetPath}" atau install FFmpeg sistem (apt install -y ffmpeg).`
+    );
+  }
+  const isEnoent = /\bENOENT\b/i.test(msg) && /ffmpeg|spawn/i.test(msg);
+  if (isEnoent || (!resolution.foundExecutable && resolution.nonExecutablePaths.length > 0)) {
+    if (resolution.nonExecutablePaths.length > 0) {
+      const blocked = resolution.nonExecutablePaths[0];
+      return (
+        `Binary FFmpeg ada di "${blocked}" namun tidak memiliki izin eksekusi (+x). ` +
+        `Jalankan: chmod +x "${blocked}" atau install FFmpeg sistem (apt install -y ffmpeg).`
+      );
+    }
+    return `Binary FFmpeg tidak ditemukan (${resolution.binary}). Install FFmpeg sistem (apt install -y ffmpeg) atau jalankan npm install.`;
+  }
+  return msg;
+}
+
+export type LivePreviewFpsMode = '5' | 'native';
+
+export function buildFfmpegLivePreviewArgs(params: {
+  url: string;
+  fpsMode?: string;
+  timeoutFlag?: '-stimeout' | '-rw_timeout';
+  maxWidth?: number;
+}): { args: string[]; mode: LivePreviewFpsMode; effectiveMaxWidth: number } {
+  const mode: LivePreviewFpsMode = params.fpsMode === 'native' ? 'native' : '5';
+  const timeoutFlag = params.timeoutFlag === '-rw_timeout' ? '-rw_timeout' : '-stimeout';
+  const rawW = Number(params.maxWidth);
+  const effectiveMaxWidth = Number.isFinite(rawW) && rawW >= 320 ? Math.min(3840, Math.round(rawW)) : 1280;
+
+  const scaleFilter = `scale='min(${effectiveMaxWidth},iw)':-2`;
+  const vf = mode === 'native' ? scaleFilter : `fps=5,${scaleFilter}`;
+
+  return {
+    mode,
+    effectiveMaxWidth,
+    args: [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-rtsp_transport',
+      'tcp',
+      timeoutFlag,
+      '7000000',
+      '-i',
+      params.url,
+      '-vf',
+      vf,
+      '-q:v',
+      '5',
+      '-f',
+      'image2pipe',
+      '-vcodec',
+      'mjpeg',
+      'pipe:1',
+    ],
+  };
+}
+
+export function extractRgbaLumaSample(rgba: Uint8Array, sampleCount = 64): Uint8Array {
+  if (!rgba || rgba.length < 4 || sampleCount <= 0) return new Uint8Array(0);
+  const totalPixels = Math.floor(rgba.length / 4);
+  const count = Math.min(sampleCount, totalPixels);
+  const out = new Uint8Array(count);
+  const step = Math.max(1, Math.floor(totalPixels / count));
+  for (let i = 0; i < count; i++) {
+    const pxIdx = Math.min(totalPixels - 1, i * step) * 4;
+    out[i] = Math.round(0.299 * rgba[pxIdx] + 0.587 * rgba[pxIdx + 1] + 0.114 * rgba[pxIdx + 2]);
+  }
+  return out;
+}
+
+export function computeFrameMotionDeltaRatio(prevSample: Uint8Array | null, curSample: Uint8Array): number {
+  if (!prevSample || prevSample.length === 0 || prevSample.length !== curSample.length) {
+    return 1;
+  }
+  let diffSum = 0;
+  for (let i = 0; i < curSample.length; i++) {
+    diffSum += Math.abs(curSample[i] - prevSample[i]);
+  }
+  return diffSum / (curSample.length * 255);
+}
+
+

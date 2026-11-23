@@ -32,6 +32,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "4")
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|stimeout;5000000|fflags;nobuffer|flags;low_delay")
 
 WEB_BACKEND_URL = os.environ.get("WEB_BACKEND_URL", f"http://127.0.0.1:{os.environ.get('PORT', '80')}")
+INTERNAL_API_TOKEN = os.environ.get("INTERNAL_API_TOKEN", "").strip()
 MODEL_DIR = os.environ.get("INSIGHTFACE_HOME", "/app/models/insightface")
 RUST_ACCEL_BIN = os.environ.get("RUST_ACCEL_BIN", "/app/bin/face_accel")
 SNAPSHOT_DIR = Path(os.environ.get("DATA_DIR", "/app/data")) / "snapshots"
@@ -226,11 +227,17 @@ def detect_faces(img: np.ndarray) -> List[Any]:
         analyzer_pool.put(fa)
 
 
+def internal_headers() -> Dict[str, str]:
+    if not INTERNAL_API_TOKEN:
+        return {}
+    return {"X-Internal-Token": INTERNAL_API_TOKEN}
+
+
 def sync_gallery_and_settings() -> None:
     global gallery_cache, settings_cache
     try:
         with httpx.Client(timeout=8.0) as client:
-            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/gallery")
+            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/gallery", headers=internal_headers())
             if resp.status_code == 200:
                 data = resp.json()
                 students = data.get("students", [])
@@ -257,6 +264,7 @@ def send_heartbeat(
             resp = client.post(
                 f"{WEB_BACKEND_URL}/api/internal/cameras/{camera_id}/heartbeat",
                 json=payload,
+                headers=internal_headers(),
             )
             if resp.status_code >= 400:
                 print(
@@ -306,6 +314,9 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
             last_hb = time.time()
             last_good_frame_ts = time.time()
             last_proc = 0.0
+            last_detect_log = 0.0
+            last_quality_log = 0.0
+            verbose_logs = os.environ.get("VERBOSE_FACE_LOGS") == "1"
             fail_reads = 0
             frame_counter = 0
 
@@ -393,11 +404,13 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     valid_faces.append(f)
                     boxes.append((float(x1), float(y1), float(x2), float(y2)))
 
-                print(
-                    f"[DETECT][Cam #{cam_id}] raw={len(faces)} lolos={len(valid_faces)} ditolak_filter={dropped_now} "
-                    f"(min_conf={min_conf}, min_px={min_size})",
-                    flush=True,
-                )
+                if verbose_logs or (now - last_detect_log >= 60.0):
+                    last_detect_log = now
+                    print(
+                        f"[DETECT][Cam #{cam_id}] raw={len(faces)} lolos={len(valid_faces)} ditolak_filter={dropped_now} "
+                        f"(min_conf={min_conf}, min_px={min_size}, total_lolos={tel['faces_detected_total']}, total_ditolak={tel['dropped_filter']})",
+                        flush=True,
+                    )
 
                 if not boxes:
                     continue
@@ -433,10 +446,12 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                     if q_score < min_quality:
                         tel["dropped_filter"] += 1
                         tracker.reset_dispatch_cooldown(track_id)
-                        print(
-                            f"[DETECT][Cam #{cam_id}] Wajah diabaikan kualitas {(q_score * 100):.1f}% < {(min_quality * 100):.0f}%",
-                            flush=True,
-                        )
+                        if verbose_logs or (now - last_quality_log >= 60.0):
+                            last_quality_log = now
+                            print(
+                                f"[DETECT][Cam #{cam_id}] Wajah diabaikan kualitas {(q_score * 100):.1f}% < {(min_quality * 100):.0f}%",
+                                flush=True,
+                            )
                         continue
 
                     emb = f.normed_embedding.astype(np.float32).tolist()
@@ -459,9 +474,20 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
                     snap_name = f"cam{cam_id}_t{track_id}_{int(now)}.jpg"
                     snap_path = SNAPSHOT_DIR / snap_name
-                    jpeg_q = max(50, min(98, int(settings_cache.get("capture_jpeg_quality", 86) or 86)))
+                    jpeg_q = max(50, min(82, int(settings_cache.get("capture_jpeg_quality", 82) or 82)))
                     if crop.size > 0:
-                        cv2.imwrite(str(snap_path), crop, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_q])
+                        ch, cw = crop.shape[:2]
+                        longest = max(ch, cw)
+                        if longest > 360:
+                            scale_c = 360.0 / float(longest)
+                            crop_save = cv2.resize(
+                                crop,
+                                (max(2, int(round(cw * scale_c))), max(2, int(round(ch * scale_c)))),
+                                interpolation=cv2.INTER_AREA,
+                            )
+                        else:
+                            crop_save = crop
+                        cv2.imwrite(str(snap_path), crop_save, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_q])
 
                     try:
                         with httpx.Client(timeout=4.0) as client:
@@ -476,6 +502,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                                     "embedding": emb,
                                     "snapshot_rel_path": f"/data/snapshots/{snap_name}",
                                 },
+                                headers=internal_headers(),
                             )
                             if ev_resp.status_code >= 400:
                                 print(
@@ -497,7 +524,7 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 def refresh_camera_workers() -> int:
     try:
         with httpx.Client(timeout=5.0) as client:
-            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/cameras")
+            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/cameras", headers=internal_headers())
             if resp.status_code != 200:
                 return 0
             cams = resp.json().get("cameras", [])

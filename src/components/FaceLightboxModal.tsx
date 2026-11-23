@@ -38,7 +38,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const pointerDownTargetRef = useRef<EventTarget | null>(null);
   const [activeIndex, setActiveIndex] = useState(initialIndex);
-  const [zoom2x, setZoom2x] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState<1 | 2 | 3>(1);
   const [compareSideBySide, setCompareSideBySide] = useState(Boolean(referenceItem));
 
   const shouldShow = isOpen && items.length > 0;
@@ -46,7 +46,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
   useEffect(() => {
     if (shouldShow) {
       setActiveIndex(Math.max(0, Math.min(initialIndex, Math.max(0, items.length - 1))));
-      setZoom2x(false);
+      setZoomLevel(1);
       setCompareSideBySide(Boolean(referenceItem));
     }
   }, [shouldShow, initialIndex, items.length, referenceItem]);
@@ -157,20 +157,39 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                   Dobel Crosscheck
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => setZoom2x((v) => !v)}
-                aria-label={zoom2x ? 'Ukuran normal' : 'Perbesar 2x'}
-                aria-pressed={zoom2x}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border transition-colors ${
-                  zoom2x
-                    ? 'bg-slate-900 text-white border-slate-900'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                {zoom2x ? <ZoomOut className="w-3.5 h-3.5" /> : <ZoomIn className="w-3.5 h-3.5" />}
-                {zoom2x ? 'Normal (1x)' : 'Perbesar (2x)'}
-              </button>
+              <div className="inline-flex items-center rounded-md border border-slate-300 bg-white overflow-hidden">
+                <button
+                  type="button"
+                  disabled={zoomLevel === 1}
+                  onClick={() => setZoomLevel((z) => (z === 3 ? 2 : 1))}
+                  aria-label="Perkecil zoom"
+                  className="px-2 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-40 border-r border-slate-200"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                {([1, 2, 3] as const).map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setZoomLevel(lvl)}
+                    aria-pressed={zoomLevel === lvl}
+                    className={`px-2.5 py-1.5 text-xs font-mono font-semibold transition-colors ${
+                      zoomLevel === lvl ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-100'
+                    }`}
+                  >
+                    {lvl}x
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  disabled={zoomLevel === 3}
+                  onClick={() => setZoomLevel((z) => (z === 1 ? 2 : 3))}
+                  aria-label="Perbesar zoom"
+                  className="px-2 py-1.5 text-slate-700 hover:bg-slate-100 disabled:opacity-40 border-l border-slate-200"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={onClose}
@@ -191,15 +210,22 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                     <span className="font-semibold text-emerald-400">{referenceItem.label}</span>
                     {referenceItem.meta && <span className="font-mono text-[11px] text-slate-400">{referenceItem.meta}</span>}
                   </div>
-                  <div className="flex-1 min-h-[210px] sm:min-h-[250px] max-h-[42dvh] overflow-auto flex items-center justify-center bg-black/40 rounded">
+                  <div className="flex-1 min-h-[220px] sm:min-h-[260px] max-h-[44dvh] overflow-auto bg-black/40 rounded grid place-items-center p-2">
                     <img
                       src={referenceItem.src}
                       alt={referenceItem.label}
                       referrerPolicy="no-referrer"
-                      className={`transition-transform duration-200 rounded object-contain ${
-                        zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[40dvh] max-w-full cursor-zoom-in'
+                      style={
+                        zoomLevel > 1
+                          ? { width: `${zoomLevel * 100}%`, maxWidth: 'none' }
+                          : undefined
+                      }
+                      className={`rounded object-contain transition-all duration-150 ${
+                        zoomLevel === 1
+                          ? 'max-h-[40dvh] max-w-full cursor-zoom-in'
+                          : 'h-auto cursor-zoom-out'
                       }`}
-                      onClick={() => setZoom2x((v) => !v)}
+                      onClick={() => setZoomLevel((z) => (z === 1 ? 2 : z === 2 ? 3 : 1))}
                     />
                   </div>
                 </div>
@@ -229,7 +255,7 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex-1 min-h-[210px] sm:min-h-[250px] max-h-[42dvh] overflow-auto flex items-center justify-center bg-black/40 rounded relative">
+                <div className="relative flex-1 min-h-[220px] sm:min-h-[260px] max-h-[44dvh] bg-black/40 rounded overflow-hidden">
                   {items.length > 1 && (
                     <button
                       type="button"
@@ -241,15 +267,24 @@ export const FaceLightboxModal: React.FC<FaceLightboxModalProps> = ({
                     </button>
                   )}
 
-                  <img
-                    src={current.src}
-                    alt={current.label}
-                    referrerPolicy="no-referrer"
-                    className={`transition-transform duration-200 rounded object-contain ${
-                      zoom2x ? 'scale-150 origin-center cursor-zoom-out' : 'max-h-[40dvh] max-w-full cursor-zoom-in'
-                    }`}
-                    onClick={() => setZoom2x((v) => !v)}
-                  />
+                  <div className="w-full h-full overflow-auto grid place-items-center p-2">
+                    <img
+                      src={current.src}
+                      alt={current.label}
+                      referrerPolicy="no-referrer"
+                      style={
+                        zoomLevel > 1
+                          ? { width: `${zoomLevel * 100}%`, maxWidth: 'none' }
+                          : undefined
+                      }
+                      className={`rounded object-contain transition-all duration-150 ${
+                        zoomLevel === 1
+                          ? 'max-h-[40dvh] max-w-full cursor-zoom-in'
+                          : 'h-auto cursor-zoom-out'
+                      }`}
+                      onClick={() => setZoomLevel((z) => (z === 1 ? 2 : z === 2 ? 3 : 1))}
+                    />
+                  </div>
 
                   {items.length > 1 && (
                     <button
