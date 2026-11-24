@@ -366,24 +366,46 @@ npm run setup:school -- --domain absensi.smkpercut.store
 ```
 
 ### Langkah 3: Jalankan Aplikasi (User `www` — Tidak Perlu `root`)
-- **Melalui aaPanel → Website → Node project → Add Node project**:
-  - **Project dir**: `/www/wwwroot/smkn1pst`
-  - **Run opt**: **`start`** *(wajib `start`, bukan `dev`!)*
-  - **Port**: masukkan nomor port dari hasil `setup:school` / isi file `.env` (contoh `3001`)
-  - **User**: `www`
-  - Isi domain sekolah, aktifkan **Mapping**, lalu pasang **SSL Let's Encrypt**.
-- **Atau melalui PM2**:
-  ```bash
-  pm2 start npm --name "absensi-smkn1pst" -- start
-  pm2 save
-  ```
 
-### Langkah 4: Konfigurasi Nginx Reverse Proxy
-Di **aaPanel → Website → Site Settings → Config**, **hapus atau komentari** blok cache statis bawaan seperti:
-```nginx
-# location ~ .*\.(js|css)?$ { ... }
+#### Opsi A: aaPanel **Node project (Default — Paling Disarankan)**
+Buka **Website → Node project → Add Node project** dan isi persis seperti ini:
+- **Path**: `/www/wwwroot/smkn1pst`
+- **Project Name**: `absensi-smk` *(bebas per sekolah)*
+- **Run User**: `www`
+- **Node.js runtime**: `v22.x` atau `v24.x` *(contoh `v24.22.3`)*
+- **Pkg Manager**: `npm` *(Install dependencies boleh dimatikan jika sudah dijalankan di Langkah 2)*
+- **Start command**: pilih **`From package.json`** → lalu pilih **`start`** *(JANGAN `dev`!)*
+- **Project Port**: isi angka port dari hasil `setup:school` / file `.env` (contoh `3001`)
+- **Domain name**: masukkan domain sekolah Anda (contoh `absensi.smkpercut.store`), biarkan port default 80.
+> **PENTING untuk aaPanel:** Begitu **Domain name** diisi di Node Project, aaPanel **otomatis membuatkan Reverse Proxy Nginx + WebSocket sendiri**. **Jangan mengedit config Nginx secara manual** agar konfigurasi panel Anda tidak bentrok. Setelah project berjalan, cukup aktifkan **SSL Let's Encrypt** di tab SSL.
+
+#### Opsi B: aaPanel **PM2** (Alternatif)
+Jika Anda memilih **PM2** di aaPanel:
+- **Project Name**: `absensi-smk`
+- **Node Version**: `v24.x` *(min. `v22.18`)*
+- **Startup File**: pilih **`server.ts`**
+- **Run Directory**: `/www/wwwroot/smkn1pst`
+- **Cluster**: **WAJIB `1`** *(JANGAN lebih dari 1! Aplikasi memakai SQLite WAL, worker kamera RTSP, dan sesi WhatsApp Baileys yang tidak boleh dijalankan ganda dalam mode cluster)*
+- **Memory Limit**: **`2048`** atau **`4096`** MB *(minimal 2048 MB agar aman untuk AI wajah & 5.000 siswa)*
+- **Auto Restart**: Centang / Aktif
+- **Pkg Manager**: pilih **`npm`** *(bukan pnpm)*
+- **Environment Variables**:
+  ```env
+  NODE_ENV=production
+  TZ=Asia/Jakarta
+  ```
+- **Run User**: `www`
+- **Project Port**: `3001` *(samakan dengan `PORT` di file `.env`)*
+- **Domain name**: masukkan domain sekolah Anda (contoh `absensi.smkpercut.store`).
+
+#### Opsi C: PM2 via Terminal (VPS Polos Tanpa aaPanel)
+```bash
+pm2 start npm --name "absensi-smkn1pst" -- start
+pm2 save
 ```
-agar seluruh file `/assets/*.js`, `/assets/*.css`, file `.wasm`, dan koneksi **WebSocket `/ws`** diteruskan sempurna ke aplikasi Node:
+
+### Langkah 4: Konfigurasi Nginx (Hanya Jika TIDAK Pakai Domain Binding / Mapping aaPanel)
+Lewati langkah ini bila Anda sudah mengisi **Domain name** di **aaPanel Node Project / PM2**. Gunakan contoh di bawah hanya jika memakai **PM2 CLI / systemd / Docker** pada VPS tanpa panel otomatis:
 
 ```nginx
 server {
@@ -427,11 +449,11 @@ Aplikasi dapat dijalankan untuk banyak sekolah di satu VPS dengan **database, se
 
 ### Mode Node.js / aaPanel
 - **Sekolah 1** (`/www/wwwroot/smk1.sch.id`):
-  `npm run setup:school -- --domain smk1.sch.id` → otomatis mendapat `PORT=3001` → Reverse Proxy Nginx ke `http://127.0.0.1:3001`
+  `npm run setup:school -- --domain smk1.sch.id` → otomatis mendapat `PORT=3001` → di aaPanel Node Project masukkan `Port=3001`, isi domain `smk1.sch.id`, lalu centang **Mapping**
 - **Sekolah 2** (`/www/wwwroot/smk2.sch.id`):
-  `npm run setup:school -- --domain smk2.sch.id` → otomatis mendapat `PORT=3002` → Reverse Proxy Nginx ke `http://127.0.0.1:3002`
+  `npm run setup:school -- --domain smk2.sch.id` → otomatis mendapat `PORT=3002` → di aaPanel Node Project masukkan `Port=3002`, isi domain `smk2.sch.id`, lalu centang **Mapping**
 - **Sekolah 3** (`/www/wwwroot/smk3.sch.id`):
-  `npm run setup:school -- --domain smk3.sch.id` → otomatis mendapat `PORT=3003` → Reverse Proxy Nginx ke `http://127.0.0.1:3003`
+  `npm run setup:school -- --domain smk3.sch.id` → otomatis mendapat `PORT=3003` → di aaPanel Node Project masukkan `Port=3003`, isi domain `smk3.sch.id`, lalu centang **Mapping**
 
 *(Script `setup-school.sh` otomatis memindai file `.env` di folder tetangga maupun port yang sedang terpakai agar tidak pernah memakai port kembar.)*
 
@@ -599,7 +621,7 @@ npm run update:check
 
 | Gejala / Error | Penyebab Utama | Solusi Cepat |
 |---|---|---|
-| **Halaman putih / Error 404 pada `/node_modules/.vite/...` atau MIME `octet-stream`** | Server dijalankan dengan mode `dev` atau Nginx mencegat file `.js`/`.css`. | Jalankan `npm run build`, ubah Run Opt di aaPanel dari `dev` ke **`start`**, dan hapus blok `location ~ .*\.(js\|css)?$` di config Nginx. |
+| **Halaman putih / Error 404 pada `/node_modules/.vite/...` atau MIME `octet-stream`** | Server dijalankan dengan mode `dev` atau salah buat tipe site (Static/PHP) dengan aturan statis `.js`/`.css`. | Jalankan `npm run build`, ubah Run Opt di aaPanel Node Project dari `dev` ke **`start`**, dan pastikan memakai **Node project + Mapping** (jangan buat PHP/Static site manual). |
 | **Kamera gagal / Error `EACCES` pada FFmpeg** | Izin `+x` binary `@ffmpeg-installer` hilang (sering setelah upload ZIP) atau partisi server `noexec`. | Jalankan `npm run setup:school -- --domain <domain>` atau install FFmpeg sistem (`apt install -y ffmpeg`). Cek `curl -s http://127.0.0.1:<PORT>/api/health` hingga `"ffmpeg_ready":true`. |
 | **Kamera berstatus `OFFLINE` / gambar patah-patah** | Alamat RTSP salah, firewall memblokir port 554, atau stream UDP putus. | Uji URL RTSP dengan tombol **Probe Kamera** di menu Kamera. Pastikan format `rtsp://user:pass@ip:554/...` dan jaringan lokal/VPN kamera lancar. |
 | **Wajah siswa terdeteksi sebagai Anonim terus setelah ganti engine** | Perbedaan dimensi vektor antara `1024-D` (Node WASM) dan `512-D` (Python InsightFace). | Buka **Dashboard** lalu klik tombol **Sinkronkan / Migrasi Embedding** agar seluruh foto profil siswa diekstrak ulang ke dimensi mesin aktif. |
