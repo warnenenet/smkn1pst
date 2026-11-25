@@ -183,6 +183,7 @@ HEALTH_PATH="${HEALTH_PATH:-/api/health}"
 HEALTH_URL="${HEALTH_URL:-}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-25}"
 AUTO_STASH="${AUTO_STASH:-0}"
+UPDATE_ONLY_NEW_VERSION="${UPDATE_ONLY_NEW_VERSION:-1}"
 CRON_SCHEDULE="${CLI_SCHEDULE:-${CRON_SCHEDULE:-0 * * * *}}" # Default: 1 jam sekali
 LOG_FILE="${LOG_FILE:-}"
 
@@ -253,6 +254,11 @@ print_status() {
   log "PORT         : $PORT"
   log "APP_MANAGER  : $APP_MANAGER"
   log "LOG_FILE     : $LOG_FILE"
+  if [[ -f "$APP_DIR/package.json" ]] && command -v node >/dev/null 2>&1; then
+    local app_ver
+    app_ver="$(node -e 'try{process.stdout.write(String(require("./package.json").version||"1.0.0"))}catch{process.stdout.write("1.0.0")}' 2>/dev/null || echo '1.0.0')"
+    log "APP_VERSION  : v${app_ver} (UPDATE_ONLY_NEW_VERSION=${UPDATE_ONLY_NEW_VERSION})"
+  fi
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     log "GIT_BRANCH   : $(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo 'detached')"
     log "GIT_HEAD     : $(git rev-parse --short HEAD 2>/dev/null || echo '-')"
@@ -341,16 +347,63 @@ git fetch "$GIT_REMOTE" "$TARGET_BRANCH" --prune --tags
 LOCAL_SHA="$(git rev-parse HEAD)"
 REMOTE_SHA="$(git rev-parse "$GIT_REMOTE/$TARGET_BRANCH")"
 
+read_local_pkg_version() {
+  if [[ -f "$APP_DIR/package.json" ]] && command -v node >/dev/null 2>&1; then
+    node -e 'try{process.stdout.write(String(require("./package.json").version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' 2>/dev/null || echo "0.0.0"
+  else
+    echo "0.0.0"
+  fi
+}
+
+read_remote_pkg_version() {
+  local raw
+  raw="$(git show "$GIT_REMOTE/$TARGET_BRANCH:package.json" 2>/dev/null || true)"
+  if [[ -n "$raw" ]] && command -v node >/dev/null 2>&1; then
+    node -e 'try{const p=JSON.parse(process.argv[1]); process.stdout.write(String(p.version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' "$raw" 2>/dev/null || echo "0.0.0"
+  else
+    echo "0.0.0"
+  fi
+}
+
+is_remote_version_newer() {
+  local local_v="$1"
+  local remote_v="$2"
+  command -v node >/dev/null 2>&1 || return 0
+  node -e '
+    const parse = (s) => {
+      const m = String(s || "").trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/);
+      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+    };
+    const a = parse(process.argv[1]);
+    const b = parse(process.argv[2]);
+    if (!a || !b) process.exit(2);
+    for (let i = 0; i < 3; i++) {
+      if (b[i] !== a[i]) process.exit(b[i] > a[i] ? 0 : 1);
+    }
+    process.exit(1);
+  ' "$local_v" "$remote_v" >/dev/null 2>&1
+}
+
+LOCAL_VER="$(read_local_pkg_version)"
+REMOTE_VER="$(read_remote_pkg_version)"
+
 if [[ "$LOCAL_SHA" == "$REMOTE_SHA" && "$FORCE" -eq 0 ]]; then
-  log "Sudah versi terbaru (${LOCAL_SHA:0:7}). Tidak ada perubahan."
+  log "Sudah versi terbaru (v${LOCAL_VER} · ${LOCAL_SHA:0:7}). Tidak ada perubahan."
   exit 0
+fi
+
+if [[ "$FORCE" -eq 0 && "$UPDATE_ONLY_NEW_VERSION" == "1" && "$LOCAL_VER" != "0.0.0" && "$REMOTE_VER" != "0.0.0" ]]; then
+  if ! is_remote_version_newer "$LOCAL_VER" "$REMOTE_VER"; then
+    log "Commit remote berubah (${REMOTE_SHA:0:7}), tetapi versi masih v${REMOTE_VER} <= v${LOCAL_VER}. Menunggu nomor versi baru (atau jalankan --force)."
+    exit 0
+  fi
 fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   if [[ "$LOCAL_SHA" == "$REMOTE_SHA" ]]; then
-    log "[DRY-RUN] Tidak ada commit baru (${LOCAL_SHA:0:7})."
+    log "[DRY-RUN] Tidak ada update baru (v${LOCAL_VER} · ${LOCAL_SHA:0:7})."
   else
-    log "[DRY-RUN] Tersedia update: ${LOCAL_SHA:0:7} -> ${REMOTE_SHA:0:7}"
+    log "[DRY-RUN] Tersedia update versi v${LOCAL_VER} -> v${REMOTE_VER} (${LOCAL_SHA:0:7} -> ${REMOTE_SHA:0:7})"
     git log --oneline "${LOCAL_SHA}..${REMOTE_SHA}" | head -n 15 || true
   fi
   exit 0
@@ -467,12 +520,6 @@ has_broken_node_modules() {
   if [[ -f "$APP_DIR/package.json" ]] && grep -q '"vite"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
     return 0
   fi
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@vladmandic/human"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@vladmandic/human/package.json" ]]; then
-    return 0
-  fi
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@tensorflow/tfjs-backend-wasm"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@tensorflow/tfjs-backend-wasm/package.json" ]]; then
-    return 0
-  fi
   if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@ffmpeg-installer/ffmpeg"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
     return 0
   fi
@@ -529,6 +576,13 @@ fi
 
 fix_binary_permissions
 
+if [[ -x "$APP_DIR/services/wa-gateway/.venv/bin/pip" ]] && [[ -f "$APP_DIR/services/wa-gateway/requirements.txt" ]]; then
+  if [[ "$FORCE" -eq 1 ]] || { [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -q '^services/wa-gateway/requirements\.txt$'; }; then
+    log "Memperbarui dependensi Python WA Gateway..."
+    "$APP_DIR/services/wa-gateway/.venv/bin/pip" install --quiet -r "$APP_DIR/services/wa-gateway/requirements.txt" || true
+  fi
+fi
+
 # ------------------------------------------------------------------------------
 # Build Produksi (Sebelum Restart)
 # ------------------------------------------------------------------------------
@@ -553,6 +607,25 @@ if [[ "$BUILD_SCRIPT" != "none" ]]; then
   else
     log "Menjalankan script build kustom ($PM run $BUILD_SCRIPT)..."
     run_pkg_script "$BUILD_SCRIPT"
+  fi
+fi
+
+# Rebuild & restart Docker Face AI companion container apabila ada perubahan kode AI/Rust/Docker
+if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  SHOULD_REBUILD_FACE_DOCKER=0
+  if [[ "$FORCE" -eq 1 ]]; then
+    SHOULD_REBUILD_FACE_DOCKER=1
+  elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(services/face-service/|services/rust-accel/|Dockerfile\.face-service|docker-compose\.face\.yml)'; then
+    SHOULD_REBUILD_FACE_DOCKER=1
+  fi
+  if [[ "$SHOULD_REBUILD_FACE_DOCKER" -eq 1 ]]; then
+    if docker compose version >/dev/null 2>&1; then
+      log "Memperbarui container Docker Face AI (docker-compose.face.yml)..."
+      docker compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI; cek manual docker compose -f docker-compose.face.yml logs"
+    elif command -v docker-compose >/dev/null 2>&1; then
+      log "Memperbarui container Docker Face AI (docker-compose)..."
+      docker-compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI"
+    fi
   fi
 fi
 

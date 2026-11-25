@@ -833,17 +833,29 @@ export default function App() {
                 await apiPost('/api/settings', patch);
                 notify('Konfigurasi WhatsApp disimpan.');
               }}
-              onAddAccount={async (phone) => {
-                await apiPost('/api/wa/accounts', { phone_number: phone });
-                notify('Nomor Baileys ditambahkan dalam mode WARMUP.');
+              onAddAccount={async (phoneOrLabel) => {
+                await apiPost('/api/wa/accounts', { phone_number: phoneOrLabel, label: phoneOrLabel });
+                notify('Akun WhatsApp ditambahkan dalam mode WARMUP. Silakan scan QR.');
               }}
               onConnectAccount={async (id) => {
                 await apiPost(`/api/wa/accounts/${id}/connect`);
-                notify('Akun Baileys berhasil terhubung via QR.');
+                notify('Akun WhatsApp Web berhasil terhubung via QR.');
+              }}
+              onReconnectAccount={async (id) => {
+                await apiPost(`/api/wa/accounts/${id}/reconnect`);
+                notify('Memulai reconnect sesi WhatsApp Web tersimpan...');
+              }}
+              onUpdateAccountStatus={async (id, status) => {
+                await apiPost(`/api/wa/accounts/${id}/status`, { status });
+                notify(`Status akun WA diperbarui ke ${status}.`);
+              }}
+              onDeleteAccount={async (id) => {
+                await apiPost(`/api/wa/accounts/${id}`, {}, 'DELETE');
+                notify('Akun WhatsApp dan profil sesinya dihapus.');
               }}
               onTestSend={async (phone, message) => {
                 const res = await apiPost('/api/wa/test', { phone, message });
-                notify('Pesan tes WhatsApp dikirim ke log.');
+                notify('Pesan tes WhatsApp diproses.');
                 return res.preview;
               }}
               onUpdateTemplate={async (id, text) => {

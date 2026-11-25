@@ -96,7 +96,7 @@ export const ProductionSetupView: React.FC<ProductionSetupViewProps> = ({
     backupCount,
   });
 
-  const expectedDims = workerStatus?.expected_embedding_dims ?? 1024;
+  const expectedDims = workerStatus?.expected_embedding_dims ?? 512;
   const dimSummary = summarizeEmbeddingDimensions(
     db.students.filter((s) => s.status !== 'LULUS'),
     db.anonymous_clusters.filter((c) => c.status === 'PENDING' || c.status === 'READY')
@@ -234,6 +234,16 @@ export const ProductionSetupView: React.FC<ProductionSetupViewProps> = ({
           }`}
         >
           {feedback.text}
+        </div>
+      )}
+
+      {workerStatus && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
+        <div role="alert" className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-950">
+          <div className="font-semibold">Engine AI Wajah Docker (InsightFace buffalo_l 512-D) Belum Aktif</div>
+          <p className="mt-1">
+            Jalankan <span className="font-mono font-semibold">npm run setup:school</span> (atau{' '}
+            <span className="font-mono font-semibold">docker compose -f docker-compose.face.yml up -d --build</span>) agar worker RTSP &amp; enrollment 512-D aktif.
+          </p>
         </div>
       )}
 

@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
-import { Star, Trash2, ZoomIn } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Search, Star, Trash2, ZoomIn } from 'lucide-react';
 import type { AnonymousCluster, AppDatabase, WorkerStatusResponse } from '../types';
 import { FaceLightboxModal, type FaceGalleryItem } from './FaceLightboxModal';
+import {
+  buildPageTokens,
+  CLUSTER_PAGE_SIZE_OPTIONS,
+  DEFAULT_CLUSTER_PAGE_SIZE,
+  paginateItems,
+  sortAndFilterClusters,
+} from '../lib/clusterPagination';
 
 interface AutocompleteItem {
   id: number;
@@ -34,11 +41,43 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
   onRemoveClusterHit,
   onSetPrimaryClusterHit,
 }) => {
-  const readyClusters = db.anonymous_clusters.filter((c) => c.status === 'READY');
-  const pendingClusters = db.anonymous_clusters
-    .filter((c) => c.status === 'PENDING')
-    .sort((a, b) => b.last_seen.localeCompare(a.last_seen));
-  const activeClusters = [...readyClusters, ...pendingClusters];
+  const allReadyClusters = sortAndFilterClusters({
+    clusters: db.anonymous_clusters,
+    status: 'READY',
+    cameras: db.cameras,
+    gates: db.gates,
+  });
+  const allPendingClusters = sortAndFilterClusters({
+    clusters: db.anonymous_clusters,
+    status: 'PENDING',
+    cameras: db.cameras,
+    gates: db.gates,
+  });
+  const activeClusters = [...allReadyClusters, ...allPendingClusters];
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'READY' | 'PENDING'>('ALL');
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_CLUSTER_PAGE_SIZE);
+  const [readyPage, setReadyPage] = useState<number>(1);
+  const [pendingPage, setPendingPage] = useState<number>(1);
+
+  const filteredReadyClusters = sortAndFilterClusters({
+    clusters: db.anonymous_clusters,
+    status: 'READY',
+    searchQuery,
+    cameras: db.cameras,
+    gates: db.gates,
+  });
+  const filteredPendingClusters = sortAndFilterClusters({
+    clusters: db.anonymous_clusters,
+    status: 'PENDING',
+    searchQuery,
+    cameras: db.cameras,
+    gates: db.gates,
+  });
+
+  const pagedReady = paginateItems(filteredReadyClusters, readyPage, pageSize);
+  const pagedPending = paginateItems(filteredPendingClusters, pendingPage, pageSize);
 
   const [queryMap, setQueryMap] = useState<Record<number, string>>({});
   const [suggestionsMap, setSuggestionsMap] = useState<Record<number, AutocompleteItem[]>>({});
@@ -56,6 +95,71 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
 
   const targetHits = Math.max(1, db.settings.cluster_ready_hits ?? 5);
   const targetDays = Math.max(1, db.settings.cluster_ready_days ?? 1);
+
+  const renderPaginationBar = (params: {
+    sectionLabel: string;
+    slice: ReturnType<typeof paginateItems<AnonymousCluster>>;
+    onPageChange: (nextPage: number) => void;
+  }) => {
+    const { sectionLabel, slice, onPageChange } = params;
+    if (slice.totalItems === 0) return null;
+    const tokens = buildPageTokens(slice.page, slice.totalPages);
+
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-white border border-slate-200 rounded-md px-3 py-2 text-xs text-slate-600">
+        <span className="font-mono tabular-nums">
+          Menampilkan <strong>{slice.startIndex}&ndash;{slice.endIndex}</strong> dari{' '}
+          <strong>{slice.totalItems}</strong> cluster {sectionLabel}
+        </span>
+        {slice.totalPages > 1 && (
+          <nav aria-label={`Navigasi halaman ${sectionLabel}`} className="flex flex-wrap items-center gap-1">
+            <button
+              type="button"
+              disabled={slice.page <= 1}
+              onClick={() => onPageChange(Math.max(1, slice.page - 1))}
+              aria-label={`Halaman sebelumnya ${sectionLabel}`}
+              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Sebelumnya</span>
+            </button>
+            {tokens.map((tok, idx) =>
+              tok === 'ellipsis' ? (
+                <span key={`el-${idx}`} className="px-1.5 text-slate-400 select-none">
+                  ...
+                </span>
+              ) : (
+                <button
+                  key={`pg-${tok}`}
+                  type="button"
+                  onClick={() => onPageChange(tok)}
+                  aria-label={`Halaman ${tok} ${sectionLabel}`}
+                  aria-current={tok === slice.page ? 'page' : undefined}
+                  className={`min-w-[28px] px-2 py-1 rounded font-mono tabular-nums border transition-colors ${
+                    tok === slice.page
+                      ? 'bg-slate-900 text-white border-slate-900 font-semibold'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'
+                  }`}
+                >
+                  {tok}
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              disabled={slice.page >= slice.totalPages}
+              onClick={() => onPageChange(Math.min(slice.totalPages, slice.page + 1))}
+              aria-label={`Halaman berikutnya ${sectionLabel}`}
+              className="inline-flex items-center gap-1 px-2 py-1 border border-slate-300 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span>Berikutnya</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </nav>
+        )}
+      </div>
+    );
+  };
 
   const getClusterHits = (c: AnonymousCluster): FaceGalleryItem[] => {
     const rawHits =
@@ -372,12 +476,66 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
             Setiap wajah anonim menyimpan maksimal <strong className="text-slate-900">5 foto train kualitas terbaik</strong> (foto berlebih otomatis dihapus). Klik foto untuk memperbesar &amp; zoom, lalu hapus jika ada foto yang salah orang atau hanya menangkap topi/bagian tidak sesuai.
           </span>
           <span className="font-mono font-semibold text-slate-900 tabular-nums">
-            Siap Dinamai (READY): {readyClusters.length} · Sedang Dilatih (PENDING): {pendingClusters.length}
+            Siap Dinamai (READY): {allReadyClusters.length} · Sedang Dilatih (PENDING): {allPendingClusters.length}
           </span>
         </div>
         <p className="text-slate-500">
           Jika foto salah/topi dihapus saat koreksi, grup otomatis kembali ke status <strong>PENDING</strong> agar kamera dapat melanjutkan training wajah bersih sampai mencapai <strong>&ge; {targetHits} hit</strong>.
         </p>
+        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2.5">
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <label htmlFor="cluster-search-input" className="sr-only">
+              Cari cluster anonim berdasarkan nomor ID, nama kamera, gerbang, atau waktu
+            </label>
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              id="cluster-search-input"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setReadyPage(1);
+                setPendingPage(1);
+              }}
+              placeholder="Cari Cluster #ID, kamera, atau gerbang..."
+              className="w-full border border-slate-300 rounded-md pl-8 pr-3 py-1.5 text-xs text-slate-900"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="cluster-status-filter" className="text-[11px] font-medium text-slate-600">
+              Tampilkan:
+            </label>
+            <select
+              id="cluster-status-filter"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'ALL' | 'READY' | 'PENDING')}
+              className="border border-slate-300 rounded-md px-2.5 py-1.5 text-xs bg-white text-slate-800"
+            >
+              <option value="ALL">Semua ({allReadyClusters.length + allPendingClusters.length})</option>
+              <option value="READY">READY ({allReadyClusters.length})</option>
+              <option value="PENDING">PENDING ({allPendingClusters.length})</option>
+            </select>
+            <label htmlFor="cluster-page-size" className="text-[11px] font-medium text-slate-600 ml-1">
+              Per halaman:
+            </label>
+            <select
+              id="cluster-page-size"
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setReadyPage(1);
+                setPendingPage(1);
+              }}
+              className="border border-slate-300 rounded-md px-2.5 py-1.5 text-xs bg-white text-slate-800 font-mono"
+            >
+              {CLUSTER_PAGE_SIZE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
         {workerStatus && (
           <div className="pt-1.5 mt-1 border-t border-slate-100 flex flex-wrap items-center gap-3 text-[11px] font-mono text-slate-600">
             <span>
@@ -397,99 +555,130 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
       </div>
 
       {/* Section 1: READY clusters */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-slate-900">
-          Cluster Siap Dinamai — READY ({readyClusters.length})
-        </h2>
+      {(statusFilter === 'ALL' || statusFilter === 'READY') && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-slate-900">
+            Cluster Siap Dinamai — READY ({filteredReadyClusters.length}
+            {searchQuery.trim() ? ` dari ${allReadyClusters.length}` : ''})
+          </h2>
 
-        {readyClusters.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-lg p-6 text-center">
-            <p className="text-sm font-medium text-slate-700">Belum ada cluster wajah anonim berstatus READY.</p>
-            <p className="text-xs text-slate-500 mt-1">
-              Wajah anonim promosi ke READY setelah &ge; {targetHits} hit match &amp; &ge; {targetDays} hari berbeda. Deteksi sementara tampil di bagian <strong>Sedang Dilatih Live (PENDING)</strong> di bawah.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {readyClusters.map((c) => {
-              const cam = db.cameras.find((cm) => cm.id === c.last_camera_id);
-              const gate = db.gates.find((g) => g.id === cam?.gate_id);
-              return (
-                <article key={c.id} className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
-                  <div className="flex items-start gap-4">
-                    <button
-                      type="button"
-                      onClick={() => openClusterLightbox(c, 0)}
-                      aria-label={`Perbesar foto Cluster #${c.id}`}
-                      className="group relative shrink-0 rounded-md overflow-hidden border border-slate-200 hover:border-blue-500"
-                    >
-                      <img
-                        src={c.best_snapshot_path}
-                        alt={`Cluster anonim ${c.id}`}
-                        referrerPolicy="no-referrer"
-                        className="w-28 h-28 object-cover bg-slate-100"
-                      />
-                      <span className="absolute inset-x-0 bottom-0 bg-slate-900/75 text-white text-[10px] font-medium py-0.5 flex items-center justify-center gap-1">
-                        <ZoomIn className="w-3 h-3" /> Perbesar
-                      </span>
-                    </button>
-                    <div className="text-xs space-y-1 flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold text-slate-900">Cluster #{c.id} (READY)</h3>
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono tabular-nums text-emerald-700 font-semibold">
-                            Skor {c.best_quality_score.toFixed(3)}
+          {renderPaginationBar({
+            sectionLabel: 'READY',
+            slice: pagedReady,
+            onPageChange: setReadyPage,
+          })}
+
+          {filteredReadyClusters.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-lg p-6 text-center">
+              <p className="text-sm font-medium text-slate-700">
+                {searchQuery.trim()
+                  ? 'Tidak ada cluster READY yang cocok dengan pencarian.'
+                  : 'Belum ada cluster wajah anonim berstatus READY.'}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                Wajah anonim promosi ke READY setelah &ge; {targetHits} hit match &amp; &ge; {targetDays} hari berbeda. Deteksi sementara tampil di bagian <strong>Sedang Dilatih Live (PENDING)</strong> di bawah.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {pagedReady.items.map((c) => {
+                  const cam = db.cameras.find((cm) => cm.id === c.last_camera_id);
+                  const gate = db.gates.find((g) => g.id === cam?.gate_id);
+                  return (
+                    <article key={c.id} className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+                      <div className="flex items-start gap-4">
+                        <button
+                          type="button"
+                          onClick={() => openClusterLightbox(c, 0)}
+                          aria-label={`Perbesar foto Cluster #${c.id}`}
+                          className="group relative shrink-0 rounded-md overflow-hidden border border-slate-200 hover:border-blue-500"
+                        >
+                          <img
+                            src={c.best_snapshot_path}
+                            alt={`Cluster anonim ${c.id}`}
+                            referrerPolicy="no-referrer"
+                            className="w-28 h-28 object-cover bg-slate-100"
+                          />
+                          <span className="absolute inset-x-0 bottom-0 bg-slate-900/75 text-white text-[10px] font-medium py-0.5 flex items-center justify-center gap-1">
+                            <ZoomIn className="w-3 h-3" /> Perbesar
                           </span>
-                          {onDeleteCluster && (
-                            <button
-                              type="button"
-                              onClick={() => onDeleteCluster(c.id)}
-                              aria-label={`Hapus Cluster #${c.id}`}
-                              title="Hapus / abaikan cluster ini"
-                              className="p-1 text-slate-400 hover:text-red-600 rounded"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
+                        </button>
+                        <div className="text-xs space-y-1 flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <h3 className="text-sm font-semibold text-slate-900">Cluster #{c.id} (READY)</h3>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono tabular-nums text-emerald-700 font-semibold">
+                                Skor {c.best_quality_score.toFixed(3)}
+                              </span>
+                              {onDeleteCluster && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteCluster(c.id)}
+                                  aria-label={`Hapus Cluster #${c.id}`}
+                                  title="Hapus / abaikan cluster ini"
+                                  className="p-1 text-slate-400 hover:text-red-600 rounded"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          <div className="text-slate-600 font-mono tabular-nums">
+                            Hit: <strong>{c.hit_count}x</strong> · Hari Berbeda: <strong>{c.distinct_days}</strong>
+                          </div>
+                          <div className="text-slate-500 font-mono">First Seen: {c.first_seen}</div>
+                          <div className="text-slate-500 font-mono">Last Seen: {c.last_seen}</div>
+                          <div className="text-slate-600 truncate">
+                            Lokasi: {cam?.nama_kamera ?? '-'} ({gate?.nama_gerbang ?? '-'})
+                          </div>
                         </div>
                       </div>
-                      <div className="text-slate-600 font-mono tabular-nums">
-                        Hit: <strong>{c.hit_count}x</strong> · Hari Berbeda: <strong>{c.distinct_days}</strong>
-                      </div>
-                      <div className="text-slate-500 font-mono">First Seen: {c.first_seen}</div>
-                      <div className="text-slate-500 font-mono">Last Seen: {c.last_seen}</div>
-                      <div className="text-slate-600 truncate">
-                        Lokasi: {cam?.nama_kamera ?? '-'} ({gate?.nama_gerbang ?? '-'})
-                      </div>
-                    </div>
-                  </div>
-                  {renderHitsGallery(c)}
-                  {renderActionControls(c)}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                      {renderHitsGallery(c)}
+                      {renderActionControls(c)}
+                    </article>
+                  );
+                })}
+              </div>
+              {pagedReady.totalPages > 1 &&
+                renderPaginationBar({
+                  sectionLabel: 'READY',
+                  slice: pagedReady,
+                  onPageChange: setReadyPage,
+                })}
+            </>
+          )}
+        </section>
+      )}
 
       {/* Section 2: PENDING live training clusters */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Sedang Dilatih Live — PENDING ({pendingClusters.length})
-          </h2>
-          <span className="text-xs text-slate-500">
-            Wajah baru yang tertangkap RTSP terus dilatih di sini hingga siap dinamai.
-          </span>
-        </div>
-
-        {pendingClusters.length === 0 ? (
-          <div className="bg-white border border-slate-200 rounded-lg p-5 text-xs text-slate-500 text-center">
-            Belum ada deteksi wajah anonim berstatus PENDING.
+      {(statusFilter === 'ALL' || statusFilter === 'PENDING') && (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Sedang Dilatih Live — PENDING ({filteredPendingClusters.length}
+              {searchQuery.trim() ? ` dari ${allPendingClusters.length}` : ''})
+            </h2>
+            <span className="text-xs text-slate-500">
+              Wajah baru yang tertangkap RTSP terus dilatih di sini hingga siap dinamai.
+            </span>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {pendingClusters.map((c) => {
+
+          {renderPaginationBar({
+            sectionLabel: 'PENDING',
+            slice: pagedPending,
+            onPageChange: setPendingPage,
+          })}
+
+          {filteredPendingClusters.length === 0 ? (
+            <div className="bg-white border border-slate-200 rounded-lg p-5 text-xs text-slate-500 text-center">
+              {searchQuery.trim()
+                ? 'Tidak ada cluster PENDING yang cocok dengan pencarian.'
+                : 'Belum ada deteksi wajah anonim berstatus PENDING.'}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {pagedPending.items.map((c) => {
               const cam = db.cameras.find((cm) => cm.id === c.last_camera_id);
               const gate = db.gates.find((g) => g.id === cam?.gate_id);
               const pct = Math.min(100, Math.round((c.hit_count / targetHits) * 100));
@@ -572,9 +761,16 @@ export const ClustersView: React.FC<ClustersViewProps> = ({
                 </article>
               );
             })}
-          </div>
-        )}
-      </section>
+            </div>
+          )}
+          {pagedPending.totalPages > 1 &&
+            renderPaginationBar({
+              sectionLabel: 'PENDING',
+              slice: pagedPending,
+              onPageChange: setPendingPage,
+            })}
+        </section>
+      )}
 
       {(() => {
         const activeCluster = lightboxTarget

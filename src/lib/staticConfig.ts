@@ -320,4 +320,63 @@ export function computeFrameMotionDeltaRatio(prevSample: Uint8Array | null, curS
   return diffSum / (curSample.length * 255);
 }
 
+export function shouldScanMotionFrame(
+  prevSample: Uint8Array | null,
+  curSample: Uint8Array,
+  elapsedSinceLastScanMs: number,
+  options?: {
+    meanDeltaMin?: number;
+    pixelDeltaThreshold?: number;
+    changedCellRatioMin?: number;
+    heartbeatIntervalMs?: number;
+  }
+): boolean {
+  if (!prevSample || prevSample.length === 0 || prevSample.length !== curSample.length) {
+    return true;
+  }
+  const heartbeatMs = options?.heartbeatIntervalMs ?? 1500;
+  if (elapsedSinceLastScanMs >= heartbeatMs) {
+    return true;
+  }
+  const meanDeltaMin = options?.meanDeltaMin ?? 0.006;
+  const pxThresh = options?.pixelDeltaThreshold ?? 18;
+  const cellRatioMin = options?.changedCellRatioMin ?? 0.03;
+
+  let diffSum = 0;
+  let changedCells = 0;
+  for (let i = 0; i < curSample.length; i++) {
+    const d = Math.abs(curSample[i] - prevSample[i]);
+    diffSum += d;
+    if (d >= pxThresh) changedCells += 1;
+  }
+  const meanDelta = diffSum / (curSample.length * 255);
+  const changedRatio = changedCells / curSample.length;
+  return meanDelta >= meanDeltaMin || changedRatio >= cellRatioMin;
+}
+
+export function parseSemverTuple(raw: string | null | undefined): [number, number, number] | null {
+  const clean = String(raw ?? '').trim().replace(/^v/i, '');
+  const m = clean.match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/);
+  if (!m) return null;
+  return [Number(m[1]), Number(m[2]), Number(m[3])];
+}
+
+export function compareSemver(a: string | null | undefined, b: string | null | undefined): number {
+  const ta = parseSemverTuple(a);
+  const tb = parseSemverTuple(b);
+  if (!ta && !tb) return 0;
+  if (!ta) return -1;
+  if (!tb) return 1;
+  for (let i = 0; i < 3; i++) {
+    if (ta[i] !== tb[i]) return ta[i] > tb[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+export function isNewerVersionAvailable(localVersion: string | null | undefined, remoteVersion: string | null | undefined): boolean {
+  const localTuple = parseSemverTuple(localVersion);
+  const remoteTuple = parseSemverTuple(remoteVersion);
+  if (!localTuple || !remoteTuple) return false;
+  return compareSemver(remoteVersion, localVersion) > 0;
+}
 

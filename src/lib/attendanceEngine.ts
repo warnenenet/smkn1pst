@@ -107,7 +107,7 @@ export function evaluateAttendanceRecognition(params: {
   logStatus: 'HADIR' | 'TERLAMBAT';
   updateDaily: Partial<DailyAttendance> | null;
 } {
-  const { student, gateType, timeNow, schedule, existingDaily, recentLogs, nowEpochMs } = params;
+  const { student, gateType, timeNow, dateStr, schedule, existingDaily, recentLogs, nowEpochMs } = params;
 
   let logType: 'MASUK' | 'KELUAR' | 'OBSERVASI' = 'OBSERVASI';
   let logStatus: 'HADIR' | 'TERLAMBAT' = 'HADIR';
@@ -126,12 +126,24 @@ export function evaluateAttendanceRecognition(params: {
     }
   }
 
-  // Deduplikasi lintas kamera window 30 detik untuk (student_id, logType)
-  const isDup = recentLogs.some((l) => {
-    if (l.student_id !== student.id || l.tipe !== logType) return false;
-    const logMs = Date.parse(l.timestamp);
-    return !Number.isNaN(logMs) && Math.abs(nowEpochMs - logMs) < 30_000;
-  });
+  // Deduplikasi wajib:
+  // - Untuk MASUK & KELUAR: ketat 1x per (student_id, tipe, tanggal) agar cooldown 6s tidak menyisipkan log ganda di hari yang sama.
+  // - Untuk OBSERVASI: deduplikasi lintas kamera window 30 detik.
+  const isDupSameDayDaily =
+    (logType === 'MASUK' && Boolean(existingDaily?.jam_masuk) && existingDaily?.tanggal === dateStr) ||
+    (logType === 'KELUAR' && Boolean(existingDaily?.jam_keluar) && existingDaily?.tanggal === dateStr);
+
+  const isDup =
+    isDupSameDayDaily ||
+    recentLogs.some((l) => {
+      if (l.student_id !== student.id || l.tipe !== logType) return false;
+      if (logType === 'MASUK' || logType === 'KELUAR') {
+        const logDate = String(l.timestamp || '').slice(0, 10);
+        if (logDate === dateStr) return true;
+      }
+      const logMs = Date.parse(l.timestamp);
+      return !Number.isNaN(logMs) && Math.abs(nowEpochMs - logMs) < 30_000;
+    });
 
   if (isDup) {
     return { deduplicated: true, logType, logStatus, updateDaily: null };
@@ -1096,6 +1108,14 @@ export function normalizeMinFaceSize(rawValue: unknown): number {
   return Math.min(4096, Math.max(16, Math.round(num)));
 }
 
+export function normalizeMaxFaceSize(rawValue: unknown, minFaceSize = 0): number {
+  const num = Number(rawValue);
+  if (!Number.isFinite(num) || num <= 0) return 0; // 0 = Tanpa batas atas
+  const clamped = Math.min(4096, Math.max(16, Math.round(num)));
+  const minFloor = minFaceSize > 0 ? normalizeMinFaceSize(minFaceSize) : 16;
+  return Math.max(minFloor, clamped);
+}
+
 export function parseResolutionDimensions(resolusi: string | null | undefined): { width: number; height: number } {
   const match = String(resolusi || '').match(/(\d{3,4})\s*[xX×]\s*(\d{3,4})/);
   if (!match) return { width: 1920, height: 1080 };
@@ -1132,17 +1152,22 @@ export function computeCalibratedMinFacePx(params: {
   cameraResolution: string | null | undefined;
   globalMinFaceSize: number;
   cameraMinFaceSize?: number | null;
+  globalMaxFaceSize?: number | null;
+  cameraMaxFaceSize?: number | null;
   globalCaptureMaxWidth: number;
   cameraCaptureMaxWidth?: number | null;
 }): {
   targetCameraPx: number;
+  targetCameraMaxPx: number;
   cameraWidth: number;
   cameraHeight: number;
   effectiveFrameWidth: number;
   effectiveFrameHeight: number;
   scaleRatio: number;
   effectiveMinFacePx: number;
+  effectiveMaxFacePx: number;
   widthPercent: number;
+  maxWidthPercent: number;
 } {
   const { width: cameraWidth, height: cameraHeight } = parseResolutionDimensions(params.cameraResolution);
   const targetCameraPx = normalizeMinFaceSize(
@@ -1150,6 +1175,11 @@ export function computeCalibratedMinFacePx(params: {
       ? params.cameraMinFaceSize
       : params.globalMinFaceSize
   );
+  const rawMaxInput =
+    params.cameraMaxFaceSize !== null && params.cameraMaxFaceSize !== undefined
+      ? params.cameraMaxFaceSize
+      : params.globalMaxFaceSize ?? 0;
+  const targetCameraMaxPx = normalizeMaxFaceSize(rawMaxInput, targetCameraPx);
   const effectiveFrameWidth = resolveCameraCaptureWidth(
     params.cameraResolution,
     params.globalCaptureMaxWidth,
@@ -1158,17 +1188,24 @@ export function computeCalibratedMinFacePx(params: {
   const scaleRatio = cameraWidth > 0 ? Math.min(1, effectiveFrameWidth / cameraWidth) : 1;
   const effectiveFrameHeight = Math.max(2, Math.round(cameraHeight * scaleRatio));
   const effectiveMinFacePx = Math.max(16, Math.round(targetCameraPx * scaleRatio));
+  const effectiveMaxFacePx =
+    targetCameraMaxPx > 0 ? Math.max(effectiveMinFacePx, Math.round(targetCameraMaxPx * scaleRatio)) : 0;
   const widthPercent = Math.round((targetCameraPx / Math.max(1, cameraWidth)) * 1000) / 10;
+  const maxWidthPercent =
+    targetCameraMaxPx > 0 ? Math.round((targetCameraMaxPx / Math.max(1, cameraWidth)) * 1000) / 10 : 0;
 
   return {
     targetCameraPx,
+    targetCameraMaxPx,
     cameraWidth,
     cameraHeight,
     effectiveFrameWidth,
     effectiveFrameHeight,
     scaleRatio,
     effectiveMinFacePx,
+    effectiveMaxFacePx,
     widthPercent,
+    maxWidthPercent,
   };
 }
 
@@ -1203,6 +1240,44 @@ export function passesSnapshotQualityThreshold(
     passed: score >= threshold,
     threshold,
     score,
+  };
+}
+
+export function normalizeWaProvider(raw: string | null | undefined): 'WA_WEB' | 'META_CLOUD' | 'FONNTE' | 'WABLAS' {
+  const upper = String(raw || '').trim().toUpperCase();
+  if (upper === 'META_CLOUD' || upper === 'FONNTE' || upper === 'WABLAS') {
+    return upper;
+  }
+  return 'WA_WEB';
+}
+
+export function selectNextWaAccountRoundRobin<
+  T extends Pick<WaAccount, 'id' | 'status' | 'daily_count' | 'hourly_count' | 'qr_connected'>
+>(
+  accounts: T[],
+  lastUsedAccountId: number | null,
+  requireQrConnected = true
+): { selected: T | null; orderedCandidates: T[]; nextCursorId: number | null } {
+  const eligible = accounts
+    .filter((a) => (!requireQrConnected || Boolean(a.qr_connected)) && checkWaAccountQuota(a))
+    .sort((a, b) => a.id - b.id);
+
+  if (eligible.length === 0) {
+    return { selected: null, orderedCandidates: [], nextCursorId: lastUsedAccountId };
+  }
+
+  let startIdx = 0;
+  if (lastUsedAccountId !== null) {
+    const nextIdx = eligible.findIndex((a) => a.id > lastUsedAccountId);
+    startIdx = nextIdx >= 0 ? nextIdx : 0;
+  }
+
+  const orderedCandidates = [...eligible.slice(startIdx), ...eligible.slice(0, startIdx)];
+  const selected = orderedCandidates[0];
+  return {
+    selected,
+    orderedCandidates,
+    nextCursorId: selected.id,
   };
 }
 

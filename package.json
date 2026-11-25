@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -13,19 +13,19 @@
     "update": "bash scripts/auto-update.sh",
     "update:check": "bash scripts/auto-update.sh --dry-run",
     "update:cron": "bash scripts/auto-update.sh --install-cron",
+    "release:patch": "bash scripts/release.sh patch",
+    "release:minor": "bash scripts/release.sh minor",
+    "release:major": "bash scripts/release.sh major",
     "setup:school": "bash scripts/setup-school.sh"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
-    "@tensorflow/tfjs": "^4.22.0",
-    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
     "@types/jpeg-js": "^0.3.0",
     "@types/qrcode": "^1.5.6",
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^6.1.1",
-    "@vladmandic/human": "^3.3.6",
     "@whiskeysockets/baileys": "^7.0.0-rc14",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",

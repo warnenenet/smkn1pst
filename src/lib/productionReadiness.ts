@@ -65,7 +65,7 @@ export function evaluateProductionReadiness(params: {
   const schedulesReady = db.schedules.length > 0;
 
   const connectedWa = db.wa_accounts.filter(
-    (a) => (a.qr_connected || a.provider !== 'BAILEYS') && a.status !== 'BANNED'
+    (a) => (a.qr_connected || a.provider !== 'WA_WEB') && a.status !== 'BANNED'
   );
   const waAndKioskReady = connectedWa.length > 0;
 
@@ -123,7 +123,7 @@ export function evaluateProductionReadiness(params: {
       id: 'wa_kiosk',
       number: 5,
       title: 'WhatsApp Gateway & Kiosk Panggil Gerbang',
-      description: 'Hubungkan akun WhatsApp sekolah (QR Baileys / API) dan cek layar Kiosk gerbang.',
+      description: 'Hubungkan akun WhatsApp sekolah (QR Chromium / API) dan cek layar Kiosk gerbang.',
       done: waAndKioskReady,
       summary: waAndKioskReady
         ? `${connectedWa.length} akun WhatsApp terhubung`

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, CheckCheck, ExternalLink, HardDrive, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCheck, ExternalLink, HardDrive, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { describeCaptureResolutionMode, getJakartaNowParts, summarizeEmbeddingDimensions } from '../lib/attendanceEngine';
 import type { AppDatabase, WorkerStatusResponse } from '../types';
 
@@ -69,7 +69,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const isProd = Boolean(db.settings.production_mode);
   const totalFacesLive = workerStatus?.cameras.reduce((acc, c) => acc + c.faces_detected_total, 0) ?? 0;
-  const expectedDims = workerStatus?.expected_embedding_dims ?? 1024;
+  const expectedDims = workerStatus?.expected_embedding_dims ?? 512;
   const dimSummary = summarizeEmbeddingDimensions(
     db.students.filter((s) => s.status !== 'LULUS'),
     db.anonymous_clusters.filter((c) => c.status === 'PENDING' || c.status === 'READY')
@@ -172,6 +172,54 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
       )}
 
+      {workerStatus && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
+        <section
+          role="alert"
+          className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 text-xs text-amber-950">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                Engine AI Wajah Docker (InsightFace buffalo_l 512-D) belum aktif
+              </div>
+              <p className="text-amber-900 mt-0.5">
+                Deteksi RTSP, pendaftaran foto, dan pencocokan wajah membutuhkan container{' '}
+                <span className="font-mono font-semibold">docker-compose.face.yml</span>. Jalankan{' '}
+                <span className="font-mono font-semibold">npm run setup:school</span> di server agar container aktif otomatis.
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {(workerStatus?.detection_stats ?? []).filter((ds) => ds.bad_quality_alert).map((ds) => (
+        <section
+          key={`alert-${ds.camera_id}`}
+          role="alert"
+          className="bg-red-50 border border-red-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 text-xs text-red-900">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                Kualitas gambar kamera {ds.camera_name ?? `Kamera #${ds.camera_id}`} buruk — cek fokus/pencahayaan.
+              </div>
+              <p className="text-red-800 mt-0.5 font-mono tabular-nums">
+                Rasio ditolak 5 menit terakhir: {(ds.drop_ratio * 100).toFixed(1)}% ({ds.total_raw - ds.passed_embedding}/{ds.total_raw} deteksi ditolak sebelum embedding).
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('settings')}
+            className="px-3 py-1.5 text-xs font-semibold text-red-800 bg-white border border-red-300 hover:bg-red-100 rounded-md whitespace-nowrap"
+          >
+            Periksa Threshold AI
+          </button>
+        </section>
+      ))}
+
       {/* KPI Summary Grid */}
       <section aria-label="Ringkasan Kehadiran Hari Ini">
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -204,7 +252,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Engine: <strong className="text-slate-900">{workerStatus?.engine ?? 'MEMUAT...'}</strong> ({expectedDims}-D)
             </span>
             <span className="text-slate-600">
-              Capture: <strong className="text-slate-900">{describeCaptureResolutionMode(workerStatus?.capture_max_width ?? db.settings.capture_max_width ?? 1280)}</strong> · Min Wajah: <strong className="text-slate-900 tabular-nums">{db.settings.min_face_size} px</strong>
+              Capture: <strong className="text-slate-900">{describeCaptureResolutionMode(workerStatus?.capture_max_width ?? db.settings.capture_max_width ?? 1280)}</strong> · Min–Max Wajah:{' '}
+              <strong className="text-slate-900 tabular-nums">
+                {db.settings.min_face_size}
+                {(db.settings.max_face_size ?? 0) > 0 ? `–${db.settings.max_face_size}` : '+'} px
+              </strong>
             </span>
             <span className="text-slate-600">
               Indeks RAM: <strong className="text-slate-900 tabular-nums">{workerStatus?.indexed_students ?? 0}</strong> vektor
@@ -215,13 +267,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span className="text-slate-600">
               Model AI:{' '}
               <strong className={workerStatus?.model_loaded ? 'text-emerald-700' : 'text-amber-700'}>
-                {workerStatus?.model_loaded ? 'SIAP' : 'INISIALISASI'}
+                {workerStatus?.model_loaded ? 'SIAP' : workerStatus?.engine === 'IDLE' ? 'OFFLINE (DOCKER)' : 'INISIALISASI'}
               </strong>
             </span>
             <span className="text-slate-600">
               Wajah Terdeteksi: <strong className="text-slate-900 tabular-nums">{totalFacesLive}</strong>
             </span>
           </div>
+        </div>
+
+        <div className="text-[11px] text-slate-500">
+          Kebijakan Deteksi: <strong>Kacamata</strong> didukung otomatis (threshold 0.70); <strong>masker penutup hidung/mulut</strong> ditolak di gerbang (<span className="font-mono">DROP:landmark</span>).
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100 text-xs">
@@ -244,9 +300,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="rounded-md bg-slate-50 border border-slate-200/80 px-3 py-2">
-            <div className="text-[11px] text-slate-500">Auto-Update GitHub</div>
+            <div className="text-[11px] text-slate-500">
+              Auto-Update GitHub ({workerStatus?.app_version ? `v${workerStatus.app_version}` : 'v1.0.0'})
+            </div>
             <div className={`font-semibold mt-0.5 ${workerStatus?.automation?.auto_update_enabled ? 'text-emerald-700' : 'text-slate-600'}`}>
-              {workerStatus?.automation?.auto_update_enabled ? 'Aktif (Per 1 Jam)' : 'Opsional (Env Off)'}
+              {workerStatus?.automation?.auto_update_enabled ? 'Aktif (Cek Versi / 1 Jam)' : 'Manual (Cron / CLI)'}
             </div>
           </div>
         </div>
@@ -305,6 +363,54 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <p className="text-xs text-slate-500">
             Belum ada kamera RTSP aktif. Tambahkan URL kamera <span className="font-mono">rtsp://...</span> di menu Gerbang &amp; Kamera agar worker AI memproses video secara real-time.
           </p>
+        )}
+
+        {(workerStatus?.detection_stats?.length ?? 0) > 0 && (
+          <div className="pt-3 border-t border-slate-100 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <h3 className="font-semibold text-slate-800">Statistik Quality Gate Pre-Embedding (Per 5 Menit)</h3>
+              <span className="text-[11px] text-slate-500">
+                Blur Min: <strong className="font-mono">{db.settings.blur_threshold ?? 100}</strong> · Yaw/Pitch:{' '}
+                <strong className="font-mono">{db.settings.max_yaw_deg ?? 30}°/{db.settings.max_pitch_deg ?? 25}°</strong>
+              </span>
+            </div>
+            <div tabIndex={0} role="region" aria-label="Statistik Quality Gate per Kamera" className="table-wrapper">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 text-slate-500">
+                    <th className="py-1.5 pr-3 font-medium">Kamera</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Raw</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Lolos Emb</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Conf</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Landmark</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Size</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Blur</th>
+                    <th className="py-1.5 px-2 font-medium text-right">Pose</th>
+                    <th className="py-1.5 pl-2 font-medium text-right">Drop %</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-mono tabular-nums">
+                  {(workerStatus?.detection_stats ?? []).map((ds) => (
+                    <tr key={`ds-${ds.camera_id}`}>
+                      <td className="py-1.5 pr-3 font-sans font-medium text-slate-800">
+                        {ds.camera_name ?? `Kamera #${ds.camera_id}`}
+                      </td>
+                      <td className="py-1.5 px-2 text-right">{ds.total_raw}</td>
+                      <td className="py-1.5 px-2 text-right text-emerald-700 font-semibold">{ds.passed_embedding}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{ds.dropped_confidence}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{ds.dropped_landmark}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{ds.dropped_size}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{ds.dropped_blur}</td>
+                      <td className="py-1.5 px-2 text-right text-slate-600">{ds.dropped_pose}</td>
+                      <td className={`py-1.5 pl-2 text-right font-semibold ${ds.bad_quality_alert ? 'text-red-700' : 'text-slate-700'}`}>
+                        {(ds.drop_ratio * 100).toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </section>
 
@@ -409,7 +515,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   return (
                     <tr key={acc.id}>
                       <td className="py-2.5 font-mono tabular-nums text-slate-900">{acc.phone_number}</td>
-                      <td className="py-2.5 text-slate-600">{acc.provider}</td>
+                      <td className="py-2.5 text-slate-600">{acc.provider === 'WA_WEB' ? 'WA Web Chromium' : acc.provider}</td>
                       <td className="py-2.5 font-medium">
                         <span className={acc.status === 'ACTIVE' ? 'text-emerald-700' : acc.status === 'WARMUP' ? 'text-amber-700' : 'text-red-700'}>
                           {acc.status}

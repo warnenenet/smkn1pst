@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, RefreshCw, QrCode } from 'lucide-react';
-import type { AppDatabase, SettingsMap, WaProvider } from '../types';
+import { Download, Pause, Play, QrCode, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
+import type { AppDatabase, SettingsMap, WaAccountStatus, WaProvider } from '../types';
 import { shouldSyncFormFromServer } from '../lib/uiRefreshGuard';
+import { checkWaAccountQuota } from '../lib/attendanceEngine';
 
 interface WhatsAppViewProps {
   db: AppDatabase;
   onSaveSettings: (patch: Partial<SettingsMap>) => Promise<void>;
-  onAddAccount: (phone: string) => Promise<void>;
+  onAddAccount: (phoneOrLabel: string) => Promise<void>;
   onConnectAccount: (id: number) => Promise<void>;
+  onReconnectAccount: (id: number) => Promise<void>;
+  onUpdateAccountStatus: (id: number, status: WaAccountStatus) => Promise<void>;
+  onDeleteAccount: (id: number) => Promise<void>;
   onTestSend: (phone: string, message: string) => Promise<string>;
   onUpdateTemplate: (id: number, text: string) => Promise<void>;
   onRetryQueue: (id: number) => Promise<void>;
@@ -19,6 +23,9 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
   onSaveSettings,
   onAddAccount,
   onConnectAccount,
+  onReconnectAccount,
+  onUpdateAccountStatus,
+  onDeleteAccount,
   onTestSend,
   onUpdateTemplate,
   onRetryQueue,
@@ -67,6 +74,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
   useEffect(() => {
     if (qrModalId === null) return;
     let active = true;
+    setQrState({ qrDataUrl: null, status: 'CONNECTING', error: null });
     fetch(`/api/wa/accounts/${qrModalId}/pair`, { method: 'POST' })
       .then((r) => r.json())
       .then((d) => {
@@ -74,6 +82,7 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
       })
       .catch(() => {});
 
+    // Polling QR tiap 3 detik sesuai siklus refresh QR WhatsApp Web
     const iv = window.setInterval(async () => {
       try {
         const res = await fetch(`/api/wa/accounts/${qrModalId}/qr`);
@@ -88,13 +97,15 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
       } catch {
         // ignore poll error
       }
-    }, 2000);
+    }, 3000);
 
     return () => {
       active = false;
       window.clearInterval(iv);
     };
   }, [qrModalId]);
+
+  const roundRobinReadyCount = db.wa_accounts.filter((a) => a.qr_connected && checkWaAccountQuota(a)).length;
 
   return (
     <div className="space-y-6">
@@ -125,18 +136,42 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
           >
             <div>
               <label htmlFor="wa-prov" className="block text-xs text-slate-600 mb-1">Provider Aktif</label>
-              <select id="wa-prov" value={provider} onChange={(e) => { setDirtyWa(true); setProvider(e.target.value as WaProvider); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs bg-white">
-                <option value="BAILEYS">Baileys (Gratis Nomor Pribadi + Anti-Blokir)</option>
+              <select
+                id="wa-prov"
+                value={provider}
+                onChange={(e) => {
+                  setDirtyWa(true);
+                  setProvider(e.target.value as WaProvider);
+                }}
+                className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs bg-white"
+              >
+                <option value="WA_WEB">WhatsApp Web Chromium (Anti-Deteksi + Round-Robin Multi-Nomor)</option>
                 <option value="META_CLOUD">Meta WhatsApp Cloud API (1000 conv gratis/bln)</option>
                 <option value="FONNTE">Fonnte (Provider Lokal)</option>
                 <option value="WABLAS">WABLAS (Provider Lokal)</option>
               </select>
             </div>
-            {provider !== 'BAILEYS' && (
+            {provider !== 'WA_WEB' && (
               <>
-                <input placeholder="API Key Provider" value={apiKey} onChange={(e) => { setDirtyWa(true); setApiKey(e.target.value); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
+                <input
+                  placeholder="API Key Provider"
+                  value={apiKey}
+                  onChange={(e) => {
+                    setDirtyWa(true);
+                    setApiKey(e.target.value);
+                  }}
+                  className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono"
+                />
                 {provider === 'META_CLOUD' && (
-                  <input placeholder="Meta Phone Number ID" value={phoneNumId} onChange={(e) => { setDirtyWa(true); setPhoneNumId(e.target.value); }} className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono" />
+                  <input
+                    placeholder="Meta Phone Number ID"
+                    value={phoneNumId}
+                    onChange={(e) => {
+                      setDirtyWa(true);
+                      setPhoneNumId(e.target.value);
+                    }}
+                    className="w-full border border-slate-300 rounded px-2.5 py-2 text-xs font-mono"
+                  />
                 )}
               </>
             )}
@@ -152,7 +187,10 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                   min={0}
                   max={240}
                   value={delayAfterPulang}
-                  onChange={(e) => { setDirtyWa(true); setDelayAfterPulang(Math.max(0, Number(e.target.value))); }}
+                  onChange={(e) => {
+                    setDirtyWa(true);
+                    setDelayAfterPulang(Math.max(0, Number(e.target.value)));
+                  }}
                   className="w-full border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono"
                 />
               </div>
@@ -160,7 +198,10 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                 <input
                   type="checkbox"
                   checked={autoDispatchEnabled}
-                  onChange={(e) => { setDirtyWa(true); setAutoDispatchEnabled(e.target.checked); }}
+                  onChange={(e) => {
+                    setDirtyWa(true);
+                    setAutoDispatchEnabled(e.target.checked);
+                  }}
                 />
                 <span>Aktifkan rekap WA otomatis pasca-pulang</span>
               </label>
@@ -203,73 +244,156 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
             }}
             className="flex flex-col sm:flex-row gap-2"
           >
-            <input placeholder="628xxx" value={testPhone} onChange={(e) => setTestPhone(e.target.value)} required className="border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono sm:w-40" />
-            <input placeholder="Pesan tes..." value={testMsg} onChange={(e) => setTestMsg(e.target.value)} required className="border border-slate-300 rounded px-2.5 py-1.5 text-xs flex-1" />
-            <button type="submit" className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded whitespace-nowrap">Kirim Tes</button>
+            <input
+              placeholder="628xxx"
+              value={testPhone}
+              onChange={(e) => setTestPhone(e.target.value)}
+              required
+              className="border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono sm:w-40"
+            />
+            <input
+              placeholder="Pesan tes..."
+              value={testMsg}
+              onChange={(e) => setTestMsg(e.target.value)}
+              required
+              className="border border-slate-300 rounded px-2.5 py-1.5 text-xs flex-1"
+            />
+            <button type="submit" className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded whitespace-nowrap">
+              Kirim Tes
+            </button>
           </form>
           {testPreview && <p className="text-xs text-slate-600 bg-slate-50 p-2.5 rounded border border-slate-200">{testPreview}</p>}
         </section>
 
         <section className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
-          <h2 className="text-sm font-semibold text-slate-900">Multi-Nomor Baileys &amp; Strategi Anti-Blokir</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">Multi-Nomor WhatsApp Web (Round-Robin)</h2>
+            <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-blue-50 text-blue-800 border border-blue-200">
+              {roundRobinReadyCount} sesi siap rotasi
+            </span>
+          </div>
           <p className="text-xs text-slate-500">
-            Delay acak 60–120 detik · Maks 150/jam &amp; 800/hari · Nomor baru otomatis mode WARMUP (20/hari selama 7 hari) · Jeda 24 jam nomor tujuan sama.
+            Setiap nomor memakai profil Chromium terisolasi dan diputar otomatis (Round-Robin) saat mengirim antrean. Delay 60–120 dtk · Maks 150/jam &amp; 800/hari · Jeda 24 jam nomor tujuan sama.
           </p>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
-              if (!newPhone) return;
-              await onAddAccount(newPhone);
+              if (!newPhone.trim()) return;
+              await onAddAccount(newPhone.trim());
               setNewPhone('');
             }}
             className="flex gap-2"
           >
-            <input placeholder="Tambah Nomor Pengirim (628xxx)" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} required className="border border-slate-300 rounded px-2.5 py-1.5 text-xs font-mono flex-1" />
-            <button type="submit" className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded">Tambah Nomor</button>
+            <input
+              placeholder="Nama/Nomor Pengirim (mis. WA Sekolah 1 / 628xxx)"
+              value={newPhone}
+              onChange={(e) => setNewPhone(e.target.value)}
+              required
+              className="border border-slate-300 rounded px-2.5 py-1.5 text-xs flex-1"
+            />
+            <button type="submit" className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-700 hover:bg-blue-800 rounded whitespace-nowrap">
+              Tambah Nomor
+            </button>
           </form>
 
-          <table className="w-full text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500">
-                <th className="py-2 font-medium">Nomor</th>
-                <th className="py-2 font-medium">Status</th>
-                <th className="py-2 font-medium">Kuota Harian</th>
-                <th className="py-2 font-medium text-right">Koneksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {db.wa_accounts.map((acc) => (
-                <tr key={acc.id}>
-                  <td className="py-2 font-mono">{acc.phone_number}</td>
-                  <td className="py-2 font-semibold text-slate-800">{acc.status}</td>
-                  <td className="py-2 font-mono tabular-nums">{acc.daily_count} / {acc.status === 'WARMUP' ? 20 : 800}</td>
-                  <td className="py-2 text-right">
-                    {acc.qr_connected ? (
-                      <span className="text-emerald-700 font-medium">Terhubung</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setQrModalId(acc.id)}
-                        className="inline-flex items-center gap-1 text-blue-700 hover:underline font-medium"
-                      >
-                        <QrCode className="w-3.5 h-3.5" /> Scan QR
-                      </button>
-                    )}
-                  </td>
+          <div className="table-wrapper">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 text-slate-500">
+                  <th className="py-2 font-medium">Akun / Nomor</th>
+                  <th className="py-2 font-medium">Mode</th>
+                  <th className="py-2 font-medium">Kuota</th>
+                  <th className="py-2 font-medium text-right">Koneksi &amp; Aksi</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {db.wa_accounts.map((acc) => {
+                  const maxDaily = acc.status === 'WARMUP' ? 20 : 800;
+                  const maxHourly = acc.status === 'WARMUP' ? 10 : 150;
+                  const rrEligible = Boolean(acc.qr_connected) && checkWaAccountQuota(acc);
+                  return (
+                    <tr key={acc.id}>
+                      <td className="py-2">
+                        <div className="font-mono text-slate-900">{acc.phone_number}</div>
+                        {acc.label && acc.label !== acc.phone_number && (
+                          <div className="text-[11px] text-slate-500">{acc.label}</div>
+                        )}
+                        {acc.last_error && (
+                          <div className="text-[11px] text-red-700 max-w-[200px] truncate" title={acc.last_error}>
+                            {acc.last_error}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        <div className="font-semibold text-slate-800">{acc.status}</div>
+                        {rrEligible && (
+                          <span className="inline-block text-[10px] font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-0.5">
+                            Round-Robin
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 font-mono tabular-nums text-[11px] text-slate-700">
+                        <div>{acc.daily_count}/{maxDaily} hr</div>
+                        <div className="text-slate-500">{acc.hourly_count}/{maxHourly} jam</div>
+                      </td>
+                      <td className="py-2 text-right">
+                        <div className="inline-flex items-center justify-end gap-2 flex-wrap">
+                          {acc.qr_connected ? (
+                            <span className="text-emerald-700 font-medium">Terhubung</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setQrModalId(acc.id)}
+                              className="inline-flex items-center gap-1 text-blue-700 hover:underline font-medium"
+                            >
+                              <QrCode className="w-3.5 h-3.5" /> Scan QR
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            title="Reconnect sesi tersimpan"
+                            onClick={async () => {
+                              await onReconnectAccount(acc.id);
+                              setQrModalId(acc.id);
+                            }}
+                            className="p-1 text-slate-600 hover:text-blue-700 rounded hover:bg-slate-100"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            title={acc.status === 'PAUSED' ? 'Aktifkan kembali' : 'Pause dari rotasi Round-Robin'}
+                            onClick={() => onUpdateAccountStatus(acc.id, acc.status === 'PAUSED' ? 'ACTIVE' : 'PAUSED')}
+                            className="p-1 text-slate-600 hover:text-amber-700 rounded hover:bg-slate-100"
+                          >
+                            {acc.status === 'PAUSED' ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                          </button>
+                          <button
+                            type="button"
+                            title="Hapus akun dan sesi Chrome"
+                            onClick={() => onDeleteAccount(acc.id)}
+                            className="p-1 text-slate-500 hover:text-red-700 rounded hover:bg-red-50"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
           {qrModalId !== null && (
             <div className="p-4 border border-slate-200 rounded-md bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-xs space-y-1.5">
                 <div className="font-semibold text-slate-900">
-                  Pairing QR Baileys (Akun #{qrModalId}) · <span className="font-mono text-blue-700">{qrState.status}</span>
+                  Pairing QR WhatsApp Web (Akun #{qrModalId}) · <span className="font-mono text-blue-700">{qrState.status}</span>
                 </div>
-                <p className="text-slate-600">Buka WhatsApp &rarr; Perangkat Tertaut &rarr; Tautkan Perangkat.</p>
+                <p className="text-slate-600">Buka WhatsApp &rarr; Perangkat Tertaut &rarr; Tautkan Perangkat. QR diperbarui otomatis tiap ~20 dtk.</p>
                 {qrState.error && <p className="text-red-700 font-medium">{qrState.error}</p>}
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={async () => {
@@ -279,6 +403,22 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
                     className="px-3 py-1.5 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded"
                   >
                     Tandai Terhubung
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setQrState({ qrDataUrl: null, status: 'CONNECTING', error: null });
+                      try {
+                        const r = await fetch(`/api/wa/accounts/${qrModalId}/reconnect`, { method: 'POST' });
+                        const d = await r.json();
+                        setQrState({ qrDataUrl: d.qrDataUrl ?? null, status: d.status ?? 'CONNECTING', error: d.error ?? null });
+                      } catch {
+                        // poll will retry
+                      }
+                    }}
+                    className="px-3 py-1.5 text-xs font-medium text-blue-700 bg-white border border-blue-300 hover:bg-blue-50 rounded"
+                  >
+                    Muat Ulang QR
                   </button>
                   <button
                     type="button"
@@ -292,12 +432,12 @@ export const WhatsAppView: React.FC<WhatsAppViewProps> = ({
               {qrState.qrDataUrl ? (
                 <img
                   src={qrState.qrDataUrl}
-                  alt="QR Code Pairing WhatsApp Baileys"
-                  className="w-36 h-36 bg-white border border-slate-300 rounded p-1 shrink-0"
+                  alt="QR Code Pairing WhatsApp Web"
+                  className="w-40 h-40 bg-white border border-slate-300 rounded p-1 shrink-0"
                 />
               ) : (
-                <div className="w-28 h-28 bg-white border border-slate-300 rounded flex items-center justify-center text-[11px] text-slate-500 text-center p-2 shrink-0">
-                  Menyiapkan QR Baileys...
+                <div className="w-40 h-40 bg-white border border-slate-300 rounded flex items-center justify-center text-[11px] text-slate-500 text-center p-2 shrink-0">
+                  Menyiapkan QR WhatsApp Web...
                 </div>
               )}
             </div>

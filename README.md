@@ -6,6 +6,8 @@ Dokumentasi ini disusun dalam **dua bagian utama** agar mudah dipahami siapa saj
 1. **Penjelasan Sederhana & Alur Kerja Sistem** — bagaimana aplikasi bekerja dari kamera menyala hingga pesan WhatsApp terkirim ke orang tua.
 2. **Panduan Teknis Lengkap, Instalasi, Keamanan & Operasional** — arsitektur, aturan AI/storage/absensi, setup ala WordPress, deployment banyak sekolah dalam 1 VPS, auto-update GitHub, hingga pemecahan masalah.
 
+> **Untuk Pemula / Non-Programmer (aaPanel + Auto-Update Versi GitHub):** Baca panduan langkah demi langkah paling praktis di **[MANUAL_LENGKAP_AAPANEL.md](./MANUAL_LENGKAP_AAPANEL.md)**.
+
 ---
 
 ## Daftar Isi
@@ -14,12 +16,12 @@ Dokumentasi ini disusun dalam **dua bagian utama** agar mudah dipahami siapa saj
 2. [Alur Kerja End-to-End (CCTV → AI → Absensi → Kiosk & WA)](#2-alur-kerja-end-to-end-cctv--ai--absensi--kiosk--wa)
 3. [Fitur Lengkap & Pembagian Hak Akses (Role)](#3-fitur-lengkap--pembagian-hak-akses-role)
 4. [Pengetahuan Mendalam Setiap Subsistem](#4-pengetahuan-mendalam-setiap-subsistem)
-   - [4.1 Dua Mesin AI Wajah (Python InsightFace + Node.js WASM) & Akselerasi Rust](#41-dua-mesin-ai-wajah-python-insightface--nodejs-wasm--akselerasi-rust)
+   - [4.1 Mesin AI Wajah (Docker Python InsightFace `buffalo_l` 512-D) & Akselerasi Rust](#41-mesin-ai-wajah-docker-python-insightface-buffalo_l-512-d--akselerasi-rust)
    - [4.2 Mesin Absensi, Gate, Deduplikasi, Observasi & Cutoff WIB Otomatis](#42-mesin-absensi-gate-deduplikasi-observasi--cutoff-wib-otomatis)
    - [4.3 Deteksi Wajah Anonim (Maks 5 Foto Terbaik, Zoom Crosscheck & Koreksi)](#43-deteksi-wajah-anonim-maks-5-foto-terbaik-zoom-crosscheck--koreksi)
    - [4.4 Pemeliharaan Kualitas Wajah Otomatis & Review Bulanan BK](#44-pemeliharaan-kualitas-wajah-otomatis--review-bulanan-bk)
    - [4.5 Manajemen Storage Ketat Maksimal 10 GB (Anti-Penumpukan Data)](#45-manajemen-storage-ketat-maksimal-10-gb-anti-penumpukan-data)
-   - [4.6 WhatsApp Gateway Anti-Blokir (Baileys QR / Meta / Fonnte / WABLAS)](#46-whatsapp-gateway-anti-blokir-baileys-qr--meta--fonnte--wablas)
+   - [4.6 WhatsApp Gateway Anti-Blokir (Python Chromium Round-Robin / Meta / Fonnte / WABLAS)](#46-whatsapp-gateway-anti-blokir-python-chromium-round-robin--meta--fonnte--wablas)
    - [4.7 Kiosk Panggil Suara Offline (`/panggil/:cameraId`) & Portal Orang Tua (`/ortu`)](#47-kiosk-panggil-suara-offline-panggilcameraid--portal-orang-tua-ortu)
 5. [Arsitektur Teknis & Struktur Database (24 Tabel SQLite)](#5-arsitektur-teknis--struktur-database-24-tabel-sqlite)
 6. [Instalasi & Menjalankan Secara Lokal (Development)](#6-instalasi--menjalankan-secara-lokal-development)
@@ -28,7 +30,7 @@ Dokumentasi ini disusun dalam **dua bagian utama** agar mudah dipahami siapa saj
 9. [Deploy via Docker & Docker Hub (All-in-One Image)](#9-deploy-via-docker--docker-hub-all-in-one-image)
 10. [Setup Awal ala WordPress & Keamanan Produksi](#10-setup-awal-ala-wordpress--keamanan-produksi)
 11. [Auto-Update Otomatis dari GitHub (1 Jam Sekali & Universal)](#11-auto-update-otomatis-dari-github-1-jam-sekali--universal)
-12. [Referensi Environment Variables (`.env`) & Endpoint Penting](#12-referensi-environment-variables-env--endpoint-penting)
+12. [Konfigurasi Otomatis Internal & Endpoint API Penting](#12-konfigurasi-otomatis-internal--endpoint-api-penting)
 13. [Panduan Operasional Harian Sekolah & Troubleshooting](#13-panduan-operasional-harian-sekolah--troubleshooting)
 
 ---
@@ -47,7 +49,7 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
    - **Jika wajah tidak dikenal (belum ada foto siswa / tamu):**
      - Wajah dikelompokkan sebagai **Wajah Anonim** dan sistem menyimpan **maksimal 5 foto terbaik** (berdasarkan ketajaman, ukuran wajah, dan pose hadap depan).
      - Guru BK dapat klik foto untuk **memperbesar & zoom (`1x / 2x / 3x`)**, menghapus foto yang salah (misalnya foto topi saja atau wajah siswa lain masuk), lalu memberi nama siswa tersebut agar keesokan harinya langsung dikenali otomatis.
-4. **Jika tidak terpasang Python AI terpisah**, server Node.js sudah membawa **mesin AI bawaan (`@vladmandic/human` WASM)** dan **FFmpeg bawaan**, sehingga instalasi tetap berjalan di VPS Node.js standar maupun di Docker All-in-One.
+4. **Satu Perintah Setup di aaPanel (`npm run setup:school`)** otomatis menyiapkan **Node.js backend**, **Docker container `face-service` (`InsightFace buffalo_l` 512-D + Rust `face_accel`)**, dan **WA Gateway Chromium** — tanpa perlu isi environment variable manual.
 5. **Semua file & database dijaga ketat di bawah 10 GB** secara otomatis — tidak ada penumpukan log atau foto sampah yang memenuhi hardisk server.
 
 ---
@@ -60,15 +62,13 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
 +--------------------+                                      |
                                                             v
 +-----------------------------------------------------------------------+
-|                       WORKER DETEKSI WAJAH                            |
-|  1) Mode Lengkap (Docker / VPS Python):                               |
-|     services/face-service (InsightFace buffalo_l 512-D + IoU Tracker  |
-|     + Rust face_accel 1:N Cosine Similarity)                          |
-|  2) Mode Node.js Bawaan (Zero-Python Fallback):                       |
-|     nodeFaceWorker.ts (FFmpeg + @vladmandic/human WASM 1024-D)        |
+|              WORKER DETEKSI WAJAH (Docker face-service)               |
+|  services/face-service (InsightFace buffalo_l 512-D: SCRFD 5-landmark |
+|  + Rentang Bounding Box Min..Max + IoU Tracker + Rust face_accel)     |
 +-----------------------------------------------------------------------+
           |
-          |  Filter Kualitas: conf >= 0.80, size >= 60px, quality >= 0.70
+          |  Filter Kualitas: conf >= 0.60, 5 landmark valid (tolak masker),
+          |  size dalam [min_face_size, max_face_size], blur, pose, quality >= 0.70
           |  POST /api/internal/face-event (loopback / X-Internal-Token)
           v
 +-----------------------------------------------------------------------+
@@ -82,8 +82,8 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
       |                          |                           |
       v                          v                           v
 +-----------+          +-------------------+       +-------------------+
-| SQLite DB |          | WebSocket /ws     |       | Antrean WhatsApp  |
-| (WAL Mode)|          | Kiosk /panggil/id |       | Baileys / API     |
+| SQLite DB |          | WebSocket /ws     |       | WA Web Chromium   |
+| (WAL Mode)|          | Kiosk /panggil/id |       | Round-Robin / API |
 | <= 10 GB  |          | + Piper TTS Audio |       | + Cutoff WIB 60s  |
 +-----------+          +-------------------+       +-------------------+
 ```
@@ -114,37 +114,39 @@ Bayangkan gerbang sekolah memiliki beberapa kamera CCTV (RTSP):
 | **Face Update Review (BK)** | Ya | Ya | — | Review bulanan peningkatan kualitas foto wajah siswa otomatis (Approve / Rollback versi embedding sebelumnya). |
 | **Gerbang & Kamera RTSP** | Ya | — | — | Kelola gerbang (`MASUK` / `KELUAR` / `BOTH`), tambah kamera RTSP, **Uji Probe & Preview Live MJPEG (`5 FPS` atau `Native RTSP`)**, atur resolusi capture (`720p` / `1080p` / `Native`). |
 | **Jadwal, Override & Libur** | Ya | Ya | — | Jadwal Senin–Sabtu (global atau per jurusan), override jam per kelas, dan pengecualian tanggal (`LIBUR`, `PULANG_CEPAT`, `EKSKUL`, `SHIFT_SWAP`). |
-| **WhatsApp Gateway** | Ya | Ya | — | Tambah akun pengirim, **Pairing QR Code Baileys** langsung di web, mode **WARMUP (20/hari)** vs **ACTIVE (800/hari)**, edit 10 template pesan, pantau & kirim ulang antrean. |
+| **WhatsApp Gateway** | Ya | Ya | — | Tambah multi-nomor pengirim, **Scan QR WhatsApp Web Chromium** langsung di web (rotasi **Round-Robin**), mode **WARMUP (20/hari)** vs **ACTIVE (800/hari)**, Pause/Reconnect/Hapus, edit 10 template pesan, pantau & retry antrean. |
 | **Pengaturan & User** | Ya | — | — | Threshold AI, bobot skor kualitas, suara Kiosk (`AUTO_ADAPTIVE` / `FULL_NAME` / `CHIME_ONLY`), mode Produksi, user staf, pembersihan storage manual, & **Backup/Restore `.sqlite.gz`**. |
 
 ---
 
 ## 4. Pengetahuan Mendalam Setiap Subsistem
 
-### 4.1 Dua Mesin AI Wajah (Python InsightFace + Node.js WASM) & Akselerasi Rust
+### 4.1 Mesin AI Wajah (Docker Python InsightFace `buffalo_l` 512-D) & Akselerasi Rust
 
-Aplikasi memiliki arsitektur AI **Dual-Engine dengan Auto-Failover**:
+Aplikasi menggunakan satu engine AI produksi berakurasi tinggi (**tanpa WASM**):
 
-1. **Engine Utama (Rekomendasi 5.000+ Siswa & 4+ Kamera): Python `services/face-service/` (Port `8001` internal)**
-   - Model: **InsightFace `buffalo_l`** (vektor wajah **512-dimensi**), deteksi wajah `det_size=(640, 640)`, **anti-spoofing dinonaktifkan** agar siswa yang berjalan cepat di depan CCTV gerbang tidak gagal absen karena pencahayaan luar ruangan.
-   - **IoU Tracker (`tracker.py`)**: Melacak pergerakan wajah antar frame sehingga wajah yang sama tidak dikirim berulang-ulang setiap frame.
-   - **Rust Acceleration (`services/rust-accel/` → `/app/bin/face_accel`)**: Melakukan perkalian *Cosine Similarity 1:N* terhadap 5.000+ vektor siswa secara native (jika binary tidak tersedia, otomatis fallback ke NumPy).
-   - **Auto-Sync & Auto-Heal**: Node.js memeriksa kesehatan `FACE_SERVICE_URL` setiap 60 detik (`executeAutoAiHealTick`), otomatis menyinkronkan galeri embedding dan pengaturan kamera saat Python aktif atau baru menyala kembali.
+1. **Docker `face-service` (`docker-compose.face.yml`, Port `FACE_PORT` otomatis `8001+` di `127.0.0.1`)**
+   - Model: **InsightFace `buffalo_l`** (vektor wajah **512-dimensi** dengan detektor **SCRFD 5-landmark** + **ArcFace**), **anti-spoofing dinonaktifkan** agar siswa yang berjalan cepat di depan CCTV gerbang tetap lancar absen.
+   - **IoU Tracker & Multi-Frame Voting (`tracker.py`)**: Melacak pergerakan wajah antar frame dan memverifikasi kecocokan minimal 2 frame sebelum dispatch.
+   - **Rust Acceleration (`services/rust-accel/` → `/app/bin/face_accel`)**: Perkalian *Cosine Similarity 1:N* native untuk 5.000+ siswa (fallback otomatis ke NumPy BLAS).
+   - **Auto-Sync & Auto-Heal**: Node.js memeriksa kesehatan `FACE_SERVICE_URL` setiap 60 detik (`executeAutoAiHealTick`), otomatis menyinkronkan galeri embedding dan pengaturan kamera saat container Docker aktif kembali.
 
-2. **Engine Bawaan Node.js (Zero-Python Default): `src/server/nodeFaceWorker.ts`**
-   - Berjalan **langsung di dalam Node.js** menggunakan `@vladmandic/human` + `@tensorflow/tfjs-backend-wasm` (vektor wajah **1024-dimensi**) dan FFmpeg (`@ffmpeg-installer/ffmpeg` atau `/usr/bin/ffmpeg`).
-   - **Koordinasi Cerdas**: Jika layanan Python `face-service` sedang online, worker RTSP di Node.js **otomatis berhenti sementara** agar kamera tidak ditarik dua kali (*double-stream*). Jika layanan Python mati atau tidak terpasang (misalnya pada instalasi aaPanel Node.js murni), worker Node.js **otomatis aktif**.
-   - Dilengkapi **Motion Gate**: Membandingkan delta kecerahan frame berturut-turut sehingga frame yang statis/kosong tidak membebani CPU inferensi AI.
+2. **Kontrol Rentang Bounding Box (`min_face_size` .. `max_face_size`)**
+   - Admin dapat menentukan ukuran wajah minimal dan maksimal dalam satuan **pixel asli kamera** (baik global di Pengaturan maupun per kamera di menu **Kalibrasi Kamera**; isi `0` pada maksimal untuk bebas/tanpa batas atas).
+   - Detektor otomatis menskalakan batas pixel sesuai resolusi *capture* dan menolak wajah di luar rentang sebelum masuk ke model ArcFace sehingga hemat CPU.
 
-3. **Keamanan Perbedaan Dimensi Embedding (`512-D` vs `1024-D` vs `16-D`)**
-   - Server dan worker **tidak pernah** mencocokkan vektor beda dimensi secara paksa.
-   - Jika Anda berpindah dari mode Node.js (1024-D) ke Docker Python InsightFace (512-D) atau sebaliknya, Dashboard otomatis menampilkan jumlah foto yang belum cocok dimensinya beserta tombol **1-Klik Migrasi Embedding (`POST /api/system/migrate-embeddings`)** yang mengekstrak ulang embedding dari foto profil lokal siswa tanpa menghapus data absensi.
+3. **Kebijakan Kacamata & Masker**
+   - **Kacamata (bening/resep)**: Didukung langsung oleh InsightFace `buffalo_l` pada `threshold_recognition = 0.70`.
+   - **Masker Penutup Mulut/Hidung**: Ditolak otomatis oleh validasi 5-landmark (`DROP:landmark`) demi menjaga akurasi absensi sekolah agar tidak pernah salah mencatat siswa lain.
+
+4. **Keamanan Perbedaan Dimensi Embedding (`512-D` vs Legacy `1024-D`/`16-D`)**
+   - Server **tidak pernah** mencocokkan vektor beda dimensi secara paksa. Jika database sekolah berasal dari instalasi lama (`1024-D` atau `16-D` demo), Dashboard otomatis menampilkan tombol **Sinkronkan ke 512-D** (`POST /api/system/migrate-embeddings`).
 
 **Parameter Default Kualitas & Ambang Batas AI:**
-- `threshold_confidence`: **`0.80`** (minimum keyakinan deteksi wajah dari kamera)
-- `threshold_recognition`: **`0.70`** (minimum kemiripan *cosine similarity* untuk dianggap cocok dengan siswa)
+- `threshold_confidence`: **`0.60`** (minimum keyakinan deteksi SCRFD sebelum cek landmark/blur/pose)
+- `threshold_recognition`: **`0.70`** (minimum kemiripan *cosine similarity* untuk dianggap cocok dengan siswa, ditambah margin check `match_margin_min = 0.08`)
 - `threshold_clustering`: **`0.70`** (minimum kemiripan untuk masuk klaster wajah anonim yang sama)
-- `min_face_size`: **`60 px`** (wajah lebih kecil dari 60px diabaikan; bisa diatur per kamera)
+- `min_face_size` / `max_face_size`: **`60 px`** / **`0` (bebas)** — dapat dikalibrasi per kamera beserta pratinjau kotak hijau (min) & kuning (maks)
 - `min_snapshot_quality`: **`0.70`** (lantai minimal dikunci server `>= 0.70` agar foto buram/gelap tidak pernah merusak database atau klaster)
 - **Rumus Skor Kualitas Wajah (`0.0 – 1.0`)**:
   `0.30 × Confidence + 0.25 × Ukuran Wajah + 0.25 × Ketajaman (Laplacian) + 0.20 × Pose Hadap Depan (Yaw/Pitch)`
@@ -230,16 +232,19 @@ Sistem dirancang untuk sekolah berkapasitas **5.000+ siswa** agar **total seluru
 
 ---
 
-### 4.6 WhatsApp Gateway Anti-Blokir (Baileys QR / Meta / Fonnte / WABLAS)
+### 4.6 WhatsApp Gateway Anti-Blokir (Chromium Round-Robin / Meta / Fonnte / WABLAS)
 
-- **Multi-Akun & Multi-Provider**:
-  - **`BAILEYS` (Bawaan Gratis)**: Scan QR langsung di halaman WhatsApp Gateway; sesi terisolasi di `data/wa_auth/acc_<id>`. Logger internal dibuat senyap agar tidak membanjiri log disk.
-  - **`META_CLOUD`**, **`FONNTE`**, **`WABLAS`**: Dapat diaktifkan jika sekolah memakai API WhatsApp resmi atau pihak ketiga.
-- **Proteksi Anti-Ban Bawaan**:
-  - Mode **`WARMUP`**: Batas ketat **20 pesan/hari** (cocok untuk nomor baru selama 1–2 minggu awal).
-  - Mode **`ACTIVE`**: Batas **800 pesan/hari** (reset otomatis per tanggal WIB).
-  - Jeda pengiriman acak antar pesan (default `60–120 detik`, dapat disesuaikan di Pengaturan) dengan antrean `wa_queue` yang mendukung retry manual maupun otomatis.
-- **10 Template Pesan Siap Pakai (`TPL_1` – `TPL_10`)**: Mencakup pesan `TERLAMBAT`, `ALPA`, `TIDAK_KELUAR`, konfirmasi `SAKIT`/`IZIN`, hingga rekap pulang sore dengan variabel dinamis (`{nama}`, `{kelas}`, `{jam}`, `{tanggal}`, `{status}`).
+- **Microservice WA Gateway (`services/wa-gateway`, Port default `8003` tertanam di kode)**:
+  - **`WA_WEB` (Bawaan Gratis · Anti-Deteksi)**: Menggunakan `undetected-chromedriver` + Chromium headless (`--headless=new` + fallback `Xvfb` otomatis) untuk meng-generate QR code secara otomatis (diperbarui tiap 3 detik) dan menyimpan sesi login di disk agar tidak perlu scan ulang saat restart.
+  - **Tanpa Konfigurasi Manual**: Port (`8003`), alamat gateway (`http://127.0.0.1:8003`), serta batas maksimal Chrome aktif (`3`) tertanam langsung di kode (`config.py` & `waGateway.ts`). Autentikasi internal membaca token langsung dari file `/app/storage/secrets/internal_token` (`chmod 600`).
+  - **Multi-Akun & Rotasi Round-Robin**: Admin/BK dapat menambahkan beberapa nomor WA sekolah (masing-masing punya sesi browser terisolasi). Antrean `wa_queue` otomatis memutar pengiriman secara **Round-Robin** antar seluruh akun yang terhubung & masih memiliki kuota (otomatis melewati akun `PAUSED` / kuota penuh, serta failover jika salah satu akun terputus).
+  - **Otomatis Dalam Satu Setup**: `npm run setup:school` otomatis menginstal `.venv` Python + Chromium/Xvfb + file secret internal, dan `server.ts` otomatis menghidupkan/mematikan microservice WA Gateway (atau lewat `supervisord` pada mode Docker).
+  - **`META_CLOUD`**, **`FONNTE`**, **`WABLAS`**: Dapat dipilih bila sekolah memakai API WhatsApp resmi atau pihak ketiga.
+- **Proteksi Anti-Ban & Anti-Spam Bawaan**:
+  - Mode **`WARMUP`**: Batas ketat **20 pesan/hari** (10/jam) untuk nomor baru.
+  - Mode **`ACTIVE`**: Batas **150 pesan/jam** & **800 pesan/hari** per akun (reset otomatis per tanggal/jam WIB).
+  - Jeda pengiriman acak antar pesan (`60–120 detik` di antrean + jeda manusiawi `3–8 detik` di browser) dan batas **1 pesan ke nomor tujuan yang sama dalam 24 jam**.
+- **10 Template Pesan Siap Pakai (`TPL_1` – `TPL_10`)**: Mencakup pesan `TERLAMBAT`, `ALPA`, `TIDAK_KELUAR`, konfirmasi `SAKIT`/`IZIN`, hingga rekap pulang sore dengan variabel dinamis (`{nama}`, `{kelas}`, `{jam_masuk}`, `{jam_keluar}`, `{tanggal}`, `{status}`).
 
 ---
 
@@ -259,10 +264,11 @@ Sistem dirancang untuk sekolah berkapasitas **5.000+ siswa** agar **total seluru
 
 ### Stack Teknologi
 - **Backend & Server**: Node.js `>= 22.18` (disarankan **Node.js 22 LTS / 24 LTS**), Express 4, WebSocket (`ws`), `node:sqlite` (`DatabaseSync` bawaan Node — **tanpa perlu kompilasi C++ `better-sqlite3`**).
-- **Frontend**: React 19, TypeScript, Vite 8, Tailwind CSS v4, Lucide Icons, `xlsx` (import Excel), `qrcode`.
-- **AI & Media**:
-  - Mode Python + Rust: FastAPI, OpenCV, InsightFace `buffalo_l`, ONNX Runtime CPU, binary Rust `face_accel`.
-  - Mode Node Bawaan: `@vladmandic/human`, `@tensorflow/tfjs-backend-wasm`, `@ffmpeg-installer/ffmpeg`, `jpeg-js`.
+- **Frontend**: React 19, TypeScript, Vite 8, Tailwind CSS v4, Lucide Icons, `xlsx` (import Excel).
+- **AI, Media & WA Gateway**:
+  - Engine AI (Docker `docker-compose.face.yml`): FastAPI, OpenCV, InsightFace `buffalo_l` (512-D SCRFD + ArcFace), ONNX Runtime CPU, binary Rust `face_accel`.
+  - Media Server Node.js: `@ffmpeg-installer/ffmpeg` (untuk Probe & Live Preview RTSP), `jpeg-js`.
+  - WA Gateway (`services/wa-gateway`): Python 3.11+, Flask, Gunicorn, Selenium 4 + `undetected-chromedriver`, Chromium Headless + `Xvfb`.
 
 ### Struktur Direktori Penting
 ```text
@@ -275,14 +281,15 @@ Sistem dirancang untuk sekolah berkapasitas **5.000+ siswa** agar **total seluru
 │   └── server/                # store.ts (SQLite 24 tabel), nodeFaceWorker.ts, waGateway.ts, ttsService.ts, autoUpdater.ts
 ├── services/
 │   ├── face-service/          # Layanan Python InsightFace buffalo_l + IoU tracker (port 8001 internal)
+│   ├── wa-gateway/            # Microservice Python Flask + Selenium Chromium WA Gateway + Round-Robin (port 8003 internal)
 │   └── rust-accel/            # Engine Rust 1:N Cosine Similarity berkecepatan tinggi
 ├── scripts/
-│   ├── setup-school.sh        # Installer otomatis per sekolah (port unik, .env, build, chmod, Nginx)
+│   ├── setup-school.sh        # Installer otomatis satu pintu (Node + Python WA Gateway + Chromium + port unik + .env)
 │   └── auto-update.sh         # Script auto-update GitHub universal (cron/aaPanel/PM2/systemd/Docker)
 └── data/                      # Data persisten terisolasi (DIJAGA <= 10 GB, di-ignore Git)
     ├── absensi.sqlite         # Database utama SQLite (WAL mode)
     ├── snapshots/             # Crop wajah <= 360px & foto siswa
-    ├── wa_auth/               # Sesi login multi-device WhatsApp Baileys
+    ├── wa_gateway/            # Sesi Chrome terisolasi (wa_sessions/), QR PNG (wa_qr/), & wa_gateway.db
     ├── tts_cache/             # Cache suara WAV Piper (maks 120 MB)
     ├── backups/               # File backup otomatis/manual .sqlite.gz (maks 200 MB)
     └── auto-update.log        # Log auto-update (maks 1 MB)
@@ -356,12 +363,12 @@ cd /www/wwwroot/smkn1pst
 rm -rf node_modules
 npm install --no-audit --no-fund
 
-# Jalankan script setup terisolasi:
-# - Memilih port kosong otomatis (3001, 3002, ...)
-# - Membuat .env dengan SESSION_SECRET & INTERNAL_API_TOKEN acak unik
-# - Mem-build dist/ produksi
-# - Memperbaiki izin chmod +x binary FFmpeg/esbuild & cek SQLite
-# - Mengatur kepemilikan folder untuk user www (jika aaPanel)
+# Jalankan SATU perintah setup otomatis:
+# - Memilih port Node (3001+) & port Docker AI (8001+) unik bebas konflik
+# - Membentuk file token internal acak (chmod 600) tanpa isi env manual
+# - Mem-build & menyalakan Docker InsightFace buffalo_l + Rust (docker-compose.face.yml)
+# - Menginstal Chromium/Xvfb & venv WA Gateway otomatis
+# - Mem-build dist/ produksi & menyelaraskan owner www
 npm run setup:school -- --domain absensi.smkpercut.store
 ```
 
@@ -385,17 +392,13 @@ Jika Anda memilih **PM2** di aaPanel:
 - **Node Version**: `v24.x` *(min. `v22.18`)*
 - **Startup File**: pilih **`server.ts`**
 - **Run Directory**: `/www/wwwroot/smkn1pst`
-- **Cluster**: **WAJIB `1`** *(JANGAN lebih dari 1! Aplikasi memakai SQLite WAL, worker kamera RTSP, dan sesi WhatsApp Baileys yang tidak boleh dijalankan ganda dalam mode cluster)*
+- **Cluster**: **WAJIB `1`** *(JANGAN lebih dari 1! Aplikasi memakai SQLite WAL, worker kamera RTSP, dan sesi WhatsApp Gateway yang tidak boleh dijalankan ganda dalam mode cluster)*
 - **Memory Limit**: **`2048`** atau **`4096`** MB *(minimal 2048 MB agar aman untuk AI wajah & 5.000 siswa)*
 - **Auto Restart**: Centang / Aktif
 - **Pkg Manager**: pilih **`npm`** *(bukan pnpm)*
-- **Environment Variables**:
-  ```env
-  NODE_ENV=production
-  TZ=Asia/Jakarta
-  ```
+- **Environment Variables**: *(tidak perlu diisi manual; seluruh default tertanam di kode)*
 - **Run User**: `www`
-- **Project Port**: `3001` *(samakan dengan `PORT` di file `.env`)*
+- **Project Port**: `3001` *(samakan dengan port hasil `setup:school`)*
 - **Domain name**: masukkan domain sekolah Anda (contoh `absensi.smkpercut.store`).
 
 #### Opsi C: PM2 via Terminal (VPS Polos Tanpa aaPanel)
@@ -435,7 +438,8 @@ Pastikan respons JSON menampilkan `"ok":true` dan `"ffmpeg_ready":true`.
 | Aktivitas | Butuh `root`? | Penjelasan |
 |---|---|---|
 | Menjalankan web server (`npm start` di port `3001+`) | **Tidak (`www`)** | Node berjalan di atas port `1024` di belakang Nginx. |
-| SQLite, Snapshots, WhatsApp Baileys, AI WASM | **Tidak (`www`)** | Cukup folder project dimiliki oleh `www:www`. |
+| SQLite, Snapshots, WhatsApp Gateway (Chromium) | **Tidak (`www`)** | Cukup folder project dimiliki oleh `www:www`. |
+| Docker Face AI (`docker-compose.face.yml`) | **Tidak saat runtime** | Dibangun 1x oleh `npm run setup:school`, berjalan `restart: unless-stopped` sebagai UID `www`. |
 | FFmpeg RTSP kamera (`@ffmpeg-installer` / `/usr/bin/ffmpeg`) | **Tidak (`www`)** | Butuh permission `+x` atau otomatis memakai `/usr/bin/ffmpeg`. |
 | Install paket sistem (`apt install ffmpeg git sqlite3`) | **Ya (`root`/`sudo`)** | Hanya 1 kali saat menyiapkan VPS baru. |
 | Memperbaiki owner folder (`chown -R www:www`) setelah upload root | **Ya (`root`/`sudo`)** | Hanya jika `npm install` awalnya dijalankan sebagai `root`. |
@@ -458,48 +462,25 @@ Aplikasi dapat dijalankan untuk banyak sekolah di satu VPS dengan **database, se
 *(Script `setup-school.sh` otomatis memindai file `.env` di folder tetangga maupun port yang sedang terpakai agar tidak pernah memakai port kembar.)*
 
 ### Mode Docker Compose per Sekolah
-Salin `docker-compose.yml` ke folder masing-masing sekolah dengan file `.env` berbeda:
-```env
-CONTAINER_NAME="absensi-smk2"
-HOST_PORT="3082"
-DATA_PATH="./data"
-APP_URL="https://smk2.sch.id"
-```
-Jalankan `docker compose up -d` lalu arahkan Reverse Proxy domain sekolah tersebut ke `http://127.0.0.1:3082`.
+Salin `docker-compose.yml` ke folder masing-masing sekolah dengan volume data & port host terpisah (`3081:80`, `3082:80`, dst.) lalu jalankan `docker compose up -d` tanpa perlu mengisi variabel environment apa pun.
 
 ---
 
 ## 9. Deploy via Docker & Docker Hub (All-in-One Image)
 
-Jika ingin menggunakan **paket lengkap All-in-One** (*Node.js 22 + Python InsightFace `buffalo_l` + Rust `face_accel` + Piper TTS Offline + Supervisord*):
+Image All-in-One sudah mencakup **Node.js 22 + Python InsightFace `buffalo_l` + Rust `face_accel` + Piper TTS Offline + WA Gateway Chromium + Supervisord** dengan konfigurasi **Zero-Env** (tanpa perlu menambahkan `-e` apa pun):
 
-### Cara A: Otomatis Publish ke Docker Hub via GitHub Actions
-File `.github/workflows/docker-publish.yml` sudah siap pakai:
-1. Buat Access Token di Docker Hub (**Account Settings → Personal Access Tokens → Read & Write**).
-2. Di GitHub Repo → **Settings → Secrets and variables → Actions**, tambahkan Secrets:
-   - `DOCKERHUB_USERNAME`
-   - `DOCKERHUB_TOKEN`
-   *(Opsional)* tambahkan Variable `DOCKERHUB_REPO` (default: `absensi-smk-face-ai`).
-3. Push ke branch `main` atau jalankan workflow secara manual.
+- Pada boot pertama, `entrypoint.sh` otomatis membangkitkan token internal acak (`openssl rand -hex 48`) ke `/app/storage/secrets/internal_token` (`chmod 600`) dan membuat `/app/storage/secrets/runtime.env` untuk koordinasi internal container (**bukan untuk diedit manusia**).
+- Seluruh layanan membaca token langsung dari file `/app/storage/secrets/internal_token`.
 
-### Cara B: Build & Run di VPS
 ```bash
-# Build & push dari PC/VPS
-docker build --platform linux/amd64 -t <username>/absensi-smk-face-ai:latest .
-docker push <username>/absensi-smk-face-ai:latest
-
-# Jalankan di server (binding aman ke 127.0.0.1:3080 untuk Reverse Proxy Nginx)
 docker run -d \
   --name absensi-smk-face-ai \
   --restart unless-stopped \
   -p 127.0.0.1:3080:80 \
-  -e TZ=Asia/Jakarta \
   -v absensi_data:/app/data \
+  -v absensi_storage:/app/storage \
   <username>/absensi-smk-face-ai:latest
-```
-Atau dengan `docker-compose.yml`:
-```bash
-DOCKERHUB_IMAGE=<username>/absensi-smk-face-ai:latest docker compose up -d
 ```
 
 ---
@@ -524,41 +505,38 @@ Server baru yang langsung diakses publik tidak bisa dibobol memakai password def
     --admin-password "PasswordKuatSekolah#2025"
   ```
 
-### 2. Pengamanan Rahasia & Endpoint Otomatis
-- **Tidak perlu isi `SESSION_SECRET` / `INTERNAL_API_TOKEN` manual**: Bila belum diset di `.env`, `server.ts` atau `setup-school.sh` otomatis membangkitkan token kriptografis acak dan menyimpannya dengan izin aman (`chmod 600 .env`, `chmod 700 data/`).
-- **Perlindungan Internal AI (`/api/internal/*`)**: Diblokir otomatis dari traffic internet atau header proxy publik (`X-Forwarded-For` / `Via`); hanya menerima koneksi langsung dari loopback server (`127.0.0.1`) atau header `X-Internal-Token` yang valid.
+### 2. Pengamanan Rahasia & Endpoint Otomatis (Tanpa Isi Env Manual)
+- **Token Internal Berbasis File (`chmod 600`)**: `entrypoint.sh` (Docker) maupun `setup-school.sh` (aaPanel/VPS) membangkitkan token acak kriptografis pada boot pertama (`openssl rand -hex 48`) ke `/app/storage/secrets/internal_token` (atau `data/secrets/internal_token`). Semua layanan membaca token langsung dari **file** tersebut, bukan dari variabel environment.
+- **Perlindungan Internal AI (`/api/internal/*`)**: Diblokir otomatis dari traffic internet atau header proxy publik (`X-Forwarded-For` / `Via`); hanya menerima koneksi loopback atau header `X-Internal-Token` yang cocok dengan file token.
 - **Perlindungan RTSP URL**: Validasi ketat hanya menerima `rtsp://` / `rtsps://`, menolak injeksi argumen FFmpeg/karakter kontrol, dan **menyensor username/password kamera** pada log serta antarmuka saat bukan editor.
 - **Perlindungan Sesi & CSRF**: Cookie `HttpOnly` + `SameSite=Lax` (+ `Secure` otomatis saat HTTPS), pengecekan *same-origin* untuk aksi mutasi, dan *rate limiter* pada `/api/auth/login`, `/api/setup/initialize`, serta `/api/guest/lookup`.
 
 ---
 
-## 11. Auto-Update Otomatis dari GitHub (1 Jam Sekali & Universal)
+## 11. Auto-Update Otomatis dari GitHub (Berbasis Versi & Multi-Sekolah)
 
-Script `scripts/auto-update.sh` membuat aplikasi di VPS/aaPanel selalu ter-update aman tanpa menimpa database sekolah:
-- **Database SQLite (`data/`) & `.env` tidak di-track Git**, sehingga tidak pernah tertimpa `git pull`.
-- **Backup pre-update otomatis** di `data/backups/pre-update-*.bak` sebelum menarik commit baru.
-- **Build sebelum restart**: Jika `npm run build` gagal, aplikasi yang sedang live tidak dimatikan.
-- **Auto-fix izin aaPanel**: Menjalankan `chmod +x node_modules/.bin/*` dan `chown -R www:www` bila perlu.
+Script `scripts/auto-update.sh` dan `scripts/release.sh` membuat seluruh server sekolah di aaPanel otomatis ikut update setiap kali Anda merilis versi baru ke GitHub — tanpa menimpa database SQLite maupun `.env`:
+- **Rilis Versi Baru dari Repo Pusat (`scripts/release.sh`)**:
+  - `npm run release:patch -- "Keterangan perbaikan"` → menaikkan versi `1.0.0` → `1.0.1`, menjalankan `lint + test + build`, commit, buat tag Git, lalu push ke GitHub.
+  - `npm run release:minor -- "Keterangan fitur baru"` → menaikkan versi minor (`1.0.1` → `1.1.0`) lalu push.
+  - `npm run release:major -- "Perubahan besar"` → menaikkan versi major (`1.1.0` → `2.0.0`) lalu push.
+- **Auto-Pull Berbasis Nomor Versi di Semua Server Sekolah (`UPDATE_ONLY_NEW_VERSION=1`)**:
+  - Setiap server sekolah mengecek GitHub otomatis tiap **1 jam** (diaktifkan otomatis oleh `npm run setup:school` saat repo Git terdeteksi).
+  - Server sekolah **hanya menarik update jika `version` di `package.json` remote lebih baru** dari versi lokal (commit WIP tanpa kenaikan versi tidak memicu restart mendadak).
+  - Saat ada versi baru, server otomatis: backup SQLite → `git pull --ff-only` → `npm install` (jika `package.json` berubah) → `npm run build` → rebuild Docker Face AI jika kode AI/Rust berubah → perbaiki owner `www:www` → restart aaPanel Node project → cek `/api/health`.
 
-### Opsi A: Cron 1 Jam Sekali (Paling Disarankan)
+### Opsi A: Otomatis Bawaan `setup:school` + Cron Cadangan
+Saat instalasi dari `git clone`, `npm run setup:school` langsung menulis `AUTO_UPDATE_ENABLED="1"` dan `UPDATE_ONLY_NEW_VERSION="1"` ke `.env`. Anda dapat menambahkan cron OS cadangan:
 ```bash
 cd /www/wwwroot/smkn1pst
 npm run update:cron
 ```
-Perintah ini memasang cron `0 * * * *` (setiap jam ke-0) dengan log di `data/auto-update.log`.
-- Cek status cron & Git: `bash scripts/auto-update.sh --status`
-- Uji tanpa mengubah file: `npm run update:check`
+- Cek versi & status Git/cron: `bash scripts/auto-update.sh --status`
+- Uji cek versi baru tanpa mengubah file: `npm run update:check`
+- Paksa tarik sekarang meski versi sama: `bash scripts/auto-update.sh --force`
 - Hapus jadwal cron: `bash scripts/auto-update.sh --uninstall-cron`
 
-### Opsi B: Auto-Update dari Dalam Aplikasi (`.env`)
-Jika server tidak memakai akses `crontab`, tambahkan di `.env`:
-```env
-AUTO_UPDATE_ENABLED="1"
-AUTO_UPDATE_INTERVAL_MINUTES="60"
-AAPANEL_PROJECT_NAME="absen"
-```
-
-### Opsi C: Auto-Update Instan via aaPanel Webhook / GitHub Actions
+### Opsi B: Webhook / GitHub Actions
 - Di **aaPanel Git Manager / Webhook**, isi script: `bash /www/wwwroot/smkn1pst/scripts/auto-update.sh`
 - Di **GitHub Actions (`.github/workflows/deploy-nodejs.yml`)**, isi Secrets `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` serta Variable `VPS_APP_DIR`.
 
@@ -577,22 +555,11 @@ npm run update:check
 
 ---
 
-## 12. Referensi Environment Variables (`.env`) & Endpoint Penting
+## 12. Konfigurasi Otomatis Internal & Endpoint API Penting
 
-### Variabel `.env` Utama
-| Variabel | Default | Fungsi |
-|---|---|---|
-| `PORT` | `3000` | Port HTTP/WebSocket aplikasi Node.js. Gunakan port berbeda (`3001`, `3002`, ...) per sekolah. |
-| `DATA_DIR` | `./data` | Lokasi database SQLite, snapshots, backup, cache TTS, sesi WA, dan log. |
-| `TZ` | `Asia/Jakarta` | Wajib untuk konsistensi jadwal masuk/pulang dan antrean WhatsApp WIB. |
-| `NODE_ENV` | `production` | Di set `production` saat deploy agar server melayani hasil build `dist/`. |
-| `APP_URL` | *(opsional)* | URL publik domain sekolah (contoh `https://absensi.smk1.sch.id`). |
-| `FACE_SERVICE_URL` | `http://127.0.0.1:8001` | Alamat layanan Python InsightFace internal (jika aktif). |
-| `NODE_WASM_LIVE` | `1` | Mengaktifkan worker wajah bawaan Node.js saat Python face-service tidak aktif. |
-| `DISABLE_NODE_RTSP_WORKER` | `0` | Set `1` jika hanya ingin menggunakan worker Python atau mode hemat CPU. |
-| `PIPER_BIN` / `PIPER_MODEL` | `/usr/local/piper/piper` | Lokasi binary dan model ONNX Piper TTS Bahasa Indonesia (opsional; fallback ke browser TTS). |
-| `SESSION_SECRET` / `INTERNAL_API_TOKEN` | *(auto-generated)* | Token kriptografis sesi login dan API internal; otomatis dibuat jika kosong. |
-| `AUTO_UPDATE_ENABLED` | `0` | Set `1` untuk mengaktifkan pengecekan update GitHub otomatis dari dalam aplikasi Node. |
+Seluruh konfigurasi sistem memiliki default tertanam langsung di kode (**tidak ada variabel environment yang harus diisi manual oleh pengguna**):
+- **Port & Batas WA Gateway**: Port `8003`, alamat internal `http://127.0.0.1:8003`, dan batas aktif `3` browser Chromium tertanam di `services/wa-gateway/config.py` dan `src/server/waGateway.ts`.
+- **Token Internal Otomatis**: Dibuat otomatis saat boot ke `/app/storage/secrets/internal_token` (`chmod 600`) bersama `/app/storage/secrets/runtime.env` (file internal container, bukan untuk diedit manusia).
 
 ### Endpoint API Ringkas
 - **Kesehatan & Setup**: `GET /api/health`, `GET /api/setup/status`, `POST /api/setup/initialize`
@@ -624,7 +591,7 @@ npm run update:check
 | **Halaman putih / Error 404 pada `/node_modules/.vite/...` atau MIME `octet-stream`** | Server dijalankan dengan mode `dev` atau salah buat tipe site (Static/PHP) dengan aturan statis `.js`/`.css`. | Jalankan `npm run build`, ubah Run Opt di aaPanel Node Project dari `dev` ke **`start`**, dan pastikan memakai **Node project + Mapping** (jangan buat PHP/Static site manual). |
 | **Kamera gagal / Error `EACCES` pada FFmpeg** | Izin `+x` binary `@ffmpeg-installer` hilang (sering setelah upload ZIP) atau partisi server `noexec`. | Jalankan `npm run setup:school -- --domain <domain>` atau install FFmpeg sistem (`apt install -y ffmpeg`). Cek `curl -s http://127.0.0.1:<PORT>/api/health` hingga `"ffmpeg_ready":true`. |
 | **Kamera berstatus `OFFLINE` / gambar patah-patah** | Alamat RTSP salah, firewall memblokir port 554, atau stream UDP putus. | Uji URL RTSP dengan tombol **Probe Kamera** di menu Kamera. Pastikan format `rtsp://user:pass@ip:554/...` dan jaringan lokal/VPN kamera lancar. |
-| **Wajah siswa terdeteksi sebagai Anonim terus setelah ganti engine** | Perbedaan dimensi vektor antara `1024-D` (Node WASM) dan `512-D` (Python InsightFace). | Buka **Dashboard** lalu klik tombol **Sinkronkan / Migrasi Embedding** agar seluruh foto profil siswa diekstrak ulang ke dimensi mesin aktif. |
+| **Wajah siswa terdeteksi sebagai Anonim terus setelah upgrade ke Docker InsightFace** | Database masih menyimpan vektor lama (`1024-D` / `16-D` demo) yang tidak cocok dengan `512-D`. | Buka **Dashboard** lalu klik tombol **Sinkronkan ke 512-D** agar seluruh foto profil siswa diekstrak ulang oleh InsightFace. |
 | **Foto klaster anonim ada topi / orang lain ikut masuk** | Pose samping atau wajah orang lain mirip sementara di klaster. | Buka **Penamaan Wajah Anonim** → klik foto → **Zoom `2x / 3x`** → klik **Hapus Foto** pada foto yang salah. Klaster otomatis kembali ke `PENDING` untuk merekam foto pengganti yang bersih. |
 | **WhatsApp berhenti mengirim / terputus** | Sesi WA ter-logout dari HP atau kuota harian mode `WARMUP` (20/hari) habis. | Cek status akun di menu **WhatsApp**. Scan ulang QR jika `Disconnected`, atau ubah ke `ACTIVE` setelah nomor cukup matang. |
 | **Ukuran folder `data/` mendekati batas 10 GB** | Banyak backup manual atau snapshot lama menumpuk. | Buka **Pengaturan → Pembersihan Storage**, atau sistem akan otomatis menjalankan *Emergency Trim* saat menyentuh `9.0 GB` untuk mengembalikannya di bawah `8.0 GB`. |

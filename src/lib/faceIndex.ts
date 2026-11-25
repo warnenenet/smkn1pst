@@ -16,10 +16,15 @@ export interface FaceVectorIndex {
   buckets: Map<number, DimensionBucket>;
 }
 
+export type FaceMatchRejectionReason = 'ambiguous_margin' | 'below_threshold' | 'no_match';
+
 export interface FaceMatchResult {
   bestId: number | null;
   bestSimilarity: number;
   topAnySimilarity: number;
+  secondBestSimilarity: number;
+  margin: number;
+  rejectedReason: FaceMatchRejectionReason | null;
   dimMismatchCount: number;
 }
 
@@ -84,12 +89,15 @@ export function buildFaceVectorIndex(entries: readonly FaceIndexEntry[], version
 }
 
 /**
- * Finds the best matching entity ID above `threshold` in O(N * D) flat Float32Array dot products.
+ * Finds the best matching entity ID above `threshold` with top-1 vs top-2 margin check
+ * in O(N * D) flat Float32Array dot products.
+ * If (top1 - top2) < minMargin (across distinct entity IDs), returns bestId = null with rejectedReason = 'ambiguous_margin'.
  */
 export function findBestFaceMatch(
   index: FaceVectorIndex,
   queryEmbedding: readonly number[],
-  threshold: number
+  threshold: number,
+  minMargin = 0.08
 ): FaceMatchResult {
   const dim = queryEmbedding.length;
   const query = normalizeToFloat32(queryEmbedding);
@@ -102,18 +110,35 @@ export function findBestFaceMatch(
   }
 
   if (!query) {
-    return { bestId: null, bestSimilarity: 0, topAnySimilarity: 0, dimMismatchCount };
+    return {
+      bestId: null,
+      bestSimilarity: 0,
+      topAnySimilarity: 0,
+      secondBestSimilarity: 0,
+      margin: 0,
+      rejectedReason: 'no_match',
+      dimMismatchCount,
+    };
   }
 
   const bucket = index.buckets.get(dim);
   if (!bucket || bucket.count === 0) {
-    return { bestId: null, bestSimilarity: 0, topAnySimilarity: 0, dimMismatchCount };
+    return {
+      bestId: null,
+      bestSimilarity: 0,
+      topAnySimilarity: 0,
+      secondBestSimilarity: 0,
+      margin: 0,
+      rejectedReason: 'no_match',
+      dimMismatchCount,
+    };
   }
 
   const { ids, matrix, count } = bucket;
-  let bestId: number | null = null;
-  let bestSimilarity = 0;
-  let topAnySimilarity = 0;
+  let top1Id: number | null = null;
+  let top1Sim = -Infinity;
+  let top2Id: number | null = null;
+  let top2Sim = -Infinity;
 
   for (let row = 0; row < count; row++) {
     const offset = row * dim;
@@ -132,17 +157,57 @@ export function findBestFaceMatch(
       dot += query[k] * matrix[offset + k];
     }
 
-    if (dot > topAnySimilarity) topAnySimilarity = dot;
-    if (dot >= threshold && dot > bestSimilarity) {
-      bestSimilarity = dot;
-      bestId = ids[row];
+    const rowId = ids[row];
+    if (dot > top1Sim) {
+      if (top1Id !== null && top1Id !== rowId && top1Sim > top2Sim) {
+        top2Sim = top1Sim;
+        top2Id = top1Id;
+      }
+      top1Sim = dot;
+      top1Id = rowId;
+    } else if (rowId !== top1Id && dot > top2Sim) {
+      top2Sim = dot;
+      top2Id = rowId;
     }
   }
 
+  const safeTop1 = Number.isFinite(top1Sim) ? Math.max(0, top1Sim) : 0;
+  const safeTop2 = top2Id !== null && Number.isFinite(top2Sim) ? Math.max(0, top2Sim) : 0;
+  const hasRunnerUp = top2Id !== null;
+  const margin = hasRunnerUp ? Math.max(0, safeTop1 - safeTop2) : safeTop1;
+  const effectiveMinMargin = Number.isFinite(minMargin) ? Math.max(0, minMargin) : 0.08;
+
+  if (top1Id === null || safeTop1 < threshold) {
+    return {
+      bestId: null,
+      bestSimilarity: 0,
+      topAnySimilarity: safeTop1,
+      secondBestSimilarity: safeTop2,
+      margin,
+      rejectedReason: top1Id === null ? 'no_match' : 'below_threshold',
+      dimMismatchCount,
+    };
+  }
+
+  if (hasRunnerUp && effectiveMinMargin > 0 && margin < effectiveMinMargin - 1e-9) {
+    return {
+      bestId: null,
+      bestSimilarity: 0,
+      topAnySimilarity: safeTop1,
+      secondBestSimilarity: safeTop2,
+      margin,
+      rejectedReason: 'ambiguous_margin',
+      dimMismatchCount,
+    };
+  }
+
   return {
-    bestId,
-    bestSimilarity,
-    topAnySimilarity,
+    bestId: top1Id,
+    bestSimilarity: safeTop1,
+    topAnySimilarity: safeTop1,
+    secondBestSimilarity: safeTop2,
+    margin,
+    rejectedReason: null,
     dimMismatchCount,
   };
 }

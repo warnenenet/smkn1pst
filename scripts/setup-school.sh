@@ -16,7 +16,7 @@ cd "$APP_DIR"
 DOMAIN=""
 REQUESTED_PORT=""
 START_PORT=3001
-AUTO_UPDATE=0
+AUTO_UPDATE="auto"
 AAPANEL_PROJECT=""
 SKIP_BUILD=0
 SCHOOL_NAME=""
@@ -37,7 +37,8 @@ Opsi:
   --admin-email <email>     Email login Admin (opsional; jika ingin langsung buat Admin via CLI)
   --admin-password <pass>   Password Admin min. 8 karakter (opsional; jika buat Admin via CLI)
   --aapanel-name <nama>     Nama Node Project di aaPanel (untuk auto-update)
-  --auto-update             Aktifkan AUTO_UPDATE_ENABLED="1" (tiap 60 menit)
+  --auto-update             Aktifkan AUTO_UPDATE_ENABLED="1" (otomatis aktif jika repo Git ada)
+  --no-auto-update          Matikan auto-update GitHub otomatis
   --skip-build              Lewati npm run build
   -h, --help                Tampilkan bantuan ini
 EOF
@@ -54,11 +55,20 @@ while [[ $# -gt 0 ]]; do
     --admin-password) ADMIN_PASSWORD="${2:-}"; shift 2 ;;
     --aapanel-name) AAPANEL_PROJECT="${2:-}"; shift 2 ;;
     --auto-update) AUTO_UPDATE=1; shift ;;
+    --no-auto-update) AUTO_UPDATE=0; shift ;;
     --skip-build) SKIP_BUILD=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Opsi tidak dikenal: $1" >&2; exit 1 ;;
   esac
 done
+
+if [[ "$AUTO_UPDATE" == "auto" ]]; then
+  if [[ -d "$APP_DIR/.git" ]]; then
+    AUTO_UPDATE=1
+  else
+    AUTO_UPDATE=0
+  fi
+fi
 
 command -v node >/dev/null 2>&1 || { echo "ERROR: Node.js tidak ditemukan. Install Node.js 22 LTS atau 24 LTS terlebih dahulu." >&2; exit 1; }
 
@@ -84,12 +94,13 @@ is_port_free() {
 
 is_port_claimed_in_siblings() {
   local p="$1"
+  local var_name="${2:-PORT}"
   local parent_dir
   parent_dir="$(dirname "$APP_DIR")"
   for env_f in "$parent_dir"/*/.env; do
     [[ -f "$env_f" ]] || continue
     [[ "$env_f" == "$APP_DIR/.env" ]] && continue
-    if grep -Eq "^[[:space:]]*PORT=[\"']?${p}[\"']?[[:space:]]*$" "$env_f" 2>/dev/null; then
+    if grep -Eq "^[[:space:]]*${var_name}=[\"']?${p}[\"']?[[:space:]]*$" "$env_f" 2>/dev/null; then
       return 0
     fi
   done
@@ -108,7 +119,7 @@ fi
 
 if [[ -z "$CHOSEN_PORT" ]]; then
   for p in $(seq "$START_PORT" 3999); do
-    if ! is_port_claimed_in_siblings "$p" && is_port_free "$p"; then
+    if ! is_port_claimed_in_siblings "$p" "PORT" && is_port_free "$p"; then
       CHOSEN_PORT="$p"
       break
     fi
@@ -116,6 +127,62 @@ if [[ -z "$CHOSEN_PORT" ]]; then
 fi
 
 [[ -n "$CHOSEN_PORT" ]] || { echo "ERROR: Tidak menemukan port kosong di rentang ${START_PORT}..3999." >&2; exit 1; }
+
+CHOSEN_FACE_PORT=""
+if [[ -f "$APP_DIR/.env" ]] && grep -Eq "^[[:space:]]*FACE_PORT=[\"']?[0-9]+[\"']?" "$APP_DIR/.env"; then
+  EXISTING_FACE_PORT="$(grep -E "^[[:space:]]*FACE_PORT=" "$APP_DIR/.env" | head -n 1 | sed -E 's/^FACE_PORT=["'\'']?([0-9]+)["'\'']?.*/\1/')"
+  if [[ -n "$EXISTING_FACE_PORT" ]]; then
+    CHOSEN_FACE_PORT="$EXISTING_FACE_PORT"
+  fi
+fi
+
+if [[ -z "$CHOSEN_FACE_PORT" ]]; then
+  for p in $(seq 8001 8099); do
+    if ! is_port_claimed_in_siblings "$p" "FACE_PORT" && is_port_free "$p"; then
+      CHOSEN_FACE_PORT="$p"
+      break
+    fi
+  done
+fi
+[[ -n "$CHOSEN_FACE_PORT" ]] || CHOSEN_FACE_PORT=8001
+
+TARGET_OWNER=""
+if [[ "$(id -u)" -eq 0 ]]; then
+  if [[ -d "/www/server" ]] && id -u www >/dev/null 2>&1; then
+    TARGET_OWNER="www:www"
+  else
+    PKG_OWNER="$(stat -c '%U:%G' "$APP_DIR/package.json" 2>/dev/null || echo 'root:root')"
+    if [[ "$PKG_OWNER" != "root:root" && "$PKG_OWNER" != ":" ]]; then
+      TARGET_OWNER="$PKG_OWNER"
+    fi
+  fi
+fi
+
+FACE_UID="$(id -u)"
+FACE_GID="$(id -g)"
+if [[ "$TARGET_OWNER" == "www:www" ]] && id -u www >/dev/null 2>&1; then
+  FACE_UID="$(id -u www)"
+  FACE_GID="$(id -g www)"
+elif [[ -n "$TARGET_OWNER" ]]; then
+  OWNER_USER="${TARGET_OWNER%%:*}"
+  if id -u "$OWNER_USER" >/dev/null 2>&1; then
+    FACE_UID="$(id -u "$OWNER_USER")"
+    FACE_GID="$(id -g "$OWNER_USER")"
+  fi
+fi
+
+SECRETS_DIR="$APP_DIR/data/secrets"
+TOKEN_FILE="$SECRETS_DIR/internal_token"
+mkdir -p "$SECRETS_DIR"
+chmod 700 "$SECRETS_DIR" 2>/dev/null || true
+if [[ ! -s "$TOKEN_FILE" ]]; then
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex 48 > "$TOKEN_FILE"
+  else
+    node -e 'process.stdout.write(require("crypto").randomBytes(48).toString("hex") + "\n")' > "$TOKEN_FILE"
+  fi
+fi
+chmod 600 "$TOKEN_FILE" 2>/dev/null || true
 
 upsert_env() {
   local key="$1"
@@ -142,18 +209,40 @@ upsert_env() {
   fi
 }
 
+remove_env_key() {
+  local key="$1"
+  local file="$APP_DIR/.env"
+  [[ -f "$file" ]] || return 0
+  node -e '
+    const fs = require("fs");
+    const [file, key] = process.argv.slice(1);
+    const re = new RegExp("^\\s*" + key + "=");
+    const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter((l) => !re.test(l));
+    fs.writeFileSync(file, lines.join("\n").replace(/\n*$/, "\n"));
+  ' "$file" "$key"
+}
+
+remove_env_key "NODE_WASM_LIVE"
 upsert_env "NODE_ENV" "production"
 upsert_env "TZ" "Asia/Jakarta"
 upsert_env "PORT" "$CHOSEN_PORT"
 upsert_env "HOST" "127.0.0.1"
 upsert_env "DATA_DIR" "./data"
-upsert_env "NODE_WASM_LIVE" "1"
+upsert_env "FACE_PORT" "$CHOSEN_FACE_PORT"
+upsert_env "FACE_SERVICE_URL" "http://127.0.0.1:${CHOSEN_FACE_PORT}"
+upsert_env "WEB_BACKEND_URL" "http://127.0.0.1:${CHOSEN_PORT}"
+upsert_env "COMPOSE_PROJECT_NAME" "absensi_${CHOSEN_PORT}"
+upsert_env "FACE_UID" "$FACE_UID"
+upsert_env "FACE_GID" "$FACE_GID"
 if [[ -n "$DOMAIN" ]]; then
   upsert_env "APP_URL" "https://${DOMAIN}"
 fi
 if [[ "$AUTO_UPDATE" -eq 1 ]]; then
   upsert_env "AUTO_UPDATE_ENABLED" "1"
   upsert_env "AUTO_UPDATE_INTERVAL_MINUTES" "60"
+  upsert_env "UPDATE_ONLY_NEW_VERSION" "1"
+else
+  upsert_env "AUTO_UPDATE_ENABLED" "0"
 fi
 if [[ -n "$AAPANEL_PROJECT" ]]; then
   upsert_env "AAPANEL_PROJECT_NAME" "$AAPANEL_PROJECT"
@@ -176,11 +265,11 @@ fix_binary_permissions() {
   done
 }
 
-mkdir -p "$APP_DIR/data/snapshots" "$APP_DIR/data/tts_cache" "$APP_DIR/data/wa_auth" "$APP_DIR/data/backups"
-chmod 700 "$APP_DIR/data" 2>/dev/null || true
+mkdir -p "$APP_DIR/data/snapshots" "$APP_DIR/data/tts_cache" "$APP_DIR/data/secrets" "$APP_DIR/data/wa_gateway/wa_sessions" "$APP_DIR/data/wa_gateway/wa_qr" "$APP_DIR/data/backups" "$APP_DIR/storage/debug"
+chmod 700 "$APP_DIR/data" "$APP_DIR/data/secrets" 2>/dev/null || true
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  if [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]] || [[ ! -f "$APP_DIR/node_modules/express/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/@vladmandic/human/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/@tensorflow/tfjs-backend-wasm/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
+  if [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]] || [[ ! -f "$APP_DIR/node_modules/express/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]] || [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
     echo "[setup-school] node_modules belum lengkap/rusak; menjalankan npm install..."
     rm -rf "$APP_DIR/node_modules/ws" 2>/dev/null || true
     npm install --no-audit --no-fund
@@ -218,6 +307,52 @@ if ! verify_ffmpeg_runtime; then
     fi
   else
     echo "[setup-school] Jalankan sebagai root bila perlu FFmpeg sistem: sudo apt install -y ffmpeg"
+  fi
+fi
+
+# Setup Python + Chromium Headless WA Gateway Service (otomatis dalam satu setup)
+WA_GATEWAY_DIR="$APP_DIR/services/wa-gateway"
+WA_GATEWAY_READY="TIDAK_AKTIF"
+if [[ -d "$WA_GATEWAY_DIR" && -f "$WA_GATEWAY_DIR/requirements.txt" ]]; then
+  echo "[setup-school] Menyiapkan Python WA Gateway (Chromium + Selenium anti-deteksi)..."
+  HAS_CHROME=0
+  if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1; then
+    HAS_CHROME=1
+  fi
+  if [[ "$HAS_CHROME" -eq 0 ]] || ! command -v python3 >/dev/null 2>&1 || ! python3 -m venv --help >/dev/null 2>&1; then
+    if [[ "$(id -u)" -eq 0 ]]; then
+      if command -v apt-get >/dev/null 2>&1; then
+        echo "[setup-school] Menginstal Python3 venv, Chromium, Chromedriver, Xvfb & fonts..."
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+          python3 python3-venv python3-pip \
+          chromium chromium-driver xvfb \
+          fonts-liberation fonts-noto-color-emoji || \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+          python3 python3-venv python3-pip \
+          chromium-browser chromium-chromedriver xvfb \
+          fonts-liberation fonts-noto-color-emoji || true
+      elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y -q python3 chromium chromedriver xorg-x11-server-Xvfb liberation-fonts google-noto-emoji-color-fonts || true
+      fi
+    else
+      echo "[setup-school] PERINGATAN: Chromium / python3-venv belum lengkap. Jalankan sebagai root:"
+      echo "  sudo apt-get update && sudo apt-get install -y python3-venv chromium chromium-driver xvfb fonts-liberation fonts-noto-color-emoji"
+    fi
+  fi
+
+  if command -v python3 >/dev/null 2>&1 && python3 -m venv --help >/dev/null 2>&1; then
+    if [[ ! -x "$WA_GATEWAY_DIR/.venv/bin/pip" ]]; then
+      python3 -m venv "$WA_GATEWAY_DIR/.venv" || true
+    fi
+    if [[ -x "$WA_GATEWAY_DIR/.venv/bin/pip" ]]; then
+      "$WA_GATEWAY_DIR/.venv/bin/pip" install --quiet --upgrade pip || true
+      if "$WA_GATEWAY_DIR/.venv/bin/pip" install --quiet -r "$WA_GATEWAY_DIR/requirements.txt"; then
+        WA_GATEWAY_READY="SIAP (port 8003)"
+      else
+        echo "[setup-school] PERINGATAN: Gagal memasang Python packages WA Gateway; cek koneksi pip."
+      fi
+    fi
   fi
 fi
 
@@ -281,22 +416,61 @@ ADMIN_CHECK_STATUS="$(
   ' | tail -n 1
 )"
 
-if [[ "$(id -u)" -eq 0 ]]; then
-  TARGET_OWNER=""
-  if [[ -d "/www/server" ]] && id -u www >/dev/null 2>&1; then
-    TARGET_OWNER="www:www"
+if [[ -n "$TARGET_OWNER" ]]; then
+  echo "[setup-school] Menyelaraskan owner file ke ${TARGET_OWNER}..."
+  chown -R "$TARGET_OWNER" "$APP_DIR"
+  chmod 600 "$APP_DIR/.env" "$TOKEN_FILE" 2>/dev/null || true
+  chmod 700 "$APP_DIR/data" "$APP_DIR/data/secrets" 2>/dev/null || true
+  OWNER_USER_ONLY="${TARGET_OWNER%%:*}"
+  if getent group docker >/dev/null 2>&1 && id -u "$OWNER_USER_ONLY" >/dev/null 2>&1; then
+    usermod -aG docker "$OWNER_USER_ONLY" 2>/dev/null || true
+  fi
+fi
+
+# Setup Docker InsightFace Face AI Service (SCRFD + ArcFace 512-D + Rust accel)
+FACE_AI_READY="TIDAK_AKTIF"
+if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1; then
+  if ! docker info >/dev/null 2>&1 && [[ "$(id -u)" -eq 0 ]]; then
+    systemctl start docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true
+    sleep 2
+  fi
+  COMPOSE_CMD=""
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+  fi
+
+  if [[ -z "$COMPOSE_CMD" ]]; then
+    FACE_AI_READY="BELUM_AKTIF (docker compose plugin belum terpasang)"
+    echo "[setup-school] PERINGATAN: Docker ditemukan tetapi plugin 'docker compose' belum terpasang."
+  elif ! docker info >/dev/null 2>&1; then
+    FACE_AI_READY="BELUM_AKTIF (Docker daemon mati atau butuh akses root/grup docker)"
+    echo "[setup-school] PERINGATAN: Docker daemon tidak dapat diakses saat ini (jalankan setup sebagai root/sudo atau jalankan: sudo systemctl start docker)."
   else
-    PKG_OWNER="$(stat -c '%U:%G' "$APP_DIR/package.json" 2>/dev/null || echo 'root:root')"
-    if [[ "$PKG_OWNER" != "root:root" && "$PKG_OWNER" != ":" ]]; then
-      TARGET_OWNER="$PKG_OWNER"
+    echo "[setup-school] Membangun & menyalakan Docker InsightFace Face AI (port ${CHOSEN_FACE_PORT})..."
+    if $COMPOSE_CMD -f "$APP_DIR/docker-compose.face.yml" up -d --build; then
+      FACE_HEALTH_OK=0
+      for _ in $(seq 1 30); do
+        if curl -sf "http://127.0.0.1:${CHOSEN_FACE_PORT}/health" >/dev/null 2>&1; then
+          FACE_HEALTH_OK=1
+          break
+        fi
+        sleep 2
+      done
+      if [[ "$FACE_HEALTH_OK" -eq 1 ]]; then
+        FACE_AI_READY="SIAP (Docker InsightFace port ${CHOSEN_FACE_PORT})"
+      else
+        FACE_AI_READY="SEDANG_STARTUP (cek: docker compose -f docker-compose.face.yml logs -f)"
+      fi
+    else
+      FACE_AI_READY="GAGAL_BUILD (cek: docker compose -f docker-compose.face.yml up -d --build)"
+      echo "[setup-school] PERINGATAN: Gagal build/start container Docker InsightFace."
     fi
   fi
-  if [[ -n "$TARGET_OWNER" ]]; then
-    echo "[setup-school] Menyelaraskan owner file ke ${TARGET_OWNER}..."
-    chown -R "$TARGET_OWNER" "$APP_DIR"
-    chmod 600 "$APP_DIR/.env" 2>/dev/null || true
-    chmod 700 "$APP_DIR/data" 2>/dev/null || true
-  fi
+else
+  FACE_AI_READY="DOCKER_BELUM_TERPASANG (install Docker lalu jalankan ulang npm run setup:school)"
+  echo "[setup-school] PERINGATAN: Docker belum terpasang. Install Docker terlebih dahulu agar Face AI InsightFace 512-D aktif otomatis."
 fi
 
 DOMAIN_LABEL="${DOMAIN:-domain-sekolah-anda.sch.id}"
@@ -306,6 +480,8 @@ echo " SETUP SEKOLAH SELESAI — SIAP DIJALANKAN"
 echo "========================================================================"
 echo " Folder Project : $APP_DIR"
 echo " Port Terpilih  : $CHOSEN_PORT (tersimpan di .env, bind 127.0.0.1)"
+echo " Face AI (Docker): ${FACE_AI_READY}"
+echo " WA Gateway     : ${WA_GATEWAY_READY} (auto-start bersama Node server)"
 echo " Folder Data DB : $APP_DIR/data/absensi.sqlite"
 echo " Password Default: TIDAK ADA (aman dari login bawaan)"
 echo ""

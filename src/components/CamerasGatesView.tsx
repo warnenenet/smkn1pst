@@ -15,6 +15,7 @@ import {
   formatManualResolution,
   maskRtspCredentials,
   normalizeCaptureMaxWidth,
+  normalizeMaxFaceSize,
   normalizeMinFaceSize,
   parseResolutionDimensions,
 } from '../lib/attendanceEngine';
@@ -91,6 +92,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
   const [calFps, setCalFps] = useState(5);
   const [calUseManualFace, setCalUseManualFace] = useState(true);
   const [calFacePx, setCalFacePx] = useState(100);
+  const [calMaxFacePx, setCalMaxFacePx] = useState(0);
   const [calCapMode, setCalCapMode] = useState<'GLOBAL' | 'CUSTOM' | 'PRESET'>('GLOBAL');
   const [calCapWidth, setCalCapWidth] = useState(1280);
   const [calSaving, setCalSaving] = useState(false);
@@ -102,12 +104,19 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
     setCalWidth(parsed.width);
     setCalHeight(parsed.height);
     setCalFps(cam.fps || 5);
-    if (cam.min_face_size !== null && cam.min_face_size !== undefined) {
+    const hasManualRange =
+      (cam.min_face_size !== null && cam.min_face_size !== undefined) ||
+      (cam.max_face_size !== null && cam.max_face_size !== undefined);
+    if (hasManualRange) {
+      const nextMin = normalizeMinFaceSize(cam.min_face_size ?? db.settings.min_face_size);
       setCalUseManualFace(true);
-      setCalFacePx(normalizeMinFaceSize(cam.min_face_size));
+      setCalFacePx(nextMin);
+      setCalMaxFacePx(normalizeMaxFaceSize(cam.max_face_size ?? db.settings.max_face_size ?? 0, nextMin));
     } else {
+      const globalMin = normalizeMinFaceSize(db.settings.min_face_size);
       setCalUseManualFace(false);
-      setCalFacePx(normalizeMinFaceSize(db.settings.min_face_size));
+      setCalFacePx(globalMin);
+      setCalMaxFacePx(normalizeMaxFaceSize(db.settings.max_face_size ?? 0, globalMin));
     }
     if (cam.capture_max_width === null || cam.capture_max_width === undefined) {
       setCalCapMode('GLOBAL');
@@ -201,6 +210,8 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
     cameraResolution: calResolusiStr,
     globalMinFaceSize: db.settings.min_face_size,
     cameraMinFaceSize: calUseManualFace ? calFacePx : null,
+    globalMaxFaceSize: db.settings.max_face_size ?? 0,
+    cameraMaxFaceSize: calUseManualFace ? calMaxFacePx : null,
     globalCaptureMaxWidth: db.settings.capture_max_width,
     cameraCaptureMaxWidth: calEffectiveCapSetting,
   });
@@ -210,10 +221,14 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
     if (!calCamera) return;
     setCalSaving(true);
     try {
+      const nextMinFace = calUseManualFace ? normalizeMinFaceSize(calFacePx) : null;
       await onUpdateCamera(calCamera.id, {
         resolusi: calResolusiStr,
         fps: Math.max(1, Math.min(30, Math.round(Number(calFps) || 5))),
-        min_face_size: calUseManualFace ? normalizeMinFaceSize(calFacePx) : null,
+        min_face_size: nextMinFace,
+        max_face_size: calUseManualFace
+          ? normalizeMaxFaceSize(calMaxFacePx, nextMinFace ?? db.settings.min_face_size)
+          : null,
         capture_max_width: calEffectiveCapSetting,
       });
     } finally {
@@ -223,6 +238,14 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
 
   const boxWidthPct = Math.min(95, Math.max(1, (calStats.targetCameraPx / Math.max(1, calStats.cameraWidth)) * 100));
   const boxHeightPct = Math.min(95, Math.max(1, (calStats.targetCameraPx / Math.max(1, calStats.cameraHeight)) * 100));
+  const maxBoxWidthPct =
+    calStats.targetCameraMaxPx > 0
+      ? Math.min(95, Math.max(boxWidthPct, (calStats.targetCameraMaxPx / Math.max(1, calStats.cameraWidth)) * 100))
+      : 0;
+  const maxBoxHeightPct =
+    calStats.targetCameraMaxPx > 0
+      ? Math.min(95, Math.max(boxHeightPct, (calStats.targetCameraMaxPx / Math.max(1, calStats.cameraHeight)) * 100))
+      : 0;
 
   return (
     <div className="space-y-6">
@@ -380,71 +403,92 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
             {/* Pratinjau Visual Kalibrasi Proporsional */}
             <div className="lg:col-span-7 space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-600">
-                <span className="font-medium flex items-center gap-1.5">
-                  <Crosshair className="w-3.5 h-3.5 text-emerald-600" />
-                  Simulasi Skala Bounding ({calStats.targetCameraPx}×{calStats.targetCameraPx} px di frame {calStats.cameraWidth}×{calStats.cameraHeight})
-                </span>
-                <span className="font-mono text-[11px] text-slate-500">
-                  Klik area gambar untuk menggeser kotak uji
-                </span>
-              </div>
+                  <span className="font-medium flex items-center gap-1.5">
+                    <Crosshair className="w-3.5 h-3.5 text-emerald-600" />
+                    Simulasi Rentang Bounding ({calStats.targetCameraPx}
+                    {calStats.targetCameraMaxPx > 0 ? `–${calStats.targetCameraMaxPx}` : '+'} px di frame {calStats.cameraWidth}×{calStats.cameraHeight})
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-500">
+                    Klik area gambar untuk menggeser kotak uji
+                  </span>
+                </div>
 
-              <div className="bg-slate-950 rounded-lg p-3 flex items-center justify-center border border-slate-800">
-                <div
-                  role="button"
-                  tabIndex={0}
-                  aria-label="Area simulasi bounding wajah pada resolusi kamera"
-                  onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const xPct = Math.max(8, Math.min(92, ((e.clientX - rect.left) / rect.width) * 100));
-                    const yPct = Math.max(10, Math.min(90, ((e.clientY - rect.top) / rect.height) * 100));
-                    setReticlePos({ xPct, yPct });
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'ArrowLeft') setReticlePos((p) => ({ ...p, xPct: Math.max(10, p.xPct - 5) }));
-                    if (e.key === 'ArrowRight') setReticlePos((p) => ({ ...p, xPct: Math.min(90, p.xPct + 5) }));
-                    if (e.key === 'ArrowUp') setReticlePos((p) => ({ ...p, yPct: Math.max(10, p.yPct - 5) }));
-                    if (e.key === 'ArrowDown') setReticlePos((p) => ({ ...p, yPct: Math.min(90, p.yPct + 5) }));
-                  }}
-                  style={{ aspectRatio: `${calStats.cameraWidth} / ${calStats.cameraHeight}` }}
-                  className="relative w-full max-h-[340px] bg-slate-900 rounded overflow-hidden border border-slate-700 cursor-crosshair select-none"
-                >
-                  {previewData?.camera_id === calCamera.id && previewData.snapshotDataUrl ? (
-                    <img
-                      src={previewData.snapshotDataUrl}
-                      alt={`Snapshot kalibrasi ${calCamera.nama_kamera}`}
-                      className="w-full h-full object-fill opacity-95"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-start justify-start p-3 text-slate-400 font-mono text-xs text-left bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px]">
-                      <div className="bg-slate-950/75 border border-slate-800 rounded px-2.5 py-1.5 max-w-full">
-                        <div className="text-slate-200 font-semibold text-[11px] sm:text-xs">
-                          Frame Kamera Kalibrasi {calStats.cameraWidth} × {calStats.cameraHeight} px
-                        </div>
-                        <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5">
-                          Klik &quot;Uji &amp; Preview&quot; untuk melihat video asli di belakang kotak uji.
+                <div className="bg-slate-950 rounded-lg p-3 flex items-center justify-center border border-slate-800">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Area simulasi bounding wajah pada resolusi kamera"
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const xPct = Math.max(8, Math.min(92, ((e.clientX - rect.left) / rect.width) * 100));
+                      const yPct = Math.max(10, Math.min(90, ((e.clientY - rect.top) / rect.height) * 100));
+                      setReticlePos({ xPct, yPct });
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowLeft') setReticlePos((p) => ({ ...p, xPct: Math.max(10, p.xPct - 5) }));
+                      if (e.key === 'ArrowRight') setReticlePos((p) => ({ ...p, xPct: Math.min(90, p.xPct + 5) }));
+                      if (e.key === 'ArrowUp') setReticlePos((p) => ({ ...p, yPct: Math.max(10, p.yPct - 5) }));
+                      if (e.key === 'ArrowDown') setReticlePos((p) => ({ ...p, yPct: Math.min(90, p.yPct + 5) }));
+                    }}
+                    style={{ aspectRatio: `${calStats.cameraWidth} / ${calStats.cameraHeight}` }}
+                    className="relative w-full max-h-[340px] bg-slate-900 rounded overflow-hidden border border-slate-700 cursor-crosshair select-none"
+                  >
+                    {previewData?.camera_id === calCamera.id && previewData.snapshotDataUrl ? (
+                      <img
+                        src={previewData.snapshotDataUrl}
+                        alt={`Snapshot kalibrasi ${calCamera.nama_kamera}`}
+                        className="w-full h-full object-fill opacity-95"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-start justify-start p-3 text-slate-400 font-mono text-xs text-left bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px]">
+                        <div className="bg-slate-950/75 border border-slate-800 rounded px-2.5 py-1.5 max-w-full">
+                          <div className="text-slate-200 font-semibold text-[11px] sm:text-xs">
+                            Frame Kamera Kalibrasi {calStats.cameraWidth} × {calStats.cameraHeight} px
+                          </div>
+                          <div className="text-[10px] sm:text-[11px] text-slate-400 mt-0.5">
+                            Klik &quot;Uji &amp; Preview&quot; untuk melihat video asli di belakang kotak uji.
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {/* Kotak Bounding Wajah Proporsional */}
-                  <div
-                    style={{
-                      width: `${boxWidthPct}%`,
-                      height: `${boxHeightPct}%`,
-                      left: `${reticlePos.xPct}%`,
-                      top: `${reticlePos.yPct}%`,
-                      transform: 'translate(-50%, -50%)',
-                    }}
-                    className="absolute border-2 border-emerald-400 bg-emerald-400/15 shadow-[0_0_0_1px_rgba(0,0,0,0.6)] pointer-events-none flex items-end justify-center"
-                  >
-                    <span className="translate-y-full mt-1 px-1.5 py-0.5 rounded bg-slate-950/90 text-emerald-300 font-mono text-[10px] whitespace-nowrap border border-emerald-500/40 tabular-nums">
-                      {calStats.targetCameraPx}×{calStats.targetCameraPx} px ({calStats.widthPercent}%)
-                    </span>
+                    {/* Kotak Maksimal Bounding (Amber Dashed) jika diatur > 0 */}
+                    {calStats.targetCameraMaxPx > 0 && (
+                      <div
+                        data-testid="cal-max-face-box"
+                        style={{
+                          width: `${maxBoxWidthPct}%`,
+                          height: `${maxBoxHeightPct}%`,
+                          left: `${reticlePos.xPct}%`,
+                          top: `${reticlePos.yPct}%`,
+                          transform: 'translate(-50%, -50%)',
+                        }}
+                        className="absolute border-2 border-dashed border-amber-400 bg-amber-400/10 pointer-events-none flex items-start justify-center"
+                      >
+                        <span className="-translate-y-full mb-1 px-1.5 py-0.5 rounded bg-slate-950/90 text-amber-300 font-mono text-[10px] whitespace-nowrap border border-amber-500/40 tabular-nums">
+                          MAX {calStats.targetCameraMaxPx}×{calStats.targetCameraMaxPx} px ({calStats.maxWidthPercent}%)
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Kotak Minimal Bounding Wajah Proporsional (Hijau) */}
+                    <div
+                      data-testid="cal-min-face-box"
+                      style={{
+                        width: `${boxWidthPct}%`,
+                        height: `${boxHeightPct}%`,
+                        left: `${reticlePos.xPct}%`,
+                        top: `${reticlePos.yPct}%`,
+                        transform: 'translate(-50%, -50%)',
+                      }}
+                      className="absolute border-2 border-emerald-400 bg-emerald-400/15 shadow-[0_0_0_1px_rgba(0,0,0,0.6)] pointer-events-none flex items-end justify-center"
+                    >
+                      <span className="translate-y-full mt-1 px-1.5 py-0.5 rounded bg-slate-950/90 text-emerald-300 font-mono text-[10px] whitespace-nowrap border border-emerald-500/40 tabular-nums">
+                        MIN {calStats.targetCameraPx}×{calStats.targetCameraPx} px ({calStats.widthPercent}%)
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
             </div>
 
             {/* Kontrol Form Kalibrasi */}
@@ -534,7 +578,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
 
               <div className="bg-slate-50 border border-slate-200 rounded-md p-3 space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-800">2. Pengaturan Bounding Wajah (px)</span>
+                  <span className="text-xs font-semibold text-slate-800">2. Rentang Bounding Wajah (px)</span>
                   <select
                     aria-label="Mode Bounding Wajah Kamera"
                     value={calUseManualFace ? 'MANUAL' : 'GLOBAL'}
@@ -542,12 +586,15 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                     className="border border-slate-300 rounded px-2 py-1 text-[11px] bg-white font-medium"
                   >
                     <option value="MANUAL">Set Manual Per Kamera</option>
-                    <option value="GLOBAL">Ikuti Global ({db.settings.min_face_size} px)</option>
+                    <option value="GLOBAL">
+                      Ikuti Global ({db.settings.min_face_size}
+                      {(db.settings.max_face_size ?? 0) > 0 ? `–${db.settings.max_face_size}` : '+'} px)
+                    </option>
                   </select>
                 </div>
 
                 {calUseManualFace && (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     <div className="flex items-center gap-2">
                       <label htmlFor="cal-face-px" className="text-xs text-slate-600 whitespace-nowrap">
                         Minimal Wajah:
@@ -559,7 +606,7 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                         max="4096"
                         value={calFacePx}
                         onChange={(e) => setCalFacePx(Number(e.target.value))}
-                        className="w-28 border border-slate-300 rounded px-2.5 py-1 text-xs font-mono bg-white font-semibold"
+                        className="w-24 border border-slate-300 rounded px-2.5 py-1 text-xs font-mono bg-white font-semibold"
                       />
                       <span className="text-xs font-mono text-slate-500">px (16–4096)</span>
                     </div>
@@ -587,6 +634,40 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                           {px} px
                         </button>
                       ))}
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <label htmlFor="cal-max-face-px" className="text-xs text-slate-600 whitespace-nowrap">
+                          Maksimal Wajah:
+                        </label>
+                        <input
+                          id="cal-max-face-px"
+                          type="number"
+                          min="0"
+                          max="4096"
+                          value={calMaxFacePx}
+                          onChange={(e) => setCalMaxFacePx(Number(e.target.value))}
+                          className="w-24 border border-slate-300 rounded px-2.5 py-1 text-xs font-mono bg-white font-semibold"
+                        />
+                        <span className="text-xs font-mono text-slate-500">px (0 = Bebas)</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[0, 250, 400, 600, 900].map((px) => (
+                          <button
+                            key={`max-${px}`}
+                            type="button"
+                            onClick={() => setCalMaxFacePx(px)}
+                            className={`px-2 py-0.5 text-[11px] font-mono rounded border ${
+                              calMaxFacePx === px
+                                ? 'bg-amber-600 text-white border-amber-600'
+                                : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                            }`}
+                          >
+                            {px === 0 ? 'Bebas' : `${px} px`}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -647,13 +728,22 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                   Resolusi Kamera: <strong>{calStats.cameraWidth}×{calStats.cameraHeight} px</strong>
                 </div>
                 <div>
-                  Target Bounding di Kamera: <strong>{calStats.targetCameraPx}×{calStats.targetCameraPx} px</strong> ({calStats.widthPercent}% lebar)
+                  Rentang Bounding di Kamera:{' '}
+                  <strong>
+                    {calStats.targetCameraPx}
+                    {calStats.targetCameraMaxPx > 0 ? `–${calStats.targetCameraMaxPx}` : '+'} px
+                  </strong>{' '}
+                  ({calStats.widthPercent}%{calStats.maxWidthPercent > 0 ? `–${calStats.maxWidthPercent}%` : '+'} lebar)
                 </div>
                 <div>
                   Frame Capture AI: <strong>{calStats.effectiveFrameWidth}×{calStats.effectiveFrameHeight} px</strong>
                 </div>
                 <div className="text-emerald-800 pt-0.5">
-                  Batas Efektif Detektor AI: <strong>{calStats.effectiveMinFacePx} px</strong>
+                  Batas Efektif Detektor AI:{' '}
+                  <strong>
+                    {calStats.effectiveMinFacePx}
+                    {calStats.effectiveMaxFacePx > 0 ? `–${calStats.effectiveMaxFacePx}` : '+'} px
+                  </strong>
                 </div>
               </div>
 
@@ -877,10 +967,14 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                   cameraResolution: c.resolusi,
                   globalMinFaceSize: db.settings.min_face_size,
                   cameraMinFaceSize: c.min_face_size,
+                  globalMaxFaceSize: db.settings.max_face_size ?? 0,
+                  cameraMaxFaceSize: c.max_face_size,
                   globalCaptureMaxWidth: db.settings.capture_max_width,
                   cameraCaptureMaxWidth: c.capture_max_width,
                 });
-                const isManualFace = c.min_face_size !== null && c.min_face_size !== undefined;
+                const isManualFace =
+                  (c.min_face_size !== null && c.min_face_size !== undefined) ||
+                  (c.max_face_size !== null && c.max_face_size !== undefined);
 
                 return (
                   <tr key={c.id}>
@@ -892,7 +986,10 @@ export const CamerasGatesView: React.FC<CamerasGatesViewProps> = ({
                         {c.resolusi} · {c.fps} FPS · Capture {camCal.effectiveFrameWidth} px
                       </div>
                       <div className="text-[11px] font-mono tabular-nums text-emerald-700">
-                        Bounding: {isManualFace ? `Manual ${camCal.targetCameraPx} px` : `Global ${camCal.targetCameraPx} px`} → Efektif {camCal.effectiveMinFacePx} px
+                        Bounding: {isManualFace ? 'Manual' : 'Global'} {camCal.targetCameraPx}
+                        {camCal.targetCameraMaxPx > 0 ? `–${camCal.targetCameraMaxPx}` : '+'} px → Efektif{' '}
+                        {camCal.effectiveMinFacePx}
+                        {camCal.effectiveMaxFacePx > 0 ? `–${camCal.effectiveMaxFacePx}` : '+'} px
                       </div>
                     </td>
                     <td className="py-2.5">

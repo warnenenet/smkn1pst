@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import zlib from 'zlib';
 import jpeg from 'jpeg-js';
 import { DatabaseSync } from 'node:sqlite';
+import { computeDropRatio, isCameraDropAlert } from '../lib/faceQualityGate.ts';
 import type {
   AnonymousCluster,
   AppDatabase,
@@ -12,6 +13,8 @@ import type {
   BackupEntry,
   Camera,
   DailyAttendance,
+  DebugDetectionFileEntry,
+  DetectionStatsWindow,
   FaceUpdateHistory,
   FaceUpdateReview,
   Gate,
@@ -34,8 +37,10 @@ import type {
 import {
   normalizeCaptureJpegQuality,
   normalizeCaptureMaxWidth,
+  normalizeMaxFaceSize,
   normalizeMinFaceSize,
   normalizeMinSnapshotQuality,
+  normalizeWaProvider,
   stripDemoRecordsForProduction,
 } from '../lib/attendanceEngine.ts';
 import { buildFaceVectorIndex, type FaceVectorIndex } from '../lib/faceIndex.ts';
@@ -59,6 +64,7 @@ export const SNAPSHOTS_DIR = path.join(DATA_DIR, 'snapshots');
 export const TTS_CACHE_DIR = path.join(DATA_DIR, 'tts_cache');
 export const WA_AUTH_DIR = path.join(DATA_DIR, 'wa_auth');
 export const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+export const STORAGE_DEBUG_DIR = path.resolve(APP_ROOT, process.env.WA_STORAGE_DIR || 'storage', 'debug');
 
 const BACKUP_MAX_BYTES = BACKUPS_MAX_BYTES;
 const DAILY_WINDOW_DAYS = 180;
@@ -386,6 +392,7 @@ function getSqlite(): DatabaseSync {
         last_error TEXT,
         last_online_at TEXT,
         min_face_size INTEGER,
+        max_face_size INTEGER,
         capture_max_width INTEGER
       );
       CREATE TABLE IF NOT EXISTS schedules (
@@ -557,6 +564,22 @@ function getSqlite(): DatabaseSync {
         key TEXT PRIMARY KEY,
         value_json TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS detection_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        camera_id INTEGER NOT NULL,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        total_raw INTEGER NOT NULL DEFAULT 0,
+        dropped_confidence INTEGER NOT NULL DEFAULT 0,
+        dropped_landmark INTEGER NOT NULL DEFAULT 0,
+        dropped_size INTEGER NOT NULL DEFAULT 0,
+        dropped_blur INTEGER NOT NULL DEFAULT 0,
+        dropped_pose INTEGER NOT NULL DEFAULT 0,
+        passed_embedding INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_det_stats_cam ON detection_stats(camera_id, id DESC);
     `);
     const ensureColumn = (table: string, column: string, ddl: string) => {
       const cols = sqliteDb!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
@@ -567,7 +590,11 @@ function getSqlite(): DatabaseSync {
     ensureColumn('attendance_logs', 'snapshot_path', 'TEXT');
     ensureColumn('anonymous_clusters', 'hit_snapshots_json', "TEXT NOT NULL DEFAULT '[]'");
     ensureColumn('cameras', 'min_face_size', 'INTEGER');
+    ensureColumn('cameras', 'max_face_size', 'INTEGER');
     ensureColumn('cameras', 'capture_max_width', 'INTEGER');
+    ensureColumn('wa_accounts', 'label', "TEXT NOT NULL DEFAULT ''");
+    ensureColumn('wa_accounts', 'gateway_account_id', 'INTEGER');
+    ensureColumn('wa_accounts', 'last_error', 'TEXT');
     schemaInitialized = true;
   }
   return sqliteDb;
@@ -859,10 +886,21 @@ export function createInitialSeed(): AppDatabase {
     guest_access_logs: [],
     settings: {
       school_name: 'SMK Negeri Unggulan',
-      threshold_confidence: 0.80,
+      threshold_confidence: 0.60,
       threshold_recognition: 0.70,
       threshold_clustering: 0.70,
+      match_margin_min: 0.08,
+      vote_threshold: 0.65,
+      vote_window_sec: 10,
+      adaptive_threshold_enabled: true,
+      threshold_high_quality: 0.60,
+      threshold_mid_quality: 0.75,
       min_face_size: 60,
+      max_face_size: 0,
+      blur_threshold: 100,
+      max_yaw_deg: 30,
+      max_pitch_deg: 25,
+      debug_detection: false,
       min_snapshot_quality: 0.70,
       capture_max_width: 1280,
       capture_jpeg_quality: 86,
@@ -876,7 +914,7 @@ export function createInitialSeed(): AppDatabase {
       weight_sharpness: 0.25,
       weight_frontal: 0.20,
       cutoff_keluar: '18:00:00',
-      wa_provider: 'BAILEYS',
+      wa_provider: 'WA_WEB',
       wa_api_key: '',
       wa_phone_number_id: '',
       wa_delay_after_pulang_menit: 60,
@@ -893,6 +931,53 @@ export function createInitialSeed(): AppDatabase {
   };
 }
 
+export function normalizeQualityGateSettingsFields(s: Partial<SettingsMap>): Partial<SettingsMap> {
+  const out = { ...s };
+  if (out.threshold_confidence !== undefined) {
+    const v = Number(out.threshold_confidence);
+    out.threshold_confidence = Number.isFinite(v) ? Math.max(0.35, Math.min(0.99, Math.round(v * 100) / 100)) : 0.60;
+  }
+  if (out.match_margin_min !== undefined) {
+    const v = Number(out.match_margin_min);
+    out.match_margin_min = Number.isFinite(v) ? Math.max(0.0, Math.min(0.5, Math.round(v * 100) / 100)) : 0.08;
+  }
+  if (out.vote_threshold !== undefined) {
+    const v = Number(out.vote_threshold);
+    out.vote_threshold = Number.isFinite(v) ? Math.max(0.3, Math.min(0.95, Math.round(v * 100) / 100)) : 0.65;
+  }
+  if (out.vote_window_sec !== undefined) {
+    const v = Number(out.vote_window_sec);
+    out.vote_window_sec = Number.isFinite(v) ? Math.max(2, Math.min(60, Math.round(v))) : 10;
+  }
+  if (out.adaptive_threshold_enabled !== undefined) {
+    out.adaptive_threshold_enabled = Boolean(out.adaptive_threshold_enabled);
+  }
+  if (out.threshold_high_quality !== undefined) {
+    const v = Number(out.threshold_high_quality);
+    out.threshold_high_quality = Number.isFinite(v) ? Math.max(0.4, Math.min(0.95, Math.round(v * 100) / 100)) : 0.60;
+  }
+  if (out.threshold_mid_quality !== undefined) {
+    const v = Number(out.threshold_mid_quality);
+    out.threshold_mid_quality = Number.isFinite(v) ? Math.max(0.4, Math.min(0.99, Math.round(v * 100) / 100)) : 0.75;
+  }
+  if (out.blur_threshold !== undefined) {
+    const v = Number(out.blur_threshold);
+    out.blur_threshold = Number.isFinite(v) ? Math.max(10, Math.min(2000, Math.round(v))) : 100;
+  }
+  if (out.max_yaw_deg !== undefined) {
+    const v = Number(out.max_yaw_deg);
+    out.max_yaw_deg = Number.isFinite(v) ? Math.max(5, Math.min(65, Math.round(v))) : 30;
+  }
+  if (out.max_pitch_deg !== undefined) {
+    const v = Number(out.max_pitch_deg);
+    out.max_pitch_deg = Number.isFinite(v) ? Math.max(5, Math.min(65, Math.round(v))) : 25;
+  }
+  if (out.debug_detection !== undefined) {
+    out.debug_detection = Boolean(out.debug_detection);
+  }
+  return out;
+}
+
 function hydrateDefaults(parsed: AppDatabase): AppDatabase {
   const defaults = createInitialSeed().settings;
   if (!parsed.settings) {
@@ -900,10 +985,21 @@ function hydrateDefaults(parsed: AppDatabase): AppDatabase {
   } else {
     parsed.settings = { ...defaults, ...parsed.settings };
   }
+  parsed.settings = {
+    ...parsed.settings,
+    ...normalizeQualityGateSettingsFields(parsed.settings),
+  };
   parsed.settings.min_snapshot_quality = normalizeMinSnapshotQuality(parsed.settings.min_snapshot_quality);
   parsed.settings.min_face_size = normalizeMinFaceSize(parsed.settings.min_face_size);
+  parsed.settings.max_face_size = normalizeMaxFaceSize(parsed.settings.max_face_size, parsed.settings.min_face_size);
   parsed.settings.capture_max_width = normalizeCaptureMaxWidth(parsed.settings.capture_max_width);
   parsed.settings.capture_jpeg_quality = normalizeCaptureJpegQuality(parsed.settings.capture_jpeg_quality);
+  parsed.settings.wa_provider = normalizeWaProvider(parsed.settings.wa_provider);
+  if (Array.isArray(parsed.wa_accounts)) {
+    for (const acc of parsed.wa_accounts) {
+      acc.provider = normalizeWaProvider(acc.provider);
+    }
+  }
   return parsed;
 }
 
@@ -971,6 +1067,7 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     last_error: r.last_error ? String(r.last_error) : null,
     last_online_at: r.last_online_at ? String(r.last_online_at) : null,
     min_face_size: r.min_face_size !== null && r.min_face_size !== undefined ? Number(r.min_face_size) : null,
+    max_face_size: r.max_face_size !== null && r.max_face_size !== undefined ? Number(r.max_face_size) : null,
     capture_max_width: r.capture_max_width !== null && r.capture_max_width !== undefined ? Number(r.capture_max_width) : null,
   }));
 
@@ -1126,7 +1223,8 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
 
   const wa_accounts = (sqlite.prepare('SELECT * FROM wa_accounts ORDER BY id').all() as Array<Record<string, unknown>>).map((r) => ({
     id: Number(r.id),
-    provider: r.provider as WaAccount['provider'],
+    provider: normalizeWaProvider(String(r.provider)),
+    label: r.label ? String(r.label) : '',
     phone_number: String(r.phone_number),
     api_key: String(r.api_key),
     status: r.status as WaAccount['status'],
@@ -1135,6 +1233,8 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     last_reset_at: String(r.last_reset_at),
     created_at: String(r.created_at),
     qr_connected: Boolean(r.qr_connected),
+    gateway_account_id: r.gateway_account_id !== null && r.gateway_account_id !== undefined ? Number(r.gateway_account_id) : null,
+    last_error: r.last_error ? String(r.last_error) : null,
   }));
 
   const wa_templates = (sqlite.prepare('SELECT * FROM wa_templates ORDER BY id').all() as Array<Record<string, unknown>>).map((r) => ({
@@ -1191,6 +1291,53 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
       .prepare('INSERT INTO app_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at')
       .run(migKey, '"done"', new Date().toISOString());
   }
+  // One-time idempotent migration for pre-embedding quality gate defaults
+  const qgMigKey = 'migration_quality_gate_v1';
+  const hasQgMig = sqlite.prepare('SELECT value_json FROM app_state WHERE key = ?').get(qgMigKey) as { value_json: string } | undefined;
+  if (!hasQgMig) {
+    if (settingsRow) {
+      parsedSettings = {
+        ...parsedSettings,
+        threshold_confidence: parsedSettings.threshold_confidence === 0.8 ? 0.6 : parsedSettings.threshold_confidence,
+        blur_threshold: parsedSettings.blur_threshold ?? 100,
+        max_yaw_deg: parsedSettings.max_yaw_deg ?? 30,
+        max_pitch_deg: parsedSettings.max_pitch_deg ?? 25,
+        debug_detection: Boolean(parsedSettings.debug_detection ?? false),
+      };
+      sqlite
+        .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+        .run('app_settings', JSON.stringify(parsedSettings));
+    }
+    sqlite
+      .prepare('INSERT INTO app_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at')
+      .run(qgMigKey, '"done"', new Date().toISOString());
+  }
+  // One-time idempotent migration for multi-factor recognition (margin, voting, adaptive threshold)
+  const mfMigKey = 'migration_multifactor_rec_v1';
+  const hasMfMig = sqlite.prepare('SELECT value_json FROM app_state WHERE key = ?').get(mfMigKey) as { value_json: string } | undefined;
+  if (!hasMfMig) {
+    if (settingsRow) {
+      parsedSettings = {
+        ...parsedSettings,
+        match_margin_min: parsedSettings.match_margin_min ?? 0.08,
+        vote_threshold: parsedSettings.vote_threshold ?? 0.65,
+        vote_window_sec: parsedSettings.vote_window_sec ?? 10,
+        adaptive_threshold_enabled: parsedSettings.adaptive_threshold_enabled ?? true,
+        threshold_high_quality: parsedSettings.threshold_high_quality ?? 0.60,
+        threshold_mid_quality: parsedSettings.threshold_mid_quality ?? 0.75,
+      };
+      sqlite
+        .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+        .run('app_settings', JSON.stringify(parsedSettings));
+    }
+    sqlite
+      .prepare('INSERT INTO app_state (key, value_json, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at')
+      .run(mfMigKey, '"done"', new Date().toISOString());
+  }
+  parsedSettings = {
+    ...parsedSettings,
+    ...normalizeQualityGateSettingsFields(parsedSettings),
+  };
   parsedSettings.min_snapshot_quality = normalizeMinSnapshotQuality(parsedSettings.min_snapshot_quality);
 
   const realDiskBytes = getDirectorySizeBytes(DATA_DIR);
@@ -1365,8 +1512,8 @@ export function saveDb(db: AppDatabase): void {
     if (persisted.smallHashes.cameras !== hashCameras) {
       sqlite.exec('DELETE FROM cameras');
       const insCam = sqlite.prepare(`
-        INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, capture_max_width)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, max_face_size, capture_max_width)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const c of db.cameras) {
         insCam.run(
@@ -1381,6 +1528,7 @@ export function saveDb(db: AppDatabase): void {
           c.last_error ?? null,
           c.last_online_at ?? null,
           c.min_face_size ?? null,
+          c.max_face_size ?? null,
           c.capture_max_width ?? null
         );
       }
@@ -1428,11 +1576,25 @@ export function saveDb(db: AppDatabase): void {
     if (persisted.smallHashes.wa_accounts !== hashWaAcc) {
       sqlite.exec('DELETE FROM wa_accounts');
       const insWaAcc = sqlite.prepare(`
-        INSERT INTO wa_accounts (id, provider, phone_number, api_key, status, daily_count, hourly_count, last_reset_at, created_at, qr_connected)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO wa_accounts (id, provider, label, phone_number, api_key, status, daily_count, hourly_count, last_reset_at, created_at, qr_connected, gateway_account_id, last_error)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       for (const a of db.wa_accounts) {
-        insWaAcc.run(a.id, a.provider, a.phone_number, a.api_key ?? '', a.status, a.daily_count, a.hourly_count, a.last_reset_at, a.created_at, a.qr_connected ? 1 : 0);
+        insWaAcc.run(
+          a.id,
+          normalizeWaProvider(a.provider),
+          a.label ?? '',
+          a.phone_number,
+          a.api_key ?? '',
+          a.status,
+          a.daily_count,
+          a.hourly_count,
+          a.last_reset_at,
+          a.created_at,
+          a.qr_connected ? 1 : 0,
+          a.gateway_account_id ?? null,
+          a.last_error ?? null
+        );
       }
       persisted.smallHashes.wa_accounts = hashWaAcc;
     }
@@ -1757,8 +1919,8 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
     }
 
     const insCam = sqlite.prepare(`
-      INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, capture_max_width)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO cameras (id, nama_kamera, gate_id, rtsp_url, resolusi, fps, aktif, status, last_error, last_online_at, min_face_size, max_face_size, capture_max_width)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const c of db.cameras) {
       insCam.run(
@@ -1773,6 +1935,7 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
         c.last_error ?? null,
         c.last_online_at ?? null,
         c.min_face_size ?? null,
+        c.max_face_size ?? null,
         c.capture_max_width ?? null
       );
     }
@@ -1906,11 +2069,25 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
     }
 
     const insWaAcc = sqlite.prepare(`
-      INSERT INTO wa_accounts (id, provider, phone_number, api_key, status, daily_count, hourly_count, last_reset_at, created_at, qr_connected)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO wa_accounts (id, provider, label, phone_number, api_key, status, daily_count, hourly_count, last_reset_at, created_at, qr_connected, gateway_account_id, last_error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const a of db.wa_accounts) {
-      insWaAcc.run(a.id, a.provider, a.phone_number, a.api_key ?? '', a.status, a.daily_count, a.hourly_count, a.last_reset_at, a.created_at, a.qr_connected ? 1 : 0);
+      insWaAcc.run(
+        a.id,
+        normalizeWaProvider(a.provider),
+        a.label ?? '',
+        a.phone_number,
+        a.api_key ?? '',
+        a.status,
+        a.daily_count,
+        a.hourly_count,
+        a.last_reset_at,
+        a.created_at,
+        a.qr_connected ? 1 : 0,
+        a.gateway_account_id ?? null,
+        a.last_error ?? null
+      );
     }
 
     const insWaTpl = sqlite.prepare('INSERT INTO wa_templates (id, code, name, template_text, is_active) VALUES (?, ?, ?, ?, ?)');
@@ -2112,6 +2289,8 @@ export function runStorageCleanup(
       .run(notifReadCutoff, notifMaxCutoff);
     const rGuest = sqlite.prepare('DELETE FROM guest_access_logs WHERE timestamp < ?').run(guestCutoff);
     const rSess = sqlite.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(now);
+    const detStatsCutoff = new Date(now - 30 * 86_400_000).toISOString();
+    sqlite.prepare('DELETE FROM detection_stats WHERE created_at < ?').run(detStatsCutoff);
     sqlite.exec('DELETE FROM storage_events WHERE id NOT IN (SELECT id FROM storage_events ORDER BY id DESC LIMIT 200)');
 
     removedLogs.attendance_logs = Math.max(removedLogs.attendance_logs, Number(rAtt.changes || 0));
@@ -2437,3 +2616,132 @@ export function restoreFromBackupBuffer(rawInput: Buffer): AppDatabase {
 
   return loadDb();
 }
+
+// ============================================================================
+// 5-MINUTE DETECTION STATS & DEBUG SNAPSHOT HELPERS
+// ============================================================================
+
+export function recordDetectionStatsWindow(entry: {
+  camera_id: number;
+  window_start: string;
+  window_end: string;
+  total_raw: number;
+  dropped_confidence: number;
+  dropped_landmark: number;
+  dropped_size: number;
+  dropped_blur: number;
+  dropped_pose: number;
+  passed_embedding: number;
+}): void {
+  const sqlite = getSqlite();
+  sqlite
+    .prepare(
+      `INSERT INTO detection_stats (
+        camera_id, window_start, window_end,
+        total_raw, dropped_confidence, dropped_landmark, dropped_size, dropped_blur, dropped_pose, passed_embedding, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      Number(entry.camera_id),
+      String(entry.window_start),
+      String(entry.window_end),
+      Math.max(0, Math.round(Number(entry.total_raw) || 0)),
+      Math.max(0, Math.round(Number(entry.dropped_confidence) || 0)),
+      Math.max(0, Math.round(Number(entry.dropped_landmark) || 0)),
+      Math.max(0, Math.round(Number(entry.dropped_size) || 0)),
+      Math.max(0, Math.round(Number(entry.dropped_blur) || 0)),
+      Math.max(0, Math.round(Number(entry.dropped_pose) || 0)),
+      Math.max(0, Math.round(Number(entry.passed_embedding) || 0)),
+      new Date().toISOString()
+    );
+}
+
+export function getDetectionStatsSummary(
+  cameras: Camera[],
+  liveWindows?: Map<number, DetectionStatsWindow>
+): DetectionStatsWindow[] {
+  const sqlite = getSqlite();
+  const rows = sqlite
+    .prepare(
+      `SELECT d.*
+       FROM detection_stats d
+       INNER JOIN (
+         SELECT camera_id, MAX(id) AS max_id
+         FROM detection_stats
+         GROUP BY camera_id
+       ) latest ON d.id = latest.max_id
+       ORDER BY d.camera_id ASC`
+    )
+    .all() as Array<Record<string, unknown>>;
+
+  const camMap = new Map(cameras.map((c) => [c.id, c.nama_kamera]));
+  const resultMap = new Map<number, DetectionStatsWindow>();
+
+  for (const r of rows) {
+    const cid = Number(r.camera_id);
+    const counts = {
+      total_raw: Number(r.total_raw || 0),
+      dropped_confidence: Number(r.dropped_confidence || 0),
+      dropped_landmark: Number(r.dropped_landmark || 0),
+      dropped_size: Number(r.dropped_size || 0),
+      dropped_blur: Number(r.dropped_blur || 0),
+      dropped_pose: Number(r.dropped_pose || 0),
+      passed_embedding: Number(r.passed_embedding || 0),
+    };
+    resultMap.set(cid, {
+      id: Number(r.id),
+      camera_id: cid,
+      camera_name: camMap.get(cid) ?? `Kamera #${cid}`,
+      window_start: String(r.window_start),
+      window_end: String(r.window_end),
+      ...counts,
+      drop_ratio: Math.round(computeDropRatio(counts) * 10000) / 10000,
+      bad_quality_alert: isCameraDropAlert(counts),
+    });
+  }
+
+  if (liveWindows) {
+    for (const [cid, live] of liveWindows.entries()) {
+      if (live.total_raw > 0 || !resultMap.has(cid)) {
+        resultMap.set(cid, {
+          ...live,
+          camera_name: camMap.get(cid) ?? live.camera_name ?? `Kamera #${cid}`,
+        });
+      }
+    }
+  }
+
+  return Array.from(resultMap.values()).sort((a, b) => a.camera_id - b.camera_id);
+}
+
+export function listDebugDetectionFiles(): DebugDetectionFileEntry[] {
+  try {
+    if (!fs.existsSync(STORAGE_DEBUG_DIR)) return [];
+    return fs
+      .readdirSync(STORAGE_DEBUG_DIR)
+      .filter((n) => /^[a-zA-Z0-9._-]+\.png$/.test(n))
+      .map((filename) => {
+        const full = path.join(STORAGE_DEBUG_DIR, filename);
+        const st = fs.statSync(full);
+        const m = filename.match(/^cam(\d+)_/);
+        return {
+          filename,
+          camera_id: m ? Number(m[1]) : null,
+          url: `/api/debug/detection/${encodeURIComponent(filename)}`,
+          bytes: st.size,
+          created_at: st.mtime.toISOString(),
+        };
+      })
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, 100);
+  } catch {
+    return [];
+  }
+}
+
+export function getDebugDetectionFilePath(filename: string): string | null {
+  if (!/^[a-zA-Z0-9._-]+\.png$/.test(filename)) return null;
+  const full = path.join(STORAGE_DEBUG_DIR, filename);
+  return fs.existsSync(full) && fs.statSync(full).isFile() ? full : null;
+}
+

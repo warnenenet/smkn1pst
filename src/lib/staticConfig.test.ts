@@ -13,6 +13,7 @@ import {
   isNonSpaResourcePath,
   resolveExecutableBinary,
   resolveListenConfig,
+  shouldScanMotionFrame,
   shouldServeProductionBuild,
 } from './staticConfig';
 
@@ -230,4 +231,33 @@ test('extractRgbaLumaSample and computeFrameMotionDeltaRatio distinguish static 
   assert.equal(computeFrameMotionDeltaRatio(null, sampleA), 1);
 });
 
+test('shouldScanMotionFrame detects localized walking person in small subset of pixels and honors 1500ms heartbeat', () => {
+  const prev = new Uint8Array(256).fill(120);
+  const staticCur = new Uint8Array(256).fill(121);
+  assert.equal(shouldScanMotionFrame(prev, staticCur, 400), false);
+  assert.equal(shouldScanMotionFrame(prev, staticCur, 1600), true);
+
+  // Hanya ~4% area frame berubah (10 dari 256 sel berubah >= 25 luma -> satu siswa lewat di gerbang lebar)
+  const localizedWalk = new Uint8Array(256).fill(120);
+  for (let i = 100; i < 110; i++) {
+    localizedWalk[i] = 155;
+  }
+  assert.equal(shouldScanMotionFrame(prev, localizedWalk, 300), true);
+});
+
+test('compareSemver and isNewerVersionAvailable detect new releases accurately', async () => {
+  const { compareSemver, isNewerVersionAvailable } = await import('./staticConfig');
+
+  assert.equal(compareSemver('1.0.0', 'v1.0.0'), 0);
+  assert.equal(compareSemver('1.0.1', '1.0.0'), 1);
+  assert.equal(compareSemver('1.10.0', '1.2.0'), 1);
+  assert.equal(compareSemver('2.0.0', '1.99.99'), 1);
+  assert.equal(compareSemver('1.0.0', '1.0.1'), -1);
+
+  assert.equal(isNewerVersionAvailable('1.0.0', '1.0.1'), true);
+  assert.equal(isNewerVersionAvailable('1.0.1', 'v1.1.0'), true);
+  assert.equal(isNewerVersionAvailable('1.0.1', '1.0.1'), false);
+  assert.equal(isNewerVersionAvailable('1.2.0', '1.1.9'), false);
+  assert.equal(isNewerVersionAvailable('invalid', '1.0.1'), false);
+});
 

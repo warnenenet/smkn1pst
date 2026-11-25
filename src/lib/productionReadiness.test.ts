@@ -56,7 +56,7 @@ function makeBaseDb(): AppDatabase {
       weight_sharpness: 0.25,
       weight_frontal: 0.2,
       cutoff_keluar: '18:00:00',
-      wa_provider: 'BAILEYS',
+      wa_provider: 'WA_WEB',
       wa_api_key: '',
       wa_phone_number_id: '',
       wa_delay_after_pulang_menit: 60,
@@ -118,7 +118,7 @@ test('evaluateProductionReadiness reaches 100% when all 6 production prerequisit
   });
   db.wa_accounts.push({
     id: 1,
-    provider: 'BAILEYS',
+    provider: 'WA_WEB',
     phone_number: '6281234567890',
     api_key: '',
     status: 'ACTIVE',

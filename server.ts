@@ -18,13 +18,18 @@ import {
   getCachedClusterFaceIndex,
   getDataStorageBreakdown,
   getDbVersion,
+  getDebugDetectionFilePath,
+  getDetectionStatsSummary,
   getSessionUserId,
   hashPassword,
   invalidateDbCache,
   listBackups,
+  listDebugDetectionFiles,
   loadDb,
+  normalizeQualityGateSettingsFields,
   persistCompactPhotoDataUrl,
   purgeDemoRowsFromSqlite,
+  recordDetectionStatsWindow,
   restoreFromBackupBuffer,
   runCompactBackup,
   runStorageCleanup,
@@ -33,24 +38,31 @@ import {
   verifyPassword,
 } from './src/server/store.ts';
 import {
-  analyzePhotoWithNodeAi,
   getNodeWorkerStatus,
-  refreshNodeRtspWorkers,
   resolveFfmpegDetails,
-  startNodeRtspWorkers,
+  setPythonFaceServiceOnline,
+  startFaceServiceMonitor,
   updatePythonCameraTelemetry,
 } from './src/server/nodeFaceWorker.ts';
 import { isPiperAvailable, prewarmStudentNamesTts, synthesizeIndonesianWav } from './src/server/ttsService.ts';
 import {
+  deleteGatewayAccount,
   dispatchWaMessage,
-  getLiveBaileysSocketCount,
-  getPairingState,
-  restoreSavedBaileysSessions,
-  startBaileysPairing,
+  ensureGatewayAccountForDbAccount,
+  ensureWaGatewayRunning,
+  getGatewayQrState,
+  getRoundRobinCursorId,
+  getWaGatewayHealth,
+  reconnectGatewayAccount,
+  setRoundRobinCursorId,
+  startGatewayPairing,
   startWaQueueWorker,
+  stopWaGatewayChild,
+  syncGatewayAccountStatus,
 } from './src/server/waGateway.ts';
 import {
   appendClusterHitSnapshot,
+  applyWaQuotaResetIfDue,
   blendFaceEmbeddings,
   calculateAttendancePercentage,
   checkClusterReadyStatus,
@@ -69,10 +81,12 @@ import {
   normalizeCaptureJpegQuality,
   normalizeCaptureMaxWidth,
   normalizeExcelBirthDate,
+  normalizeMaxFaceSize,
   normalizeMinFaceSize,
   normalizeMinSnapshotQuality,
   normalizeStudentStatus,
   normalizeWaPhone,
+  normalizeWaProvider,
   parseFfmpegStreamOutput,
   parseKelasHierarchy,
   parseResolutionDimensions,
@@ -81,6 +95,7 @@ import {
   removeHitFromClusterState,
   removeMultipleHitsFromClusterState,
   resolveScheduleForStudent,
+  selectNextWaAccountRoundRobin,
   stripDemoRecordsForProduction,
   summarizeEmbeddingDimensions,
   validateAndNormalizeScheduleTimes,
@@ -107,6 +122,7 @@ import { stripEmbeddingsForBootstrap } from './src/lib/uiRefreshGuard.ts';
 import { findBestFaceMatch } from './src/lib/faceIndex.ts';
 import { createLogThrottle, pruneInMemoryLogs } from './src/lib/logRetention.ts';
 import { CLUSTER_MAX_HITS, roundEmbeddingForJson } from './src/lib/storageBudget.ts';
+import { getOrCreateInternalToken } from './src/lib/internalToken.ts';
 import type { AcademicTransitionType, AppDatabase, AttendanceStatus, Student, User, UserRole } from './src/types';
 
 const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001';
@@ -209,22 +225,49 @@ function deterministicVecFromSeed(seedStr: string): number[] {
   return vec;
 }
 
-async function callFaceService<T>(endpoint: string, body?: unknown): Promise<T | null> {
+type FaceServiceCallResult<T> =
+  | { reachable: true; ok: true; status: number; data: T }
+  | { reachable: true; ok: false; status: number; error: string }
+  | { reachable: false; ok: false; status: 0; error: string };
+
+async function callFaceServiceWithStatus<T>(endpoint: string, body?: unknown): Promise<FaceServiceCallResult<T>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
     const resp = await fetch(`${FACE_SERVICE_URL}${endpoint}`, {
       method: body !== undefined ? 'POST' : 'GET',
       headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     });
+    if (!resp.ok) {
+      let errDetail = `Face service menolak permintaan (HTTP ${resp.status}).`;
+      try {
+        const errBody = (await resp.json()) as { detail?: unknown; error?: unknown };
+        if (typeof errBody?.detail === 'string' && errBody.detail.trim()) errDetail = errBody.detail.trim();
+        else if (typeof errBody?.error === 'string' && errBody.error.trim()) errDetail = errBody.error.trim();
+      } catch {
+        // ignore JSON parse failure on error body
+      }
+      return { reachable: true, ok: false, status: resp.status, error: errDetail };
+    }
+    const data = (await resp.json()) as T;
+    return { reachable: true, ok: true, status: resp.status, data };
+  } catch (err) {
+    return {
+      reachable: false,
+      ok: false,
+      status: 0,
+      error: err instanceof Error ? err.message : 'Python face service tidak terjangkau',
+    };
+  } finally {
     clearTimeout(timer);
-    if (!resp.ok) return null;
-    return (await resp.json()) as T;
-  } catch {
-    return null;
   }
+}
+
+async function callFaceService<T>(endpoint: string, body?: unknown): Promise<T | null> {
+  const result = await callFaceServiceWithStatus<T>(endpoint, body);
+  return result.ok ? result.data : null;
 }
 
 function triggerPythonCameraReload(): void {
@@ -386,7 +429,7 @@ function requireInternalAccess(): express.RequestHandler {
       !isAuthorizedInternalRequest({
         remoteAddress: req.socket.remoteAddress,
         headers: req.headers,
-        expectedToken: process.env.INTERNAL_API_TOKEN,
+        expectedToken: getOrCreateInternalToken({ dataDir: DATA_DIR }),
       })
     ) {
       res.status(403).json({ error: 'Akses endpoint internal dibatasi khusus layanan lokal.' });
@@ -408,12 +451,16 @@ function isRequestHttps(req: express.Request): boolean {
 app.get('/api/health', async (_req, res) => {
   const db = loadDb();
   const jkt = getJakartaNowParts();
-  const faceHealth = await callFaceService<Record<string, unknown>>('/health');
+  const [faceHealth, waHealth] = await Promise.all([
+    callFaceService<Record<string, unknown>>('/health'),
+    getWaGatewayHealth(),
+  ]);
   const nodeWorker = getNodeWorkerStatus(db);
   const ffmpegRes = resolveFfmpegDetails();
   const embeddingDimensions = summarizeEmbeddingDimensions(db.students, db.anonymous_clusters);
   res.json({
     ok: true,
+    version: nodeWorker.app_version,
     sqlite: true,
     needs_setup: !hasActiveAdminUser(db.users),
     timezone: 'Asia/Jakarta',
@@ -439,9 +486,12 @@ app.get('/api/health', async (_req, res) => {
     },
     wa_gateway: {
       auto_dispatch: Boolean(db.settings.wa_auto_dispatch_enabled),
-      provider: db.settings.wa_provider,
-      connected_accounts: db.wa_accounts.filter((a) => a.qr_connected && a.status !== 'BANNED').length,
-      live_baileys_sockets: getLiveBaileysSocketCount(),
+      provider: normalizeWaProvider(db.settings.wa_provider),
+      connected_accounts: db.wa_accounts.filter((a) => a.qr_connected && a.status !== 'BANNED' && a.status !== 'PAUSED').length,
+      service_online: waHealth.online,
+      active_browsers: waHealth.active_browsers,
+      max_chrome: waHealth.max_chrome,
+      round_robin_cursor: getRoundRobinCursorId(),
       pending_queue: db.wa_queue.filter((q) => q.status === 'PENDING').length,
     },
   });
@@ -455,6 +505,7 @@ app.get('/api/worker/status', requireAuth(), (_req, res) => {
   res.json({
     ...base,
     storage_breakdown: getDataStorageBreakdown(),
+    detection_stats: getDetectionStatsSummary(db.cameras),
     automation: {
       daily_scheduler_active: true,
       wa_worker_active: Boolean(db.settings.wa_auto_dispatch_enabled),
@@ -463,6 +514,24 @@ app.get('/api/worker/status', requireAuth(), (_req, res) => {
       python_gallery_synced: pythonGallerySynced,
     },
   });
+});
+
+app.get('/api/debug/detection', requireAuth(['ADMIN', 'BK']), (_req, res) => {
+  const db = loadDb();
+  res.json({
+    debug_detection: Boolean(db.settings.debug_detection),
+    files: listDebugDetectionFiles(),
+  });
+});
+
+app.get('/api/debug/detection/:filename', requireAuth(['ADMIN', 'BK']), (req, res) => {
+  const filePath = getDebugDetectionFilePath(String(req.params.filename || ''));
+  if (!filePath) {
+    res.status(404).json({ error: 'Snapshot debug tidak ditemukan.' });
+    return;
+  }
+  res.setHeader('Content-Type', 'image/png');
+  res.sendFile(filePath);
 });
 
 app.get('/api/setup/status', (_req, res) => {
@@ -1162,14 +1231,22 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
 
   let qScore: number;
   let emb: number[];
-  const aiRes = photoDataUrl
-    ? (await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl })) ??
-      (await analyzePhotoWithNodeAi(String(photoDataUrl), db.settings))
-    : null;
-
-  if (aiRes?.embedding) {
-    qScore = aiRes.quality_score;
-    emb = aiRes.embedding;
+  if (photoDataUrl) {
+    const pyCall = await callFaceServiceWithStatus<{ quality_score: number; embedding: number[] }>('/enroll', {
+      photoDataUrl,
+    });
+    if (!pyCall.reachable) {
+      res.status(503).json({
+        error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
+      });
+      return;
+    }
+    if (!pyCall.ok) {
+      res.status(pyCall.status >= 400 && pyCall.status < 500 ? pyCall.status : 422).json({ error: pyCall.error });
+      return;
+    }
+    qScore = pyCall.data.quality_score;
+    emb = pyCall.data.embedding;
   } else {
     if (Number(confidence) < db.settings.threshold_confidence) {
       res.status(422).json({ error: `Confidence ${confidence} < threshold ${db.settings.threshold_confidence}. Wajah diabaikan.` });
@@ -1229,11 +1306,24 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
       continue;
     }
 
-    const aiRes = item.photoDataUrl
-      ? (await callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', {
-          photoDataUrl: item.photoDataUrl,
-        })) ?? (await analyzePhotoWithNodeAi(String(item.photoDataUrl), db.settings))
-      : null;
+    let aiRes: { quality_score: number; embedding: number[] } | null = null;
+    if (item.photoDataUrl) {
+      const pyCall = await callFaceServiceWithStatus<{ quality_score: number; embedding: number[] }>('/enroll', {
+        photoDataUrl: item.photoDataUrl,
+      });
+      if (!pyCall.reachable) {
+        failed.push({
+          file: item.filename,
+          error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
+        });
+        continue;
+      }
+      if (!pyCall.ok) {
+        failed.push({ file: item.filename, error: pyCall.error });
+        continue;
+      }
+      aiRes = pyCall.data;
+    }
 
     const qScore =
       aiRes?.quality_score ??
@@ -1267,32 +1357,24 @@ app.post('/api/compare-face', requireAuth(), async (req, res) => {
   }
 
   if (photo1DataUrl && photo2DataUrl) {
-    const aiCompare = await callFaceService<{
+    const pyCompare = await callFaceServiceWithStatus<{
       similarity: number;
       threshold: number;
       match: boolean;
       status: string;
     }>('/compare', { photo1DataUrl, photo2DataUrl });
-    if (aiCompare) {
-      res.json(aiCompare);
-      return;
-    }
-    const [n1, n2] = await Promise.all([
-      analyzePhotoWithNodeAi(String(photo1DataUrl), db.settings),
-      analyzePhotoWithNodeAi(String(photo2DataUrl), db.settings),
-    ]);
-    if (n1 && n2) {
-      const sim = cosineSimilarity(n1.embedding, n2.embedding);
-      const threshold = db.settings.threshold_recognition;
-      const match = sim >= threshold;
-      res.json({
-        similarity: sim,
-        threshold,
-        match,
-        status: match ? 'COCOK (IDENTITAS SAMA)' : 'TIDAK COCOK (BERBEDA)',
+    if (!pyCompare.reachable) {
+      res.status(503).json({
+        error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
       });
       return;
     }
+    if (!pyCompare.ok) {
+      res.status(pyCompare.status >= 400 && pyCompare.status < 500 ? pyCompare.status : 422).json({ error: pyCompare.error });
+      return;
+    }
+    res.json(pyCompare.data);
+    return;
   }
 
   const stem1 = path.basename(String(name1), path.extname(String(name1))).toLowerCase();
@@ -1641,6 +1723,29 @@ app.post('/api/internal/cameras/:id/heartbeat', requireInternalAccess(), (req, r
   res.json({ ok: true });
 });
 
+app.post('/api/internal/detection-stats', requireInternalAccess(), (req, res) => {
+  const b = req.body ?? {};
+  const camId = Number(b.camera_id);
+  if (!Number.isFinite(camId) || camId <= 0) {
+    res.status(400).json({ error: 'camera_id tidak valid.' });
+    return;
+  }
+  const nowStr = getJakartaNowParts().dateTimeStr;
+  recordDetectionStatsWindow({
+    camera_id: camId,
+    window_start: String(b.window_start || nowStr),
+    window_end: String(b.window_end || nowStr),
+    total_raw: Number(b.total_raw || 0),
+    dropped_confidence: Number(b.dropped_confidence || 0),
+    dropped_landmark: Number(b.dropped_landmark || 0),
+    dropped_size: Number(b.dropped_size || 0),
+    dropped_blur: Number(b.dropped_blur || 0),
+    dropped_pose: Number(b.dropped_pose || 0),
+    passed_embedding: Number(b.passed_embedding || 0),
+  });
+  res.json({ ok: true });
+});
+
 function processFaceEvent(payload: {
   camera_id: number;
   student_id?: number | null;
@@ -1964,6 +2069,7 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
     fps = 5,
     aktif = true,
     min_face_size = null,
+    max_face_size = null,
     capture_max_width = null,
   } = req.body;
   const rtspCheck = validateRtspStreamUrl(rtsp_url, { allowDummy: true });
@@ -1974,6 +2080,14 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
   const parsedRes = parseResolutionDimensions(String(resolusi));
   const normResolusi = formatManualResolution(parsedRes.width, parsedRes.height);
   const isDummy = !rtspCheck.url || rtspCheck.url.startsWith('dummy://');
+  const resolvedMinFace =
+    min_face_size !== null && min_face_size !== undefined && min_face_size !== ''
+      ? normalizeMinFaceSize(min_face_size)
+      : null;
+  const resolvedMaxFace =
+    max_face_size !== null && max_face_size !== undefined && max_face_size !== ''
+      ? normalizeMaxFaceSize(max_face_size, resolvedMinFace ?? db.settings.min_face_size)
+      : null;
   const cam = {
     id: nextId(db.cameras),
     nama_kamera: String(nama_kamera || '').trim() || 'Kamera Gerbang',
@@ -1985,9 +2099,8 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
     status: (isDummy || !aktif ? 'OFFLINE' : 'ONLINE') as 'ONLINE' | 'OFFLINE',
     last_error: isDummy ? 'Dummy / URL RTSP belum dikonfigurasi' : null,
     last_online_at: isDummy ? null : getJakartaNowParts().dateTimeStr,
-    min_face_size: min_face_size !== null && min_face_size !== undefined && min_face_size !== ''
-      ? normalizeMinFaceSize(min_face_size)
-      : null,
+    min_face_size: resolvedMinFace,
+    max_face_size: resolvedMaxFace,
     capture_max_width: capture_max_width !== null && capture_max_width !== undefined && capture_max_width !== ''
       ? normalizeCaptureMaxWidth(capture_max_width)
       : null,
@@ -1995,7 +2108,6 @@ app.post('/api/cameras', requireAuth(['ADMIN']), (req, res) => {
   db.cameras.push(cam);
   saveDb(db);
   triggerPythonCameraReload();
-  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, camera: cam });
 });
 
@@ -2258,6 +2370,15 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
         ? null
         : normalizeMinFaceSize(req.body.min_face_size);
   }
+  let nextMaxFace = cam.max_face_size ?? null;
+  if (req.body.max_face_size !== undefined) {
+    nextMaxFace =
+      req.body.max_face_size === null || req.body.max_face_size === ''
+        ? null
+        : normalizeMaxFaceSize(req.body.max_face_size, nextMinFace ?? db.settings.min_face_size);
+  } else if (nextMaxFace !== null && nextMaxFace > 0) {
+    nextMaxFace = normalizeMaxFaceSize(nextMaxFace, nextMinFace ?? db.settings.min_face_size);
+  }
   let nextCapWidth = cam.capture_max_width ?? null;
   if (req.body.capture_max_width !== undefined) {
     nextCapWidth =
@@ -2282,6 +2403,7 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
     fps: req.body.fps !== undefined ? Math.max(1, Math.min(30, Math.round(Number(req.body.fps) || cam.fps))) : cam.fps,
     aktif: req.body.aktif !== undefined ? Boolean(req.body.aktif) : cam.aktif,
     min_face_size: nextMinFace,
+    max_face_size: nextMaxFace,
     capture_max_width: nextCapWidth,
   });
   const isDummy = !cam.rtsp_url || cam.rtsp_url.startsWith('dummy://');
@@ -2289,7 +2411,6 @@ app.put('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
   cam.last_error = isDummy ? 'Dummy / URL RTSP belum dikonfigurasi' : null;
   saveDb(db);
   triggerPythonCameraReload();
-  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, camera: cam });
 });
 
@@ -2298,7 +2419,6 @@ app.delete('/api/cameras/:id', requireAuth(['ADMIN']), (req, res) => {
   db.cameras = db.cameras.filter((c) => c.id !== Number(req.params.id));
   saveDb(db);
   triggerPythonCameraReload();
-  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true });
 });
 
@@ -2900,20 +3020,30 @@ app.post('/api/settings', requireAuth(['ADMIN']), (req, res) => {
   if (patch.min_face_size !== undefined) {
     patch.min_face_size = normalizeMinFaceSize(patch.min_face_size);
   }
+  if (patch.max_face_size !== undefined) {
+    patch.max_face_size = normalizeMaxFaceSize(
+      patch.max_face_size,
+      patch.min_face_size ?? db.settings.min_face_size
+    );
+  }
   if (patch.capture_max_width !== undefined) {
     patch.capture_max_width = normalizeCaptureMaxWidth(patch.capture_max_width);
   }
   if (patch.capture_jpeg_quality !== undefined) {
     patch.capture_jpeg_quality = normalizeCaptureJpegQuality(patch.capture_jpeg_quality);
   }
-  db.settings = { ...db.settings, ...patch };
+  db.settings = {
+    ...db.settings,
+    ...patch,
+    ...normalizeQualityGateSettingsFields({ ...db.settings, ...patch }),
+  };
   db.settings.min_snapshot_quality = normalizeMinSnapshotQuality(db.settings.min_snapshot_quality);
   db.settings.min_face_size = normalizeMinFaceSize(db.settings.min_face_size);
+  db.settings.max_face_size = normalizeMaxFaceSize(db.settings.max_face_size, db.settings.min_face_size);
   db.settings.capture_max_width = normalizeCaptureMaxWidth(db.settings.capture_max_width);
   db.settings.capture_jpeg_quality = normalizeCaptureJpegQuality(db.settings.capture_jpeg_quality);
   saveDb(db);
   triggerPythonCameraReload();
-  refreshNodeRtspWorkers().catch(() => {});
   res.json({ ok: true, settings: db.settings });
 });
 
@@ -2938,7 +3068,6 @@ app.post('/api/system/activate-production', requireAuth(['ADMIN']), (req, res) =
     db = loadDb();
   }
   triggerPythonCameraReload();
-  refreshNodeRtspWorkers().catch(() => {});
   res.json({
     ok: true,
     production_mode: Boolean(db.settings.production_mode),
@@ -2967,7 +3096,13 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
   const db = loadDb();
   const faceHealth = await callFaceService<{ ok?: boolean }>('/health');
   const pythonOnline = Boolean(faceHealth?.ok);
-  const expectedDims = pythonOnline ? 512 : 1024;
+  if (!pythonOnline) {
+    res.status(503).json({
+      error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml sebelum menyinkronkan ke 512-D.',
+    });
+    return;
+  }
+  const expectedDims = 512;
   const nowStr = getJakartaNowParts().dateTimeStr;
 
   let migratedStudents = 0;
@@ -2975,12 +3110,8 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
   let skippedNoLocalPhoto = 0;
   const errors: string[] = [];
 
-  const extractWithActiveEngine = async (dataUrl: string) => {
-    if (pythonOnline) {
-      return callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl: dataUrl });
-    }
-    return analyzePhotoWithNodeAi(dataUrl, db.settings);
-  };
+  const extractWithActiveEngine = async (dataUrl: string) =>
+    callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl: dataUrl });
 
   for (const st of db.students) {
     if (st.status === 'LULUS') continue;
@@ -3033,12 +3164,11 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
   if (migratedStudents > 0 || migratedClusters > 0) {
     saveDb(db);
     triggerPythonCameraReload();
-    refreshNodeRtspWorkers().catch(() => {});
   }
 
   res.json({
     ok: true,
-    engine: pythonOnline ? 'INSIGHTFACE_PYTHON' : 'NODE_WASM_LIVE',
+    engine: 'INSIGHTFACE_PYTHON',
     expected_dims: expectedDims,
     migrated_students: migratedStudents,
     migrated_clusters: migratedClusters,
@@ -3108,35 +3238,83 @@ app.post('/api/backups/restore', requireAuth(['ADMIN']), (req, res) => {
   }
 });
 
-// WhatsApp Gateway (Baileys + Meta Cloud + Fonnte + WABLAS)
-app.post('/api/wa/accounts', requireAuth(['ADMIN', 'BK']), (req, res) => {
+// WhatsApp Gateway (Python Chromium Selenium + Round-Robin + Meta Cloud + Fonnte + WABLAS)
+app.post('/api/wa/accounts', requireAuth(['ADMIN', 'BK']), async (req, res) => {
   const db = loadDb();
+  const rawInput = String(req.body.phone_number || req.body.label || '').trim();
+  const rawLabel = String(req.body.label || '').trim();
+  const digits = rawInput.replace(/[^0-9]/g, '');
+  const phoneNumber = digits.length >= 9 ? digits : rawInput || `WA Sekolah ${db.wa_accounts.length + 1}`;
+  const label = rawLabel || (digits.length >= 9 ? `WA ${digits}` : phoneNumber);
+  const provider = normalizeWaProvider(db.settings.wa_provider);
+
   const acc = {
     id: nextId(db.wa_accounts),
-    provider: db.settings.wa_provider,
-    phone_number: String(req.body.phone_number),
+    provider,
+    label,
+    phone_number: phoneNumber,
     api_key: '',
     status: 'WARMUP' as const,
     daily_count: 0,
     hourly_count: 0,
-    last_reset_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
+    last_reset_at: getJakartaNowParts().dateTimeStr,
     created_at: new Date().toISOString(),
     qr_connected: false,
+    gateway_account_id: null as number | null,
+    last_error: null as string | null,
   };
   db.wa_accounts.push(acc);
   saveDb(db);
-  res.json({ ok: true, account: acc });
+
+  if (provider === 'WA_WEB') {
+    await ensureGatewayAccountForDbAccount(acc.id);
+  }
+  const latest = loadDb().wa_accounts.find((a) => a.id === acc.id) ?? acc;
+  res.json({ ok: true, account: latest });
 });
 
 app.post('/api/wa/accounts/:id/pair', requireAuth(['ADMIN', 'BK']), async (req, res) => {
   const id = Number(req.params.id);
-  const state = await startBaileysPairing(id, broadcastWs);
-  res.json({ ok: true, ...state });
+  const state = await startGatewayPairing(id, broadcastWs);
+  res.json({ ok: state.status !== 'ERROR', ...state });
 });
 
-app.get('/api/wa/accounts/:id/qr', requireAuth(['ADMIN', 'BK']), (req, res) => {
+app.get('/api/wa/accounts/:id/qr', requireAuth(['ADMIN', 'BK']), async (req, res) => {
   const id = Number(req.params.id);
-  res.json(getPairingState(id));
+  const state = await getGatewayQrState(id, broadcastWs);
+  res.json({ ok: state.status !== 'ERROR', ...state });
+});
+
+app.post('/api/wa/accounts/:id/reconnect', requireAuth(['ADMIN', 'BK']), async (req, res) => {
+  const id = Number(req.params.id);
+  const state = await reconnectGatewayAccount(id, broadcastWs);
+  res.json({ ok: state.status !== 'ERROR', ...state });
+});
+
+app.post('/api/wa/accounts/:id/status', requireAuth(['ADMIN', 'BK']), async (req, res) => {
+  const id = Number(req.params.id);
+  const rawStatus = String(req.body.status || '').toUpperCase();
+  if (!['ACTIVE', 'WARMUP', 'PAUSED', 'BANNED'].includes(rawStatus)) {
+    res.status(400).json({ error: 'Status akun tidak valid.' });
+    return;
+  }
+  const ok = await syncGatewayAccountStatus(id, rawStatus as 'ACTIVE' | 'WARMUP' | 'PAUSED' | 'BANNED');
+  if (!ok) {
+    res.status(404).json({ error: 'Akun tidak ditemukan.' });
+    return;
+  }
+  const updated = loadDb().wa_accounts.find((a) => a.id === id);
+  res.json({ ok: true, account: updated });
+});
+
+app.delete('/api/wa/accounts/:id', requireAuth(['ADMIN', 'BK']), async (req, res) => {
+  const id = Number(req.params.id);
+  const ok = await deleteGatewayAccount(id);
+  if (!ok) {
+    res.status(404).json({ error: 'Akun tidak ditemukan.' });
+    return;
+  }
+  res.json({ ok: true, deleted_id: id });
 });
 
 app.post('/api/wa/accounts/:id/connect', requireAuth(['ADMIN', 'BK']), (req, res) => {
@@ -3147,6 +3325,7 @@ app.post('/api/wa/accounts/:id/connect', requireAuth(['ADMIN', 'BK']), (req, res
     return;
   }
   acc.qr_connected = true;
+  acc.last_error = null;
   saveDb(db);
   res.json({ ok: true, account: acc });
 });
@@ -3172,16 +3351,53 @@ app.post('/api/wa/test', requireAuth(['ADMIN', 'BK']), async (req, res) => {
       })
     : String(message);
 
-  const acc = db.wa_accounts.find((a) => a.qr_connected && a.status !== 'BANNED');
-  const dispatch = await dispatchWaMessage(
-    acc,
-    db.settings.wa_provider,
-    db.settings.wa_api_key,
-    db.settings.wa_phone_number_id,
-    String(phone),
-    formatted,
-    Boolean(db.settings.production_mode)
-  );
+  for (const candidateAcc of db.wa_accounts) {
+    applyWaQuotaResetIfDue(candidateAcc, waJkt.dateTimeStr);
+  }
+  const provider = normalizeWaProvider(db.settings.wa_provider);
+  const rr = selectNextWaAccountRoundRobin(db.wa_accounts, getRoundRobinCursorId(), provider === 'WA_WEB');
+  let acc = rr.selected ?? undefined;
+  let dispatch: { sent: boolean; simulated: boolean; statusCode?: number; error?: string };
+
+  if (rr.orderedCandidates.length === 0) {
+    dispatch = await dispatchWaMessage(
+      undefined,
+      provider,
+      db.settings.wa_api_key,
+      db.settings.wa_phone_number_id,
+      String(phone),
+      formatted,
+      Boolean(db.settings.production_mode)
+    );
+  } else {
+    dispatch = { sent: false, simulated: false, error: 'Tidak ada akun WA aktif yang tersedia.' };
+    for (const candidate of rr.orderedCandidates) {
+      acc = candidate;
+      setRoundRobinCursorId(candidate.id);
+      const attempt = await dispatchWaMessage(
+        candidate,
+        provider,
+        db.settings.wa_api_key,
+        db.settings.wa_phone_number_id,
+        String(phone),
+        formatted,
+        Boolean(db.settings.production_mode)
+      );
+      dispatch = attempt;
+      if (attempt.sent) break;
+      if (attempt.statusCode === 503 || attempt.statusCode === 409) {
+        candidate.qr_connected = false;
+        candidate.last_error = attempt.error ?? 'Sesi terputus';
+      }
+      if (attempt.statusCode === 422) break;
+    }
+  }
+
+  if (dispatch.sent && acc && !dispatch.simulated) {
+    acc.daily_count += 1;
+    acc.hourly_count += 1;
+    acc.last_error = null;
+  }
 
   db.wa_queue.unshift({
     id: nextId(db.wa_queue),
@@ -3198,13 +3414,14 @@ app.post('/api/wa/test', requireAuth(['ADMIN', 'BK']), async (req, res) => {
   res.json({
     ok: dispatch.sent,
     simulated: dispatch.simulated,
+    sender_account: acc ? acc.phone_number : null,
     error: dispatch.error ?? null,
     preview: `${formatted}${
       dispatch.error
         ? ` (${dispatch.error})`
         : dispatch.simulated
-          ? ' (Simulasi preview · scan QR Baileys atau isi API Key untuk kirim live)'
-          : ' (Terkirim Live)'
+          ? ' (Simulasi preview · scan QR WhatsApp Web atau isi API Key untuk kirim live)'
+          : ` (Terkirim Live${acc ? ` via ${acc.phone_number}` : ''})`
     }`,
   });
 });
@@ -3596,8 +3813,9 @@ async function start() {
     }
   }
 
-  // Jalankan worker antrean WA, restore sesi Baileys tersimpan, scheduler harian + pembersihan storage otomatis
-  restoreSavedBaileysSessions(broadcastWs);
+  // Jalankan worker antrean WA (Round-Robin), auto-spawn Python WA Gateway, scheduler harian + cleanup otomatis
+  getOrCreateInternalToken({ dataDir: DATA_DIR });
+  void ensureWaGatewayRunning();
   startWaQueueWorker(broadcastWs);
 
   const executeDailyTick = () => {
@@ -3650,15 +3868,18 @@ async function start() {
       ).length;
       const pyHealth = await callFaceService<{ ok?: boolean; gallery_size?: number }>('/health');
       if (pyHealth?.ok) {
+        setPythonFaceServiceOnline(true, true);
         if (enrolledCount > 0 && (pyHealth.gallery_size ?? 0) === 0) {
           await callFaceService('/cameras/reload', {});
           console.log(`[AutoSync] Memulihkan galeri ${enrolledCount} wajah ke InsightFace Python.`);
         }
         pythonGallerySynced = true;
       } else {
+        setPythonFaceServiceOnline(false, false);
         pythonGallerySynced = false;
       }
     } catch {
+      setPythonFaceServiceOnline(false, false);
       pythonGallerySynced = false;
     }
   };
@@ -3721,18 +3942,10 @@ async function start() {
 
   const onListen = () => {
     console.log(`[Absensi SMK Server] Running on http://${listenHost || '0.0.0.0'}:${activePort}`);
-    startNodeRtspWorkers({
-      loadDb,
-      snapshotsDir: SNAPSHOTS_DIR,
+    startFaceServiceMonitor({
       isPythonFaceServiceOnline: async () => {
         const health = await callFaceService<{ ok?: boolean }>('/health');
         return Boolean(health?.ok);
-      },
-      onHeartbeat: (cameraId, online, error) => {
-        updateCameraHeartbeat(cameraId, online, error);
-      },
-      onFaceEvent: (payload) => {
-        processFaceEvent(payload);
       },
     });
   };
@@ -3776,5 +3989,12 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   console.error('[Absensi SMK Server] Uncaught exception:', err);
 });
+
+const handleShutdown = () => {
+  stopWaGatewayChild();
+  process.exit(0);
+};
+process.once('SIGTERM', handleShutdown);
+process.once('SIGINT', handleShutdown);
 
 start();

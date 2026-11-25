@@ -186,6 +186,85 @@ test('evaluateAttendanceRecognition classifies HADIR, TERLAMBAT, KELUAR, OBSERVA
     nowEpochMs: Date.parse('2026-11-16T07:10:15Z'),
   });
   assert.equal(dup.deduplicated, true);
+
+  // Duplicate MASUK 5 minutes later (same student_id, tipe, tanggal) MUST also be suppressed
+  const dupLaterSameDay = evaluateAttendanceRecognition({
+    student: sampleStudent,
+    gateType: 'BOTH',
+    timeNow: '07:15:00',
+    dateStr: '2026-11-16',
+    schedule: sched,
+    existingDaily: {
+      id: 1,
+      student_id: 1,
+      tanggal: '2026-11-16',
+      jam_masuk: '07:10:00',
+      jam_keluar: null,
+      status: 'HADIR',
+      manual_override_by: null,
+      manual_override_at: null,
+      catatan: null,
+    },
+    recentLogs: [
+      { id: 1, student_id: 1, gate_id: 1, camera_id: 1, timestamp: '2026-11-16T07:10:00', tipe: 'MASUK', status: 'HADIR', is_manual_override: false },
+    ],
+    nowEpochMs: Date.parse('2026-11-16T07:15:00Z'),
+  });
+  assert.equal(dupLaterSameDay.logType, 'MASUK');
+  assert.equal(dupLaterSameDay.deduplicated, true);
+  assert.equal(dupLaterSameDay.updateDaily, null);
+
+  // First KELUAR on the same day MUST NOT be deduplicated by MASUK log, second KELUAR 2 mins later MUST be deduplicated
+  const firstKeluar = evaluateAttendanceRecognition({
+    student: sampleStudent,
+    gateType: 'BOTH',
+    timeNow: '15:10:00',
+    dateStr: '2026-11-16',
+    schedule: sched,
+    existingDaily: {
+      id: 1,
+      student_id: 1,
+      tanggal: '2026-11-16',
+      jam_masuk: '07:10:00',
+      jam_keluar: null,
+      status: 'HADIR',
+      manual_override_by: null,
+      manual_override_at: null,
+      catatan: null,
+    },
+    recentLogs: [
+      { id: 1, student_id: 1, gate_id: 1, camera_id: 1, timestamp: '2026-11-16T07:10:00', tipe: 'MASUK', status: 'HADIR', is_manual_override: false },
+    ],
+    nowEpochMs: Date.parse('2026-11-16T15:10:00Z'),
+  });
+  assert.equal(firstKeluar.logType, 'KELUAR');
+  assert.equal(firstKeluar.deduplicated, false);
+  assert.equal(firstKeluar.updateDaily?.jam_keluar, '15:10:00');
+
+  const secondKeluar = evaluateAttendanceRecognition({
+    student: sampleStudent,
+    gateType: 'BOTH',
+    timeNow: '15:12:00',
+    dateStr: '2026-11-16',
+    schedule: sched,
+    existingDaily: {
+      id: 1,
+      student_id: 1,
+      tanggal: '2026-11-16',
+      jam_masuk: '07:10:00',
+      jam_keluar: '15:10:00',
+      status: 'HADIR',
+      manual_override_by: null,
+      manual_override_at: null,
+      catatan: null,
+    },
+    recentLogs: [
+      { id: 2, student_id: 1, gate_id: 1, camera_id: 1, timestamp: '2026-11-16T15:10:00', tipe: 'KELUAR', status: 'HADIR', is_manual_override: false },
+    ],
+    nowEpochMs: Date.parse('2026-11-16T15:12:00Z'),
+  });
+  assert.equal(secondKeluar.logType, 'KELUAR');
+  assert.equal(secondKeluar.deduplicated, true);
 });
 
 test('computeQualityScore, cosineSimilarity, and cluster readiness adhere to thresholds', () => {
@@ -696,5 +775,86 @@ test('manual cluster curation removes mismatched hits, promotes primary photo, a
   assert.equal(batchRes.removedFilePaths.length, 2);
 });
 
+test('selectNextWaAccountRoundRobin rotates evenly across eligible connected accounts and skips paused/exhausted', async () => {
+  const { selectNextWaAccountRoundRobin, normalizeWaProvider } = await import('./attendanceEngine');
 
+  assert.equal(normalizeWaProvider('BAILEYS'), 'WA_WEB');
+  assert.equal(normalizeWaProvider('META_CLOUD'), 'META_CLOUD');
+
+  const accounts = [
+    { id: 1, status: 'ACTIVE' as const, daily_count: 10, hourly_count: 5, qr_connected: true },
+    { id: 2, status: 'PAUSED' as const, daily_count: 0, hourly_count: 0, qr_connected: true },
+    { id: 3, status: 'WARMUP' as const, daily_count: 20, hourly_count: 1, qr_connected: true }, // daily warmup limit reached (20)
+    { id: 4, status: 'WARMUP' as const, daily_count: 2, hourly_count: 1, qr_connected: true },
+    { id: 5, status: 'ACTIVE' as const, daily_count: 0, hourly_count: 0, qr_connected: false }, // not connected
+    { id: 6, status: 'ACTIVE' as const, daily_count: 5, hourly_count: 1, qr_connected: true },
+  ];
+
+  // Eligible IDs: [1, 4, 6]
+  let cursor: number | null = null;
+  const picks: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    const res: { selected: { id: number } | null; orderedCandidates: Array<{ id: number }>; nextCursorId: number | null } =
+      selectNextWaAccountRoundRobin(accounts, cursor, true);
+    assert.ok(res.selected);
+    picks.push(res.selected.id);
+    if (i === 0) {
+      assert.deepEqual(
+        res.orderedCandidates.map((c) => c.id),
+        [1, 4, 6]
+      );
+    }
+    cursor = res.nextCursorId;
+  }
+  assert.deepEqual(picks, [1, 4, 6, 1, 4, 6]);
+
+  // Empty eligible case
+  const none = selectNextWaAccountRoundRobin(
+    [{ id: 9, status: 'PAUSED' as const, daily_count: 0, hourly_count: 0, qr_connected: true }],
+    4,
+    true
+  );
+  assert.equal(none.selected, null);
+  assert.equal(none.orderedCandidates.length, 0);
+  assert.equal(none.nextCursorId, 4);
+});
+
+test('normalizeMaxFaceSize and computeCalibratedMinFacePx compute min-max calibrated range accurately', async () => {
+  const { normalizeMaxFaceSize, computeCalibratedMinFacePx } = await import('./attendanceEngine');
+
+  assert.equal(normalizeMaxFaceSize(0, 60), 0);
+  assert.equal(normalizeMaxFaceSize(-10, 60), 0);
+  assert.equal(normalizeMaxFaceSize(50, 80), 80); // clamped >= minFaceSize
+  assert.equal(normalizeMaxFaceSize(6000, 80), 4096); // clamped <= 4096
+  assert.equal(normalizeMaxFaceSize(320, 80), 320);
+
+  // Camera 1920x1080 downscaled to 960px (ratio 0.5): target [80, 320] -> effective [40, 160]
+  const cal = computeCalibratedMinFacePx({
+    cameraResolution: '1920x1080',
+    globalMinFaceSize: 60,
+    cameraMinFaceSize: 80,
+    globalMaxFaceSize: 240,
+    cameraMaxFaceSize: 320,
+    globalCaptureMaxWidth: 960,
+    cameraCaptureMaxWidth: null,
+  });
+  assert.equal(cal.scaleRatio, 0.5);
+  assert.equal(cal.targetCameraPx, 80);
+  assert.equal(cal.targetCameraMaxPx, 320);
+  assert.equal(cal.effectiveMinFacePx, 40);
+  assert.equal(cal.effectiveMaxFacePx, 160);
+  assert.equal(cal.maxWidthPercent, 16.7);
+
+  // Unlimited mode (0) stays 0
+  const unlimited = computeCalibratedMinFacePx({
+    cameraResolution: '1920x1080',
+    globalMinFaceSize: 60,
+    globalMaxFaceSize: 0,
+    cameraMaxFaceSize: null,
+    globalCaptureMaxWidth: 1280,
+  });
+  assert.equal(unlimited.targetCameraMaxPx, 0);
+  assert.equal(unlimited.effectiveMaxFacePx, 0);
+  assert.equal(unlimited.maxWidthPercent, 0);
+});
 

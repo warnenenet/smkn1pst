@@ -1,16 +1,10 @@
 services:
   absensi-smk:
-    image: ${DOCKERHUB_IMAGE:-username/absensi-smk-face-ai:latest}
-    container_name: ${CONTAINER_NAME:-absensi-smk-face-ai}
+    image: username/absensi-smk-face-ai:latest
+    container_name: absensi-smk-face-ai
     restart: unless-stopped
     ports:
-      # Gunakan port berbeda per sekolah via .env (mis. HOST_PORT=3081, 3082, 3083),
-      # lalu arahkan Reverse Proxy domain masing-masing sekolah ke http://127.0.0.1:${HOST_PORT}
-      - "${HOST_BIND_IP:-127.0.0.1}:${HOST_PORT:-3080}:80"
-    environment:
-      TZ: Asia/Jakarta
-      NODE_ENV: production
-      APP_URL: ${APP_URL:-}
+      - "127.0.0.1:3080:80"
     volumes:
-      - ${DATA_PATH:-./data}:/app/data
-
+      - ./data:/app/data
+      - ./storage:/app/storage

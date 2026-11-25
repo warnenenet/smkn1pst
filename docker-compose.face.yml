@@ -1,0 +1,30 @@
+services:
+  face-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.face-service
+    restart: unless-stopped
+    network_mode: host
+    user: "${FACE_UID:-0}:${FACE_GID:-0}"
+    env_file:
+      - .env
+    environment:
+      TZ: "Asia/Jakarta"
+      HOME: "/tmp"
+      FACE_PORT: "${FACE_PORT:-8001}"
+      PORT: "${PORT:-3001}"
+      WEB_BACKEND_URL: "http://127.0.0.1:${PORT:-3001}"
+      DATA_DIR: "/app/data"
+      WA_STORAGE_DIR: "/app/storage"
+      INSIGHTFACE_HOME: "/app/models/insightface"
+      RUST_ACCEL_BIN: "/app/bin/face_accel"
+      INTERNAL_TOKEN_FILE: "/app/data/secrets/internal_token"
+    volumes:
+      - ./data:/app/data
+      - ./storage:/app/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:$${FACE_PORT:-8001}/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 25s

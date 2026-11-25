@@ -9,7 +9,7 @@ export type ClusterStatus = 'PENDING' | 'READY' | 'NAMED' | 'ARCHIVED';
 export type ReviewStatus = 'PENDING' | 'APPROVED' | 'ROLLED_BACK';
 export type WaQueueStatus = 'PENDING' | 'SENT' | 'FAILED' | 'PAUSED';
 export type WaAccountStatus = 'ACTIVE' | 'WARMUP' | 'PAUSED' | 'BANNED';
-export type WaProvider = 'BAILEYS' | 'META_CLOUD' | 'FONNTE' | 'WABLAS';
+export type WaProvider = 'WA_WEB' | 'META_CLOUD' | 'FONNTE' | 'WABLAS';
 export type TTSMode = 'AUTO_ADAPTIVE' | 'CHIME_ONLY' | 'FULL_NAME';
 export type AcademicTransitionType =
   | 'BARU'
@@ -78,6 +78,7 @@ export interface Camera {
   last_error: string | null;
   last_online_at: string | null;
   min_face_size?: number | null;
+  max_face_size?: number | null;
   capture_max_width?: number | null;
 }
 
@@ -227,6 +228,7 @@ export interface WaQueue {
 export interface WaAccount {
   id: number;
   provider: WaProvider;
+  label?: string;
   phone_number: string;
   api_key: string;
   status: WaAccountStatus;
@@ -235,6 +237,8 @@ export interface WaAccount {
   last_reset_at: string;
   created_at: string;
   qr_connected?: boolean;
+  gateway_account_id?: number | null;
+  last_error?: string | null;
 }
 
 export interface WaTemplate {
@@ -269,7 +273,18 @@ export interface SettingsMap {
   threshold_confidence: number;
   threshold_recognition: number;
   threshold_clustering: number;
+  match_margin_min?: number;
+  vote_threshold?: number;
+  vote_window_sec?: number;
+  adaptive_threshold_enabled?: boolean;
+  threshold_high_quality?: number;
+  threshold_mid_quality?: number;
   min_face_size: number;
+  max_face_size?: number;
+  blur_threshold?: number;
+  max_yaw_deg?: number;
+  max_pitch_deg?: number;
+  debug_detection?: boolean;
   min_snapshot_quality: number;
   capture_max_width: number;
   capture_jpeg_quality: number;
@@ -340,8 +355,34 @@ export interface StorageBreakdown {
   };
 }
 
+export interface DetectionStatsWindow {
+  id?: number;
+  camera_id: number;
+  camera_name?: string;
+  window_start: string;
+  window_end: string;
+  total_raw: number;
+  dropped_confidence: number;
+  dropped_landmark: number;
+  dropped_size: number;
+  dropped_blur: number;
+  dropped_pose: number;
+  passed_embedding: number;
+  drop_ratio: number;
+  bad_quality_alert: boolean;
+}
+
+export interface DebugDetectionFileEntry {
+  filename: string;
+  camera_id: number | null;
+  url: string;
+  bytes: number;
+  created_at: string;
+}
+
 export interface WorkerStatusResponse {
-  engine: 'INSIGHTFACE_PYTHON' | 'NODE_WASM_LIVE' | 'IDLE';
+  app_version?: string;
+  engine: 'INSIGHTFACE_PYTHON' | 'IDLE';
   node_env: string;
   timezone: string;
   server_time_wib: string;
@@ -353,6 +394,7 @@ export interface WorkerStatusResponse {
   active_workers: number;
   indexed_students?: number;
   storage_breakdown?: StorageBreakdown;
+  detection_stats?: DetectionStatsWindow[];
   automation?: {
     daily_scheduler_active: boolean;
     wa_worker_active: boolean;
