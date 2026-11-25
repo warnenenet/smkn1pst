@@ -83,5 +83,5 @@ curl -X POST http://127.0.0.1:8003/send \
 ## Troubleshooting
 
 - **QR Tidak Muncul di Mode Headless**: Pastikan paket `xvfb`, `fonts-liberation`, dan `fonts-noto-color-emoji` terpasang di OS. Service akan otomatis mencoba fallback non-headless via `Xvfb`.
-- **Perubahan DOM WhatsApp Web**: Perbarui selector fallback pada `selectors.py` lalu restart service.
+- **Perubahan DOM WhatsApp Web**: Perbarui selector fallback pada `wa_selectors.py` lalu restart service.
 - **Error `Chrome binary not found`**: Instal `chromium` dan `chromium-driver` (`sudo apt-get install -y chromium chromium-driver`).

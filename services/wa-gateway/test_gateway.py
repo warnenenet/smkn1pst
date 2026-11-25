@@ -9,8 +9,9 @@ os.environ["WA_GATEWAY_TESTING"] = "1"
 
 import config  # noqa: E402
 from db import GatewayDB, WIB  # noqa: E402
+import selectors as stdlib_selectors  # noqa: E402
 from manager import AccountManager  # noqa: E402
-import selectors  # noqa: E402
+import wa_selectors as selectors  # noqa: E402
 from sender import send_message_with_guards  # noqa: E402
 from worker import clean_phone_digits  # noqa: E402
 
@@ -72,6 +73,7 @@ class TestWaGatewayCore(unittest.TestCase):
         self.assertFalse(self.db.has_sent_recipient_within_hours("628999000111", hours=24, ref_now=now + timedelta(hours=25)))
 
     def test_selectors_have_fallbacks(self):
+        self.assertTrue(hasattr(stdlib_selectors, "DefaultSelector"))
         self.assertGreaterEqual(len(selectors.QR_CANVAS_SELECTORS), 3)
         self.assertGreaterEqual(len(selectors.CHAT_LIST_SELECTORS), 3)
         self.assertGreaterEqual(len(selectors.MESSAGE_INPUT_SELECTORS), 3)

@@ -3,22 +3,6 @@ Selector WhatsApp Web terpusat dengan fallback berlapis.
 Jika WhatsApp Web mengubah DOM, cukup perbarui daftar kandidat di file ini.
 """
 
-import importlib.util as _importlib_util
-from pathlib import Path as _Path
-import sysconfig as _sysconfig
-
-# Re-export stdlib `selectors` agar modul bawaan Python (subprocess, asyncio, gunicorn)
-# tetap berjalan normal meskipun file ini bernama `selectors.py` di CWD/PYTHONPATH.
-_stdlib_selectors_path = _Path(_sysconfig.get_path("stdlib")) / "selectors.py"
-if _stdlib_selectors_path.exists():
-    _std_spec = _importlib_util.spec_from_file_location("_stdlib_selectors", str(_stdlib_selectors_path))
-    if _std_spec and _std_spec.loader:
-        _std_mod = _importlib_util.module_from_spec(_std_spec)
-        _std_spec.loader.exec_module(_std_mod)
-        for _attr in dir(_std_mod):
-            if not _attr.startswith("__"):
-                globals()[_attr] = getattr(_std_mod, _attr)
-
 QR_CANVAS_SELECTORS = [
     'canvas[aria-label*="Scan"]',
     'canvas[aria-label*="QR"]',

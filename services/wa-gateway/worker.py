@@ -8,7 +8,7 @@ from urllib.parse import quote
 import anti_detect
 import config
 import qr_extractor
-import selectors
+import wa_selectors as selectors
 
 logger = config.setup_logger("wa_gateway.worker")
 
@@ -161,7 +161,7 @@ class SeleniumWorker:
 
         raise RuntimeError(
             "Timeout menunggu QR atau sesi WhatsApp Web. "
-            "Periksa koneksi internet server atau perubahan selector DOM di selectors.py."
+            "Periksa koneksi internet server atau perubahan selector DOM di wa_selectors.py."
         )
 
     def poll_state(self) -> Tuple[str, Optional[str], Optional[str]]:

@@ -59,12 +59,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY services/face-service/requirements.txt /app/services/face-service/requirements.txt
 COPY services/wa-gateway/requirements.txt /app/services/wa-gateway/requirements.txt
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && /opt/venv/bin/pip install --no-cache-dir numpy==1.26.4 cython \
-    && /opt/venv/bin/pip install --no-cache-dir -r /app/services/face-service/requirements.txt \
-    && python3 -m venv /app/services/wa-gateway/.venv \
-    && /app/services/wa-gateway/.venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /app/services/wa-gateway/.venv/bin/pip install --no-cache-dir -r /app/services/wa-gateway/requirements.txt \
+    && /opt/venv/bin/pip install --no-cache-dir --timeout 180 --retries 15 --upgrade pip setuptools wheel \
+    && /opt/venv/bin/pip install --no-cache-dir --timeout 180 --retries 15 --prefer-binary numpy==1.26.4 cython
+
+RUN ok=0; for i in 1 2 3; do \
+      /opt/venv/bin/pip install --no-cache-dir --timeout 180 --retries 15 --prefer-binary -r /app/services/face-service/requirements.txt && { ok=1; break; }; \
+      echo "Retry pip face-service ($i/3)..." >&2; \
+      sleep 5; \
+    done; [ "$ok" -eq 1 ]
+
+RUN python3 -m venv /app/services/wa-gateway/.venv \
+    && ok=0; for i in 1 2 3; do \
+      /app/services/wa-gateway/.venv/bin/pip install --no-cache-dir --timeout 180 --retries 15 --upgrade pip setuptools \
+      && /app/services/wa-gateway/.venv/bin/pip install --no-cache-dir --timeout 180 --retries 15 --prefer-binary -r /app/services/wa-gateway/requirements.txt && { ok=1; break; }; \
+      echo "Retry pip wa-gateway ($i/3)..." >&2; \
+      sleep 5; \
+    done; [ "$ok" -eq 1 ] \
     && apt-get purge -y --auto-remove g++ python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -73,12 +83,12 @@ RUN mkdir -p /app/models/insightface /app/models/piper /app/bin /app/data/snapsh
     && /opt/venv/bin/python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l', root='/app/models/insightface', providers=['CPUExecutionProvider'], allowed_modules=['detection', 'recognition']); app.prepare(ctx_id=-1, det_size=(640, 640))"
 
 # 4. Pre-download Piper TTS binary & Indonesian voice model (100% offline runtime)
-RUN curl -fsSL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
+RUN curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 30 https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
       | tar -xz -C /usr/local \
     && chmod +x /usr/local/piper/piper \
-    && curl -fsSL -o /app/models/piper/id_ID-news_tts-medium.onnx \
+    && curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 30 -o /app/models/piper/id_ID-news_tts-medium.onnx \
       https://huggingface.co/rhasspy/piper-voices/resolve/main/id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx \
-    && curl -fsSL -o /app/models/piper/id_ID-news_tts-medium.onnx.json \
+    && curl -fsSL --retry 5 --retry-delay 3 --connect-timeout 30 -o /app/models/piper/id_ID-news_tts-medium.onnx.json \
       https://huggingface.co/rhasspy/piper-voices/resolve/main/id/id_ID/news_tts/medium/id_ID-news_tts-medium.onnx.json
 
 # 5. Install Node.js production dependencies (Express, ws, xlsx)

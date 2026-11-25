@@ -6,7 +6,7 @@ import time
 from typing import Any, Optional, Tuple
 
 import config
-import selectors
+import wa_selectors as selectors
 
 
 def extract_qr_base64_and_save(

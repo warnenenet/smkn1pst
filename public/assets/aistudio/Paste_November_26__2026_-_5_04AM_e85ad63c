@@ -1,0 +1,451 @@
+2026-11-26 04:42:42,544 INFO Set uid to user 0 succeeded
+2026-11-26 04:42:42,547 INFO supervisord started with pid 1
+2026-11-26 04:42:43,551 INFO spawned: 'node-web' with pid 12
+2026-11-26 04:42:43,553 INFO spawned: 'python-face-service' with pid 13
+2026-11-26 04:42:43,555 INFO spawned: 'python-wa-gateway' with pid 14
+[2026-11-26 04:42:43 +0700] [14] [INFO] Starting gunicorn 23.0.0
+[2026-11-26 04:42:43 +0700] [14] [INFO] Listening at: http://127.0.0.1:8003 (14)
+[2026-11-26 04:42:43 +0700] [14] [INFO] Using worker: gthread
+[2026-11-26 04:42:43 +0700] [21] [INFO] Booting worker with pid: 21
+[Absensi SMK Server] Frontend mode: PRODUCTION (/app/dist)
+[Absensi SMK Server] Running on http://0.0.0.0:80
+INFO:     Started server process [13]
+INFO:     Waiting for application startup.
+2026-11-26 04:42:47,057 INFO success: node-web entered RUNNING state, process has stayed up for > than 3 seconds (startsecs)
+2026-11-26 04:42:49,060 INFO success: python-face-service entered RUNNING state, process has stayed up for > than 5 seconds (startsecs)
+2026-11-26 04:42:49,060 INFO success: python-wa-gateway entered RUNNING state, process has stayed up for > than 5 seconds (startsecs)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/1k3d68.onnx landmark_3d_68
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/2d106det.onnx landmark_2d_106
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: /app/models/insightface/models/buffalo_l/det_10g.onnx detection [1, 3, '?', '?'] 127.5 128.0
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/genderage.onnx genderage
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: /app/models/insightface/models/buffalo_l/w600k_r50.onnx recognition ['None', 3, 112, 112] 127.5 127.5
+set det-size: (640, 640)
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/1k3d68.onnx landmark_3d_68
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/2d106det.onnx landmark_2d_106
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: /app/models/insightface/models/buffalo_l/det_10g.onnx detection [1, 3, '?', '?'] 127.5 128.0
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+model ignore: /app/models/insightface/models/buffalo_l/genderage.onnx genderage
+Applied providers: ['CPUExecutionProvider'], with options: {'CPUExecutionProvider': {}}
+find model: /app/models/insightface/models/buffalo_l/w600k_r50.onnx recognition ['None', 3, 112, 112] 127.5 127.5
+set det-size: (640, 640)
+INFO:     127.0.0.1:34524 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34082 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34082 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54326 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54326 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57172 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57172 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57172 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44010 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58368 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58368 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58368 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41198 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41198 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33576 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33576 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33576 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57148 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40460 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34682 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34682 - "POST /cameras/reload HTTP/1.1" 200 OK
+[RTSP][Cam #1] Stream RTSP terhubung (target_fps=6)
+[h264 @ 0x730944145600] reference picture missing during reorder
+[h264 @ 0x730944145600] Missing reference picture, default is 4
+[h264 @ 0x7309440dff00] reference picture missing during reorder
+[h264 @ 0x7309440dff00] Missing reference picture, default is 34
+[h264 @ 0x73094404a980] reference picture missing during reorder
+[h264 @ 0x73094404a980] Missing reference picture, default is 40
+[h264 @ 0x7309440b0000] reference picture missing during reorder
+[h264 @ 0x7309440b0000] Missing reference picture, default is 46
+[h264 @ 0x730944145600] reference picture missing during reorder
+[h264 @ 0x730944145600] Missing reference picture, default is 52
+[h264 @ 0x730944036500] reference picture missing during reorder
+[h264 @ 0x730944036500] Missing reference picture, default is 58
+[h264 @ 0x73094409bb80] reference picture missing during reorder
+INFO:     127.0.0.1:39556 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x73094409bb80] Missing reference picture, default is 64
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:39556 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43080 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35154 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35154 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35154 - "POST /cameras/reload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35154 - "GET /health HTTP/1.1" 200 OK
+[RTSP][Cam #2] Stream RTSP terhubung (target_fps=6)
+INFO:     127.0.0.1:35154 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x730818153900] reference picture missing during reorder
+[h264 @ 0x730818153900] Missing reference picture, default is 4
+[h264 @ 0x73081812bf40] reference picture missing during reorder
+[h264 @ 0x73081812bf40] Missing reference picture, default is 34
+[h264 @ 0x730818577300] reference picture missing during reorder
+[h264 @ 0x730818577300] Missing reference picture, default is 40
+[h264 @ 0x730819315840] reference picture missing during reorder
+[h264 @ 0x730819315840] Missing reference picture, default is 46
+[h264 @ 0x730818153900] reference picture missing during reorder
+[h264 @ 0x730818153900] Missing reference picture, default is 52
+[h264 @ 0x730818562e00] reference picture missing during reorder
+[h264 @ 0x730818562e00] Missing reference picture, default is 58
+[h264 @ 0x730819301340] reference picture missing during reorder
+[h264 @ 0x730819301340] Missing reference picture, default is 64
+[h264 @ 0x7308180cfc80] reference picture missing during reorder
+[h264 @ 0x7308180cfc80] Missing reference picture, default is 70
+[h264 @ 0x73081854e900] reference picture missing during reorder
+[h264 @ 0x73081854e900] Missing reference picture, default is 76
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:53202 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:53202 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50538 - "GET /health HTTP/1.1" 200 OK
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+INFO:     127.0.0.1:50470 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:49:25,068 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+INFO:     127.0.0.1:50236 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:49:32,080 INFO reaped unknown pid 1105 (exit status 0)
+2026-11-26 04:49:32,080 INFO reaped unknown pid 1106 (exit status 0)
+2026-11-26 04:49:33,041 INFO reaped unknown pid 1167 (exit status 0)
+2026-11-26 04:49:33,185 INFO reaped unknown pid 1202 (exit status 0)
+2026-11-26 04:49:33,186 INFO reaped unknown pid 1214 (exit status 0)
+2026-11-26 04:49:33,186 INFO reaped unknown pid 1261 (exit status 0)
+2026-11-26 04:49:33,186 INFO reaped unknown pid 1127 (exit status 0)
+2026-11-26 04:49:34,187 INFO reaped unknown pid 1100 (exit status 0)
+2026-11-26 04:49:34,187 INFO reaped unknown pid 1102 (exit status 0)
+2026-11-26 04:49:34,593 INFO reaped unknown pid 1128 (exit status 0)
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:43204 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:49:45,496 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:43204 - "GET /health HTTP/1.1" 200 OK
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 04:49:49,988 INFO reaped unknown pid 1338 (exit status 0)
+2026-11-26 04:49:49,988 INFO reaped unknown pid 1341 (exit status 0)
+2026-11-26 04:49:49,988 INFO reaped unknown pid 1378 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1410 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1422 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1470 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1366 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1368 (exit status 0)
+2026-11-26 04:49:49,989 INFO reaped unknown pid 1344 (exit status 0)
+2026-11-26 04:49:49,990 INFO reaped unknown pid 1345 (exit status 0)
+2026-11-26 04:49:55,277 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+INFO:     127.0.0.1:33352 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:50:00,084 INFO reaped unknown pid 1540 (exit status 0)
+2026-11-26 04:50:00,225 INFO reaped unknown pid 1541 (exit status 0)
+2026-11-26 04:50:00,460 INFO reaped unknown pid 1566 (exit status 0)
+2026-11-26 04:50:00,460 INFO reaped unknown pid 1608 (exit status 0)
+2026-11-26 04:50:00,461 INFO reaped unknown pid 1632 (exit status 0)
+2026-11-26 04:50:00,461 INFO reaped unknown pid 1678 (exit status 0)
+2026-11-26 04:50:00,461 INFO reaped unknown pid 1561 (exit status 0)
+2026-11-26 04:50:01,462 INFO reaped unknown pid 1535 (exit status 0)
+2026-11-26 04:50:01,462 INFO reaped unknown pid 1537 (exit status 0)
+2026-11-26 04:50:01,462 INFO reaped unknown pid 1562 (exit status 0)
+2026-11-26 04:50:03,639 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 04:50:06,513 INFO reaped unknown pid 1745 (exit status 0)
+2026-11-26 04:50:06,513 INFO reaped unknown pid 1747 (exit status 0)
+2026-11-26 04:50:06,514 INFO reaped unknown pid 1789 (exit status 0)
+2026-11-26 04:50:06,514 INFO reaped unknown pid 1750 (exit status 0)
+2026-11-26 04:50:06,514 INFO reaped unknown pid 1751 (exit status 0)
+2026-11-26 04:50:06,514 INFO reaped unknown pid 1801 (exit status 0)
+2026-11-26 04:50:06,515 INFO reaped unknown pid 1819 (exit status 0)
+2026-11-26 04:50:06,515 INFO reaped unknown pid 1831 (exit status 0)
+2026-11-26 04:50:06,515 INFO reaped unknown pid 1866 (exit status 0)
+2026-11-26 04:50:06,515 INFO reaped unknown pid 1777 (exit status 0)
+2026-11-26 04:50:09,888 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 04:50:12,895 INFO reaped unknown pid 1927 (exit status 0)
+2026-11-26 04:50:12,895 INFO reaped unknown pid 1929 (exit status 0)
+2026-11-26 04:50:12,895 INFO reaped unknown pid 1955 (exit status 0)
+2026-11-26 04:50:12,895 INFO reaped unknown pid 1932 (exit status 0)
+2026-11-26 04:50:12,895 INFO reaped unknown pid 1933 (exit status 0)
+2026-11-26 04:50:12,896 INFO reaped unknown pid 1992 (exit status 0)
+2026-11-26 04:50:12,896 INFO reaped unknown pid 2019 (exit status 0)
+2026-11-26 04:50:12,896 INFO reaped unknown pid 2031 (exit status 0)
+2026-11-26 04:50:12,896 INFO reaped unknown pid 2070 (exit status 0)
+2026-11-26 04:50:12,896 INFO reaped unknown pid 1953 (exit status 0)
+INFO:     127.0.0.1:59460 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59460 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:50:23,492 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 04:50:24,495 INFO reaped unknown pid 2131 (exit status 0)
+2026-11-26 04:50:24,496 INFO reaped unknown pid 2133 (exit status 0)
+2026-11-26 04:50:24,558 INFO reaped unknown pid 2158 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2137 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2138 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2169 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2198 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2211 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2244 (exit status 0)
+2026-11-26 04:50:24,559 INFO reaped unknown pid 2157 (exit status 0)
+INFO:     127.0.0.1:52288 - "GET /health HTTP/1.1" 200 OK
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+2026-11-26 04:50:38,378 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 04:50:43,383 INFO reaped unknown pid 2346 (exit status 0)
+2026-11-26 04:50:44,430 INFO reaped unknown pid 2403 (exit status 0)
+2026-11-26 04:50:44,430 INFO reaped unknown pid 2415 (exit status 0)
+2026-11-26 04:50:44,430 INFO reaped unknown pid 2456 (exit status 0)
+2026-11-26 04:50:44,430 INFO reaped unknown pid 2324 (exit status 0)
+2026-11-26 04:50:44,430 INFO reaped unknown pid 2325 (exit status 0)
+INFO:     127.0.0.1:43310 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:50:44,473 INFO reaped unknown pid 2319 (exit status 0)
+2026-11-26 04:50:44,473 INFO reaped unknown pid 2321 (exit status 0)
+2026-11-26 04:50:44,473 INFO reaped unknown pid 2386 (exit status 0)
+2026-11-26 04:50:44,473 INFO reaped unknown pid 2348 (exit status 0)
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:43310 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:50:53,232 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 04:50:57,238 INFO reaped unknown pid 2521 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2522 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2565 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2583 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2595 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2645 (exit status 0)
+2026-11-26 04:50:57,239 INFO reaped unknown pid 2542 (exit status 0)
+INFO:     127.0.0.1:53250 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 04:50:59,658 INFO reaped unknown pid 2515 (exit status 0)
+2026-11-26 04:50:59,658 INFO reaped unknown pid 2517 (exit status 0)
+2026-11-26 04:50:59,659 INFO reaped unknown pid 2544 (exit status 0)
+INFO:     127.0.0.1:58786 - "POST /cameras/reload HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39352 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42138 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:53432 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:53432 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35210 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48736 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42310 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=18 lolos5m=0 total_lolos=0 total_ditolak=18
+INFO:     127.0.0.1:47900 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:47900 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42422 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43866 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44214 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:44152 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:44152 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50122 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41346 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:36488 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59360 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:59360 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37888 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33204 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:43910 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40108 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40108 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:56670 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44968 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:54786 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47062 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47062 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:54196 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46794 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:59680 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47388 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47388 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:45484 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56248 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=24
+INFO:     127.0.0.1:52970 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34952 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34952 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:34222 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52542 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=0 total_ditolak=26
+INFO:     127.0.0.1:56118 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56134 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56134 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:56138 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56144 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=0 total_ditolak=26
+INFO:     127.0.0.1:37136 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37138 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37138 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:35310 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35326 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=0 total_ditolak=26
+INFO:     127.0.0.1:56748 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56750 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56750 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:55600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55604 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=37 lolos5m=0 total_lolos=0 total_ditolak=61
+INFO:     127.0.0.1:45976 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45978 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45978 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=0
+INFO:     127.0.0.1:47746 - "GET /health HTTP/1.1" 200 OK
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 05:03:07,874 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 05:03:08,876 INFO reaped unknown pid 2872 (exit status 0)
+2026-11-26 05:03:08,876 INFO reaped unknown pid 2874 (exit status 0)
+2026-11-26 05:03:08,876 INFO reaped unknown pid 2903 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2877 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2878 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2906 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2944 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2968 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 3010 (exit status 0)
+2026-11-26 05:03:08,877 INFO reaped unknown pid 2900 (exit status 0)
+2026-11-26 05:03:10,317 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+INFO:     127.0.0.1:60584 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3076 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3078 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3106 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3081 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3082 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3126 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3143 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3155 (exit status 0)
+2026-11-26 05:03:11,476 INFO reaped unknown pid 3191 (exit status 0)
+2026-11-26 05:03:11,477 INFO reaped unknown pid 3103 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 05:03:13,810 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 05:03:14,812 INFO reaped unknown pid 3258 (exit status 0)
+2026-11-26 05:03:14,812 INFO reaped unknown pid 3260 (exit status 0)
+2026-11-26 05:03:14,812 INFO reaped unknown pid 3263 (exit status 0)
+2026-11-26 05:03:14,812 INFO reaped unknown pid 3264 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3285 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3288 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3329 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3352 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3399 (exit status 0)
+2026-11-26 05:03:14,813 INFO reaped unknown pid 3284 (exit status 0)
+2026-11-26 05:03:16,332 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 05:03:17,333 INFO reaped unknown pid 3460 (exit status 0)
+2026-11-26 05:03:17,333 INFO reaped unknown pid 3462 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3487 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3465 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3466 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3498 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3528 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3540 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3575 (exit status 0)
+2026-11-26 05:03:17,334 INFO reaped unknown pid 3485 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+INFO:     127.0.0.1:60588 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 05:03:19,672 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 05:03:20,674 INFO reaped unknown pid 3633 (exit status 0)
+2026-11-26 05:03:20,674 INFO reaped unknown pid 3636 (exit status 0)
+2026-11-26 05:03:20,674 INFO reaped unknown pid 3662 (exit status 0)
+2026-11-26 05:03:20,674 INFO reaped unknown pid 3639 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3640 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3660 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3664 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3705 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3728 (exit status 0)
+2026-11-26 05:03:20,675 INFO reaped unknown pid 3773 (exit status 0)
+2026-11-26 05:03:22,354 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 05:03:23,356 INFO reaped unknown pid 3835 (exit status 0)
+2026-11-26 05:03:23,356 INFO reaped unknown pid 3837 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3864 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3840 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3841 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3862 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3874 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3905 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3917 (exit status 0)
+2026-11-26 05:03:23,357 INFO reaped unknown pid 3959 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 05:03:26,794 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 05:03:27,796 INFO reaped unknown pid 4019 (exit status 0)
+2026-11-26 05:03:27,796 INFO reaped unknown pid 4021 (exit status 0)
+2026-11-26 05:03:27,796 INFO reaped unknown pid 4024 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4025 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4048 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4046 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4067 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4096 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4112 (exit status 0)
+2026-11-26 05:03:27,797 INFO reaped unknown pid 4151 (exit status 0)
+2026-11-26 05:03:29,401 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 05:03:30,407 INFO reaped unknown pid 4215 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4217 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4245 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4220 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4221 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4256 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4282 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4294 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4328 (exit status 0)
+2026-11-26 05:03:30,408 INFO reaped unknown pid 4242 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 05:03:32,919 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+2026-11-26 05:03:33,921 INFO reaped unknown pid 4392 (exit status 0)
+2026-11-26 05:03:33,921 INFO reaped unknown pid 4394 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4421 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4397 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4398 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4439 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4476 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4488 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4530 (exit status 0)
+2026-11-26 05:03:33,922 INFO reaped unknown pid 4418 (exit status 0)
+2026-11-26 05:03:35,305 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 05:03:36,306 INFO reaped unknown pid 4590 (exit status 0)
+2026-11-26 05:03:36,306 INFO reaped unknown pid 4592 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4618 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4595 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4596 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4628 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4657 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4670 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4710 (exit status 0)
+2026-11-26 05:03:36,307 INFO reaped unknown pid 4616 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+2026-11-26 05:03:38,690 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=0 total_ditolak=61
+2026-11-26 05:03:38,909 INFO reaped unknown pid 4770 (exit status 0)
+2026-11-26 05:03:38,909 INFO reaped unknown pid 4772 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4798 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4775 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4776 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4818 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4854 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4867 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4907 (exit status 0)
+2026-11-26 05:03:38,910 INFO reaped unknown pid 4797 (exit status 0)
+INFO:     127.0.0.1:52740 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 05:03:41,046 [ERROR] wa_gateway.manager: [Acc #1] Gagal memulai sesi Chrome WA: module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'
+2026-11-26 05:03:42,048 INFO reaped unknown pid 4967 (exit status 0)
+2026-11-26 05:03:42,048 INFO reaped unknown pid 4969 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 4995 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 4972 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 4973 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 5007 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 5039 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 5051 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 5094 (exit status 0)
+2026-11-26 05:03:42,049 INFO reaped unknown pid 4994 (exit status 0)
+could not detect version_main.therefore, we are assuming it is chrome 108 or higher
+INFO:     127.0.0.1:52740 - "GET /health HTTP/1.1" 200 OK
+2026-11-26 05:03:44,536 [WARNING] wa_gateway.worker: [Acc #1] Mode headless gagal (module 'selectors' has no attribute 'CHAT_LIST_SELECTORS'); memeriksa fallback Xvfb...
