@@ -40,6 +40,7 @@ import {
 import {
   getNodeWorkerStatus,
   resolveFfmpegDetails,
+  setPythonFaceServiceDiagnostics,
   setPythonFaceServiceOnline,
   startFaceServiceMonitor,
   updatePythonCameraTelemetry,
@@ -102,6 +103,7 @@ import {
 } from './src/lib/attendanceEngine.ts';
 import {
   buildFfmpegLivePreviewArgs,
+  buildLocalWebBackendUrl,
   diagnoseFfmpegError,
   getStaticAssetContentType,
   getStaticCacheControl,
@@ -129,6 +131,7 @@ const FACE_SERVICE_URL = process.env.FACE_SERVICE_URL || 'http://127.0.0.1:8001'
 const execFileAsync = promisify(execFile);
 const SERVER_START_MS = Date.now();
 let pythonGallerySynced = false;
+let activeLocalWebBackendUrl: string | null = null;
 
 const loginRateLimiter = createRateLimiter(10, 15 * 60_000);
 const setupRateLimiter = createRateLimiter(8, 15 * 60_000);
@@ -137,7 +140,7 @@ const lastCameraDbPersistMs = new Map<number, number>();
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 'loopback');
+app.set('trust proxy', 'loopback, linklocal, uniquelocal');
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -271,7 +274,8 @@ async function callFaceService<T>(endpoint: string, body?: unknown): Promise<T |
 }
 
 function triggerPythonCameraReload(): void {
-  callFaceService('/cameras/reload', {}).catch(() => {});
+  const payload = activeLocalWebBackendUrl ? { web_backend_url: activeLocalWebBackendUrl } : {};
+  callFaceService('/cameras/reload', payload).catch(() => {});
 }
 
 function removeSnapshotIfLocal(relPath: string | null | undefined): void {
@@ -3853,35 +3857,87 @@ async function start() {
   setTimeout(executeMaintenanceTick, 10_000);
   setInterval(executeMaintenanceTick, 6 * 3600_000);
 
-  // Auto-sync galeri 5000+ siswa ke Python InsightFace saat service boot/pulih + prewarm TTS offline
-  const executeAutoAiHealTick = async () => {
+  // Auto-sync galeri & port backend Node -> Python InsightFace saat service boot/pulih
+  const syncFaceServiceRuntime = async (): Promise<boolean> => {
     try {
       const db = loadDb();
-      if (panggilCooldown.size > 1000) {
-        const now = Date.now();
-        for (const [k, ts] of panggilCooldown.entries()) {
-          if (now - ts > 600_000) panggilCooldown.delete(k);
-        }
-      }
       const enrolledCount = db.students.filter(
         (s) => s.status !== 'LULUS' && Array.isArray(s.embedding) && s.embedding.length > 0
       ).length;
-      const pyHealth = await callFaceService<{ ok?: boolean; gallery_size?: number }>('/health');
-      if (pyHealth?.ok) {
-        setPythonFaceServiceOnline(true, true);
-        if (enrolledCount > 0 && (pyHealth.gallery_size ?? 0) === 0) {
-          await callFaceService('/cameras/reload', {});
-          console.log(`[AutoSync] Memulihkan galeri ${enrolledCount} wajah ke InsightFace Python.`);
-        }
-        pythonGallerySynced = true;
-      } else {
+      const activeRtspCount = db.cameras.filter(
+        (c) => c.aktif && typeof c.rtsp_url === 'string' && c.rtsp_url.length > 0 && !c.rtsp_url.startsWith('dummy://')
+      ).length;
+      const pyHealth = await callFaceService<{
+        ok?: boolean;
+        gallery_size?: number;
+        active_camera_workers?: number;
+        web_backend_url?: string | null;
+        backend_reachable?: boolean | null;
+        backend_error?: string | null;
+      }>('/health');
+
+      if (!pyHealth?.ok) {
         setPythonFaceServiceOnline(false, false);
         pythonGallerySynced = false;
+        return false;
       }
+
+      setPythonFaceServiceOnline(true, true);
+      setPythonFaceServiceDiagnostics({
+        backendUrl: pyHealth.web_backend_url ?? null,
+        backendError: pyHealth.backend_error ?? null,
+      });
+
+      const urlMismatch = Boolean(
+        activeLocalWebBackendUrl && pyHealth.web_backend_url !== activeLocalWebBackendUrl
+      );
+      const needsBackendHeal =
+        urlMismatch ||
+        pyHealth.backend_reachable === false ||
+        (activeRtspCount > 0 && (pyHealth.active_camera_workers ?? 0) === 0) ||
+        (enrolledCount > 0 && (pyHealth.gallery_size ?? 0) === 0);
+
+      if (needsBackendHeal) {
+        const reloadRes = await callFaceService<{
+          ok?: boolean;
+          gallery_size?: number;
+          active_camera_workers?: number;
+          web_backend_url?: string | null;
+          backend_reachable?: boolean | null;
+          backend_error?: string | null;
+        }>('/cameras/reload', activeLocalWebBackendUrl ? { web_backend_url: activeLocalWebBackendUrl } : {});
+        if (reloadRes) {
+          setPythonFaceServiceDiagnostics({
+            backendUrl: reloadRes.web_backend_url ?? pyHealth.web_backend_url ?? null,
+            backendError: reloadRes.backend_error ?? null,
+          });
+          if (urlMismatch && reloadRes.backend_reachable) {
+            console.log(
+              `[AutoSync] Port backend Face AI disinkronkan ke ${reloadRes.web_backend_url} (${reloadRes.active_camera_workers ?? 0} kamera RTSP, ${reloadRes.gallery_size ?? 0} wajah).`
+            );
+          } else if (enrolledCount > 0 && (pyHealth.gallery_size ?? 0) === 0 && (reloadRes.gallery_size ?? 0) > 0) {
+            console.log(`[AutoSync] Memulihkan galeri ${enrolledCount} wajah ke InsightFace Python.`);
+          }
+        }
+      }
+
+      pythonGallerySynced = true;
+      return true;
     } catch {
       setPythonFaceServiceOnline(false, false);
       pythonGallerySynced = false;
+      return false;
     }
+  };
+
+  const executeAutoAiHealTick = async () => {
+    if (panggilCooldown.size > 1000) {
+      const now = Date.now();
+      for (const [k, ts] of panggilCooldown.entries()) {
+        if (now - ts > 600_000) panggilCooldown.delete(k);
+      }
+    }
+    await syncFaceServiceRuntime();
   };
   setTimeout(() => void executeAutoAiHealTick(), 8000);
   setInterval(() => void executeAutoAiHealTick(), 60_000);
@@ -3941,13 +3997,12 @@ async function start() {
   let portAttempts = 0;
 
   const onListen = () => {
+    activeLocalWebBackendUrl = buildLocalWebBackendUrl(activePort, listenHost);
     console.log(`[Absensi SMK Server] Running on http://${listenHost || '0.0.0.0'}:${activePort}`);
     startFaceServiceMonitor({
-      isPythonFaceServiceOnline: async () => {
-        const health = await callFaceService<{ ok?: boolean }>('/health');
-        return Boolean(health?.ok);
-      },
+      isPythonFaceServiceOnline: syncFaceServiceRuntime,
     });
+    setTimeout(() => void syncFaceServiceRuntime(), 1500);
   };
 
   server.on('error', (err: NodeJS.ErrnoException) => {

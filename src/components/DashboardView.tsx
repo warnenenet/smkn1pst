@@ -193,6 +193,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
       )}
 
+      {workerStatus?.engine === 'INSIGHTFACE_PYTHON' && workerStatus.face_backend_error && (
+        <section
+          role="alert"
+          className="bg-red-50 border border-red-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-2.5 text-xs text-red-950">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold">
+                Container Docker Face AI belum terhubung ke server Node ({workerStatus.face_backend_url ?? 'WEB_BACKEND_URL'})
+              </div>
+              <p className="text-red-900 mt-0.5 font-mono break-all">
+                {workerStatus.face_backend_error}
+              </p>
+              <p className="text-red-800 mt-1">
+                Pastikan Project Port di aaPanel sama dengan <span className="font-mono font-semibold">PORT</span> di file{' '}
+                <span className="font-mono font-semibold">.env</span> lalu perbarui container Face AI (<span className="font-mono">npm run update</span>).
+              </p>
+            </div>
+          </div>
+        </section>
+      )}
+
       {(workerStatus?.detection_stats ?? []).filter((ds) => ds.bad_quality_alert).map((ds) => (
         <section
           key={`alert-${ds.camera_id}`}

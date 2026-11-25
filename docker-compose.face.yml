@@ -11,6 +11,7 @@ services:
     environment:
       TZ: "Asia/Jakarta"
       HOME: "/tmp"
+      MPLCONFIGDIR: "/tmp/matplotlib"
       FACE_PORT: "${FACE_PORT:-8001}"
       PORT: "${PORT:-3001}"
       WEB_BACKEND_URL: "http://127.0.0.1:${PORT:-3001}"

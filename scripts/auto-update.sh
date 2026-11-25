@@ -178,14 +178,33 @@ RUN_USER="${RUN_USER:-auto}"
 RUN_GROUP="${RUN_GROUP:-auto}"
 DATA_DIR="${DATA_DIR:-./data}"
 BACKUP_KEEP="${BACKUP_KEEP:-5}"
-PORT="${CLI_PORT:-${PORT:-3000}}"
+HOST_PORT="${HOST_PORT:-}"
+PORT="${CLI_PORT:-${PORT:-}}"
 HEALTH_PATH="${HEALTH_PATH:-/api/health}"
 HEALTH_URL="${HEALTH_URL:-}"
-HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-25}"
+HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-45}"
 AUTO_STASH="${AUTO_STASH:-0}"
 UPDATE_ONLY_NEW_VERSION="${UPDATE_ONLY_NEW_VERSION:-1}"
 CRON_SCHEDULE="${CLI_SCHEDULE:-${CRON_SCHEDULE:-0 * * * *}}" # Default: 1 jam sekali
 LOG_FILE="${LOG_FILE:-}"
+
+DOCKER_ALL_IN_ONE=0
+if [[ "$APP_MANAGER" == "docker" ]]; then
+  DOCKER_ALL_IN_ONE=1
+elif [[ "$APP_MANAGER" == "auto" && ! -f "/.dockerenv" && -f "$APP_DIR/docker-compose.yml" ]] && command -v docker >/dev/null 2>&1; then
+  if docker compose -f "$APP_DIR/docker-compose.yml" ps -q absensi-smk 2>/dev/null | grep -q .; then
+    DOCKER_ALL_IN_ONE=1
+    APP_MANAGER="docker"
+  fi
+fi
+
+if [[ -z "$PORT" ]]; then
+  if [[ "$DOCKER_ALL_IN_ONE" -eq 1 ]]; then
+    PORT="${HOST_PORT:-3080}"
+  else
+    PORT="3000"
+  fi
+fi
 
 # Resolusi path absolut DATA_DIR & LOG_FILE
 if [[ "$DATA_DIR" != /* ]]; then
@@ -254,10 +273,10 @@ print_status() {
   log "PORT         : $PORT"
   log "APP_MANAGER  : $APP_MANAGER"
   log "LOG_FILE     : $LOG_FILE"
-  if [[ -f "$APP_DIR/package.json" ]] && command -v node >/dev/null 2>&1; then
+  if [[ -f "$APP_DIR/package.json" ]]; then
     local app_ver
-    app_ver="$(node -e 'try{process.stdout.write(String(require("./package.json").version||"1.0.0"))}catch{process.stdout.write("1.0.0")}' 2>/dev/null || echo '1.0.0')"
-    log "APP_VERSION  : v${app_ver} (UPDATE_ONLY_NEW_VERSION=${UPDATE_ONLY_NEW_VERSION})"
+    app_ver="$(sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$APP_DIR/package.json" | head -n 1 || echo '1.0.0')"
+    log "APP_VERSION  : v${app_ver:-1.0.0} (UPDATE_ONLY_NEW_VERSION=${UPDATE_ONLY_NEW_VERSION})"
   fi
   if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     log "GIT_BRANCH   : $(git symbolic-ref --quiet --short HEAD 2>/dev/null || echo 'detached')"
@@ -348,8 +367,14 @@ LOCAL_SHA="$(git rev-parse HEAD)"
 REMOTE_SHA="$(git rev-parse "$GIT_REMOTE/$TARGET_BRANCH")"
 
 read_local_pkg_version() {
-  if [[ -f "$APP_DIR/package.json" ]] && command -v node >/dev/null 2>&1; then
-    node -e 'try{process.stdout.write(String(require("./package.json").version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' 2>/dev/null || echo "0.0.0"
+  if [[ -f "$APP_DIR/package.json" ]]; then
+    if command -v node >/dev/null 2>&1; then
+      node -e 'try{process.stdout.write(String(require("./package.json").version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' 2>/dev/null || echo "0.0.0"
+    elif command -v python3 >/dev/null 2>&1; then
+      python3 -c 'import json; print(json.load(open("package.json")).get("version","0.0.0"))' 2>/dev/null || echo "0.0.0"
+    else
+      sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$APP_DIR/package.json" | head -n 1 || echo "0.0.0"
+    fi
   else
     echo "0.0.0"
   fi
@@ -358,8 +383,14 @@ read_local_pkg_version() {
 read_remote_pkg_version() {
   local raw
   raw="$(git show "$GIT_REMOTE/$TARGET_BRANCH:package.json" 2>/dev/null || true)"
-  if [[ -n "$raw" ]] && command -v node >/dev/null 2>&1; then
-    node -e 'try{const p=JSON.parse(process.argv[1]); process.stdout.write(String(p.version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' "$raw" 2>/dev/null || echo "0.0.0"
+  if [[ -n "$raw" ]]; then
+    if command -v node >/dev/null 2>&1; then
+      node -e 'try{const p=JSON.parse(process.argv[1]); process.stdout.write(String(p.version||"0.0.0"))}catch{process.stdout.write("0.0.0")}' "$raw" 2>/dev/null || echo "0.0.0"
+    elif command -v python3 >/dev/null 2>&1; then
+      python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("version","0.0.0"))' "$raw" 2>/dev/null || echo "0.0.0"
+    else
+      printf '%s\n' "$raw" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1 || echo "0.0.0"
+    fi
   else
     echo "0.0.0"
   fi
@@ -368,20 +399,23 @@ read_remote_pkg_version() {
 is_remote_version_newer() {
   local local_v="$1"
   local remote_v="$2"
-  command -v node >/dev/null 2>&1 || return 0
-  node -e '
-    const parse = (s) => {
-      const m = String(s || "").trim().replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/);
-      return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
-    };
-    const a = parse(process.argv[1]);
-    const b = parse(process.argv[2]);
-    if (!a || !b) process.exit(2);
-    for (let i = 0; i < 3; i++) {
-      if (b[i] !== a[i]) process.exit(b[i] > a[i] ? 0 : 1);
-    }
-    process.exit(1);
-  ' "$local_v" "$remote_v" >/dev/null 2>&1
+  local_v="${local_v#v}"
+  remote_v="${remote_v#v}"
+  local IFS='.'
+  local -a a=() b=()
+  read -r -a a <<< "${local_v%%[-+]*}"
+  read -r -a b <<< "${remote_v%%[-+]*}"
+  for i in 0 1 2; do
+    local ai="${a[$i]:-0}"
+    local bi="${b[$i]:-0}"
+    [[ "$ai" =~ ^[0-9]+$ && "$bi" =~ ^[0-9]+$ ]] || return 0
+    if (( bi > ai )); then
+      return 0
+    elif (( bi < ai )); then
+      return 1
+    fi
+  done
+  return 1
 }
 
 LOCAL_VER="$(read_local_pkg_version)"
@@ -506,161 +540,165 @@ has_pkg_script() {
   grep -q "\"$script_name\"[[:space:]]*:" "$APP_DIR/package.json"
 }
 
-PM="$(detect_pkg_manager)"
-log "Package manager terdeteksi: $PM"
+if [[ "$DOCKER_ALL_IN_ONE" -eq 1 ]]; then
+  log "Mode All-in-One Docker aktif; build aplikasi & dependensi dikerjakan di dalam image Docker."
+else
+  PM="$(detect_pkg_manager)"
+  log "Package manager terdeteksi: $PM"
 
-has_broken_node_modules() {
-  [[ -d "$APP_DIR/node_modules" ]] || return 0
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"ws"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]]; then
-    return 0
-  fi
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"express"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/express/package.json" ]]; then
-    return 0
-  fi
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"vite"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
-    return 0
-  fi
-  if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@ffmpeg-installer/ffmpeg"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
-    return 0
-  fi
-  return 1
-}
+  has_broken_node_modules() {
+    [[ -d "$APP_DIR/node_modules" ]] || return 0
+    if [[ -f "$APP_DIR/package.json" ]] && grep -q '"ws"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/ws/lib/stream.js" ]]; then
+      return 0
+    fi
+    if [[ -f "$APP_DIR/package.json" ]] && grep -q '"express"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/express/package.json" ]]; then
+      return 0
+    fi
+    if [[ -f "$APP_DIR/package.json" ]] && grep -q '"vite"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/vite/package.json" ]]; then
+      return 0
+    fi
+    if [[ -f "$APP_DIR/package.json" ]] && grep -q '"@ffmpeg-installer/ffmpeg"' "$APP_DIR/package.json" && [[ ! -f "$APP_DIR/node_modules/@ffmpeg-installer/ffmpeg/package.json" ]]; then
+      return 0
+    fi
+    return 1
+  }
 
-fix_binary_permissions() {
-  shopt -s nullglob
-  local targets=(
-    "$APP_DIR"/node_modules/.bin/*
-    "$APP_DIR"/node_modules/@ffmpeg-installer/*/ffmpeg*
-    "$APP_DIR"/node_modules/@ffprobe-installer/*/ffprobe*
-    "$APP_DIR"/node_modules/@esbuild/*/bin/*
-    "$APP_DIR"/node_modules/esbuild/bin/*
-    "$APP_DIR"/scripts/*.sh
-  )
-  shopt -u nullglob
-  for bin_path in "${targets[@]}"; do
-    [[ -f "$bin_path" ]] && chmod +x "$bin_path" 2>/dev/null || true
-  done
-}
+  fix_binary_permissions() {
+    shopt -s nullglob
+    local targets=(
+      "$APP_DIR"/node_modules/.bin/*
+      "$APP_DIR"/node_modules/@ffmpeg-installer/*/ffmpeg*
+      "$APP_DIR"/node_modules/@ffprobe-installer/*/ffprobe*
+      "$APP_DIR"/node_modules/@esbuild/*/bin/*
+      "$APP_DIR"/node_modules/esbuild/bin/*
+      "$APP_DIR"/scripts/*.sh
+    )
+    shopt -u nullglob
+    for bin_path in "${targets[@]}"; do
+      [[ -f "$bin_path" ]] && chmod +x "$bin_path" 2>/dev/null || true
+    done
+  }
 
-SHOULD_INSTALL=0
-if [[ "$INSTALL_STRATEGY" == "always" ]]; then
-  SHOULD_INSTALL=1
-elif [[ "$INSTALL_STRATEGY" == "auto" ]]; then
-  if [[ ! -d "$APP_DIR/node_modules" ]]; then
+  SHOULD_INSTALL=0
+  if [[ "$INSTALL_STRATEGY" == "always" ]]; then
     SHOULD_INSTALL=1
-  elif has_broken_node_modules; then
-    warn "Folder node_modules terdeteksi tidak lengkap/rusak (misal ws/lib/stream.js hilang); memperbaiki dengan reinstall..."
-    rm -rf "$APP_DIR/node_modules/ws" 2>/dev/null || true
-    SHOULD_INSTALL=1
-  elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]]; then
-    if git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$'; then
+  elif [[ "$INSTALL_STRATEGY" == "auto" ]]; then
+    if [[ ! -d "$APP_DIR/node_modules" ]]; then
+      SHOULD_INSTALL=1
+    elif has_broken_node_modules; then
+      warn "Folder node_modules terdeteksi tidak lengkap/rusak (misal ws/lib/stream.js hilang); memperbaiki dengan reinstall..."
+      rm -rf "$APP_DIR/node_modules/ws" 2>/dev/null || true
+      SHOULD_INSTALL=1
+    elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]]; then
+      if git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$'; then
+        SHOULD_INSTALL=1
+      fi
+    elif [[ "$FORCE" -eq 1 && ! -d "$APP_DIR/node_modules/.bin" ]]; then
       SHOULD_INSTALL=1
     fi
-  elif [[ "$FORCE" -eq 1 && ! -d "$APP_DIR/node_modules/.bin" ]]; then
-    SHOULD_INSTALL=1
   fi
-fi
 
-if [[ "$SHOULD_INSTALL" -eq 1 ]]; then
-  log "Menginstal dependensi dengan $PM..."
-  case "$PM" in
-    npm)  npm install --no-audit --no-fund ;;
-    pnpm) pnpm install --frozen-lockfile || pnpm install ;;
-    yarn) yarn install ;;
-    bun)  bun install ;;
-    *)    die "PKG_MANAGER tidak didukung: $PM" ;;
-  esac
-else
-  log "Dependensi tidak berubah; melewati tahap install."
-fi
-
-fix_binary_permissions
-
-if [[ -x "$APP_DIR/services/wa-gateway/.venv/bin/pip" ]] && [[ -f "$APP_DIR/services/wa-gateway/requirements.txt" ]]; then
-  if [[ "$FORCE" -eq 1 ]] || { [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -q '^services/wa-gateway/requirements\.txt$'; }; then
-    log "Memperbarui dependensi Python WA Gateway..."
-    "$APP_DIR/services/wa-gateway/.venv/bin/pip" install --quiet -r "$APP_DIR/services/wa-gateway/requirements.txt" || true
-  fi
-fi
-
-# ------------------------------------------------------------------------------
-# Build Produksi (Sebelum Restart)
-# ------------------------------------------------------------------------------
-run_pkg_script() {
-  local sname="$1"
-  case "$PM" in
-    npm)  npm run "$sname" ;;
-    pnpm) pnpm run "$sname" ;;
-    yarn) yarn "$sname" ;;
-    bun)  bun run "$sname" ;;
-  esac
-}
-
-if [[ "$BUILD_SCRIPT" != "none" ]]; then
-  if [[ "$BUILD_SCRIPT" == "auto" ]]; then
-    if has_pkg_script "build"; then
-      log "Menjalankan build produksi ($PM run build)..."
-      run_pkg_script "build"
-    else
-      log "Tidak ada script 'build' di package.json; melewati tahap build."
-    fi
+  if [[ "$SHOULD_INSTALL" -eq 1 ]]; then
+    log "Menginstal dependensi dengan $PM..."
+    case "$PM" in
+      npm)  npm install --no-audit --no-fund ;;
+      pnpm) pnpm install --frozen-lockfile || pnpm install ;;
+      yarn) yarn install ;;
+      bun)  bun install ;;
+      *)    die "PKG_MANAGER tidak didukung: $PM" ;;
+    esac
   else
-    log "Menjalankan script build kustom ($PM run $BUILD_SCRIPT)..."
-    run_pkg_script "$BUILD_SCRIPT"
+    log "Dependensi tidak berubah; melewati tahap install."
   fi
-fi
 
-# Rebuild & restart Docker Face AI companion container apabila ada perubahan kode AI/Rust/Docker
-if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  SHOULD_REBUILD_FACE_DOCKER=0
-  if [[ "$FORCE" -eq 1 ]]; then
-    SHOULD_REBUILD_FACE_DOCKER=1
-  elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(services/face-service/|services/rust-accel/|Dockerfile\.face-service|docker-compose\.face\.yml)'; then
-    SHOULD_REBUILD_FACE_DOCKER=1
-  fi
-  if [[ "$SHOULD_REBUILD_FACE_DOCKER" -eq 1 ]]; then
-    if docker compose version >/dev/null 2>&1; then
-      log "Memperbarui container Docker Face AI (docker-compose.face.yml)..."
-      docker compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI; cek manual docker compose -f docker-compose.face.yml logs"
-    elif command -v docker-compose >/dev/null 2>&1; then
-      log "Memperbarui container Docker Face AI (docker-compose)..."
-      docker-compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI"
+  fix_binary_permissions
+
+  if [[ -x "$APP_DIR/services/wa-gateway/.venv/bin/pip" ]] && [[ -f "$APP_DIR/services/wa-gateway/requirements.txt" ]]; then
+    if [[ "$FORCE" -eq 1 ]] || { [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -q '^services/wa-gateway/requirements\.txt$'; }; then
+      log "Memperbarui dependensi Python WA Gateway..."
+      "$APP_DIR/services/wa-gateway/.venv/bin/pip" install --quiet -r "$APP_DIR/services/wa-gateway/requirements.txt" || true
     fi
   fi
-fi
 
-# ------------------------------------------------------------------------------
-# Perbaikan Ownership File (Khusus aaPanel user www / multi-user setup)
-# ------------------------------------------------------------------------------
-fix_ownership_if_root() {
-  [[ "$(id -u)" -eq 0 ]] || return 0
+  # ------------------------------------------------------------------------------
+  # Build Produksi (Sebelum Restart)
+  # ------------------------------------------------------------------------------
+  run_pkg_script() {
+    local sname="$1"
+    case "$PM" in
+      npm)  npm run "$sname" ;;
+      pnpm) pnpm run "$sname" ;;
+      yarn) yarn "$sname" ;;
+      bun)  bun run "$sname" ;;
+    esac
+  }
 
-  local target_user="$RUN_USER"
-  local target_group="$RUN_GROUP"
-
-  if [[ "$target_user" == "auto" ]]; then
-    if [[ -d "/www/server" ]] && id -u www >/dev/null 2>&1; then
-      target_user="www"
+  if [[ "$BUILD_SCRIPT" != "none" ]]; then
+    if [[ "$BUILD_SCRIPT" == "auto" ]]; then
+      if has_pkg_script "build"; then
+        log "Menjalankan build produksi ($PM run build)..."
+        run_pkg_script "build"
+      else
+        log "Tidak ada script 'build' di package.json; melewati tahap build."
+      fi
     else
-      target_user="$(stat -c '%U' "$APP_DIR/package.json" 2>/dev/null || echo 'root')"
+      log "Menjalankan script build kustom ($PM run $BUILD_SCRIPT)..."
+      run_pkg_script "$BUILD_SCRIPT"
     fi
   fi
 
-  if [[ "$target_group" == "auto" ]]; then
-    if [[ "$target_user" == "www" ]] && getent group www >/dev/null 2>&1; then
-      target_group="www"
-    else
-      target_group="$(stat -c '%G' "$APP_DIR/package.json" 2>/dev/null || echo "$target_user")"
+  # Rebuild & restart Docker Face AI companion container apabila ada perubahan kode AI/Rust/Docker
+  if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    SHOULD_REBUILD_FACE_DOCKER=0
+    if [[ "$FORCE" -eq 1 ]]; then
+      SHOULD_REBUILD_FACE_DOCKER=1
+    elif [[ "$LOCAL_SHA" != "$NEW_SHA" ]] && git diff --name-only "$LOCAL_SHA" "$NEW_SHA" | grep -qE '^(services/face-service/|services/rust-accel/|Dockerfile\.face-service|docker-compose\.face\.yml)'; then
+      SHOULD_REBUILD_FACE_DOCKER=1
+    fi
+    if [[ "$SHOULD_REBUILD_FACE_DOCKER" -eq 1 ]]; then
+      if docker compose version >/dev/null 2>&1; then
+        log "Memperbarui container Docker Face AI (docker-compose.face.yml)..."
+        docker compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI; cek manual docker compose -f docker-compose.face.yml logs"
+      elif command -v docker-compose >/dev/null 2>&1; then
+        log "Memperbarui container Docker Face AI (docker-compose)..."
+        docker-compose -f "$APP_DIR/docker-compose.face.yml" up -d --build || warn "Gagal rebuild Docker Face AI"
+      fi
     fi
   fi
 
-  if [[ -n "$target_user" && "$target_user" != "root" ]] && id -u "$target_user" >/dev/null 2>&1; then
-    log "Menyelaraskan kepemilikan file ke ${target_user}:${target_group}..."
-    chown -R "${target_user}:${target_group}" "$APP_DIR"
-  fi
-}
+  # ------------------------------------------------------------------------------
+  # Perbaikan Ownership File (Khusus aaPanel user www / multi-user setup)
+  # ------------------------------------------------------------------------------
+  fix_ownership_if_root() {
+    [[ "$(id -u)" -eq 0 ]] || return 0
 
-fix_ownership_if_root
+    local target_user="$RUN_USER"
+    local target_group="$RUN_GROUP"
+
+    if [[ "$target_user" == "auto" ]]; then
+      if [[ -d "/www/server" ]] && id -u www >/dev/null 2>&1; then
+        target_user="www"
+      else
+        target_user="$(stat -c '%U' "$APP_DIR/package.json" 2>/dev/null || echo 'root')"
+      fi
+    fi
+
+    if [[ "$target_group" == "auto" ]]; then
+      if [[ "$target_user" == "www" ]] && getent group www >/dev/null 2>&1; then
+        target_group="www"
+      else
+        target_group="$(stat -c '%G' "$APP_DIR/package.json" 2>/dev/null || echo "$target_user")"
+      fi
+    fi
+
+    if [[ -n "$target_user" && "$target_user" != "root" ]] && id -u "$target_user" >/dev/null 2>&1; then
+      log "Menyelaraskan kepemilikan file ke ${target_user}:${target_group}..."
+      chown -R "${target_user}:${target_group}" "$APP_DIR"
+    fi
+  }
+
+  fix_ownership_if_root
+fi
 
 # ------------------------------------------------------------------------------
 # Restart Service Secara Universal

@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 try:
     import cv2  # type: ignore
@@ -317,3 +318,34 @@ def compute_ort_thread_budget(
         intra = max(1, min(3, available_for_ort // workers))
 
     return workers, intra, 1
+
+
+def resolve_safe_loopback_backend_url(raw_url: Optional[str]) -> Optional[str]:
+    """
+    Validasi URL backend internal dari Node agar hanya menerima alamat loopback lokal
+    (127.0.0.1 / localhost / ::1) pada protokol http/https dengan port valid 1..65535.
+    """
+    if not raw_url or not isinstance(raw_url, str):
+        return None
+    candidate = raw_url.strip()
+    if not candidate:
+        return None
+    try:
+        parsed = urlparse(candidate)
+    except Exception:
+        return None
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https"):
+        return None
+    host = (parsed.hostname or "").strip().lower()
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None or port < 1 or port > 65535:
+        return None
+    formatted_host = "[::1]" if host == "::1" else host
+    return f"{scheme}://{formatted_host}:{port}"
+

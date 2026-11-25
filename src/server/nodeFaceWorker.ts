@@ -6,7 +6,11 @@ import {
   normalizeCaptureJpegQuality,
   normalizeCaptureMaxWidth,
 } from '../lib/attendanceEngine.ts';
-import { resolveExecutableBinary, type ExecutableResolution } from '../lib/staticConfig.ts';
+import {
+  resolveCameraTelemetryConnected,
+  resolveExecutableBinary,
+  type ExecutableResolution,
+} from '../lib/staticConfig.ts';
 import { APP_ROOT } from './envBootstrap.ts';
 import { getCachedStudentFaceIndex } from './store.ts';
 import type { AppDatabase, WorkerCameraStat } from '../types';
@@ -88,6 +92,8 @@ const pythonCameraTelemetry = new Map<number, Partial<WorkerCameraStat>>();
 let syncTimer: ReturnType<typeof setInterval> | null = null;
 let pythonActive = false;
 let pythonModelLoaded = false;
+let pythonBackendUrl: string | null = null;
+let pythonBackendError: string | null = null;
 
 export function updatePythonCameraTelemetry(cameraId: number, patch: Partial<WorkerCameraStat>): void {
   const prev = pythonCameraTelemetry.get(cameraId) ?? {};
@@ -97,6 +103,21 @@ export function updatePythonCameraTelemetry(cameraId: number, patch: Partial<Wor
 export function setPythonFaceServiceOnline(online: boolean, modelLoaded = online): void {
   pythonActive = Boolean(online);
   pythonModelLoaded = Boolean(online && modelLoaded);
+  if (!pythonActive) {
+    pythonBackendError = null;
+  }
+}
+
+export function setPythonFaceServiceDiagnostics(diag: {
+  backendUrl?: string | null;
+  backendError?: string | null;
+}): void {
+  if (diag.backendUrl !== undefined) {
+    pythonBackendUrl = diag.backendUrl ? String(diag.backendUrl) : null;
+  }
+  if (diag.backendError !== undefined) {
+    pythonBackendError = diag.backendError ? String(diag.backendError) : null;
+  }
 }
 
 export function startFaceServiceMonitor(deps: {
@@ -145,6 +166,8 @@ export function getNodeWorkerStatus(db: AppDatabase): {
   capture_jpeg_quality: number;
   active_workers: number;
   indexed_students: number;
+  face_backend_url: string | null;
+  face_backend_error: string | null;
   cameras: WorkerCameraStat[];
 } {
   const engine: 'INSIGHTFACE_PYTHON' | 'IDLE' = pythonActive ? 'INSIGHTFACE_PYTHON' : 'IDLE';
@@ -154,11 +177,20 @@ export function getNodeWorkerStatus(db: AppDatabase): {
 
   const cameras: WorkerCameraStat[] = db.cameras.map((cam) => {
     const pyTel = pythonCameraTelemetry.get(cam.id);
+    const isRealRtsp = Boolean(cam.rtsp_url && !cam.rtsp_url.startsWith('dummy://'));
+    const fallbackPendingErr =
+      pythonActive && !pyTel && cam.aktif && isRealRtsp
+        ? pythonBackendError || cam.last_error || 'Menunggu sinkronisasi worker RTSP...'
+        : cam.last_error;
     return {
       camera_id: cam.id,
       nama_kamera: cam.nama_kamera,
       aktif: Boolean(cam.aktif),
-      connected: Boolean(pyTel?.connected ?? (pythonActive && cam.status === 'ONLINE')),
+      connected: resolveCameraTelemetryConnected({
+        pyTelConnected: pyTel?.connected,
+        aktif: Boolean(cam.aktif),
+        pythonActive,
+      }),
       fps: pyTel?.fps ?? 0,
       frames_decoded: pyTel?.frames_decoded ?? 0,
       raw_faces_seen: pyTel?.raw_faces_seen ?? 0,
@@ -170,7 +202,7 @@ export function getNodeWorkerStatus(db: AppDatabase): {
       last_frame_at: pyTel?.last_frame_at ?? null,
       last_face_at: pyTel?.last_face_at ?? null,
       last_detect_at: pyTel?.last_detect_at ?? pyTel?.last_face_at ?? null,
-      last_error: pyTel?.last_error ?? cam.last_error,
+      last_error: pyTel ? (pyTel.last_error ?? null) : fallbackPendingErr,
     };
   });
 
@@ -187,6 +219,8 @@ export function getNodeWorkerStatus(db: AppDatabase): {
     capture_jpeg_quality: captureJpegQuality,
     active_workers: cameras.filter((c) => c.connected).length,
     indexed_students: indexedStudents,
+    face_backend_url: pythonBackendUrl,
+    face_backend_error: pythonBackendError,
     cameras,
   };
 }

@@ -9,7 +9,7 @@ RUN cargo test --release && cargo build --release
 # ==============================================================================
 # Stage 2: Build Frontend React + Vite Bundle
 # ==============================================================================
-FROM node:22-slim AS web-builder
+FROM node:24-slim AS web-builder
 WORKDIR /app
 COPY package.json ./
 RUN npm install --no-audit --no-fund
@@ -19,10 +19,9 @@ COPY public ./public
 RUN npm run build
 
 # ==============================================================================
-# Stage 3: All-in-One Production Image (Node 22 + Python InsightFace + Rust + Piper + Supervisord)
-# Target Hardware: linux/amd64 (40-core Intel CPU, 60 GB RAM)
+# Stage 3: All-in-One Production Image (Node 24 + Python InsightFace + Rust + Piper + Supervisord)
 # ==============================================================================
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Jakarta \
@@ -30,7 +29,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PORT=80 \
     DATA_DIR=/app/data \
     WA_STORAGE_DIR=/app/storage \
+    INTERNAL_TOKEN_FILE=/app/storage/secrets/internal_token \
     FACE_SERVICE_URL=http://127.0.0.1:8001 \
+    WA_GATEWAY_AUTO_SPAWN=0 \
     CHROME_BIN=/usr/bin/chromium \
     CHROMEDRIVER_BIN=/usr/bin/chromedriver \
     ENABLE_XVFB_FALLBACK=1 \
@@ -38,10 +39,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     RUST_ACCEL_BIN=/app/bin/face_accel \
     PIPER_BIN=/usr/local/piper/piper \
     PIPER_MODEL=/app/models/piper/id_ID-news_tts-medium.onnx \
-    OMP_NUM_THREADS=4 \
-    OPENBLAS_NUM_THREADS=4 \
-    ORT_INTRA_OP_NUM_THREADS=4 \
-    ORT_INTER_OP_NUM_THREADS=2
+    MPLCONFIGDIR=/tmp/matplotlib
 
 WORKDIR /app
 
@@ -70,9 +68,9 @@ RUN python3 -m venv /opt/venv \
     && apt-get purge -y --auto-remove g++ python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 3. Pre-download InsightFace buffalo_l model into image (100% offline runtime)
-RUN mkdir -p /app/models/insightface /app/models/piper /app/bin /app/data/snapshots /app/data/tts_cache /app/data/backups /app/storage/secrets /app/storage/wa_sessions /app/storage/wa_qr /var/log/supervisor \
-    && /opt/venv/bin/python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l', root='/app/models/insightface', providers=['CPUExecutionProvider']); app.prepare(ctx_id=-1, det_size=(640, 640))"
+# 3. Pre-download InsightFace buffalo_l (detection + recognition) into image (100% offline runtime)
+RUN mkdir -p /app/models/insightface /app/models/piper /app/bin /app/data/snapshots /app/data/tts_cache /app/data/backups /app/storage/secrets /app/storage/wa_sessions /app/storage/wa_qr /app/storage/debug /var/log/supervisor \
+    && /opt/venv/bin/python -c "from insightface.app import FaceAnalysis; app = FaceAnalysis(name='buffalo_l', root='/app/models/insightface', providers=['CPUExecutionProvider'], allowed_modules=['detection', 'recognition']); app.prepare(ctx_id=-1, det_size=(640, 640))"
 
 # 4. Pre-download Piper TTS binary & Indonesian voice model (100% offline runtime)
 RUN curl -fsSL https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz \
@@ -90,7 +88,7 @@ RUN npm install --omit=dev --no-audit --no-fund && npm cache clean --force
 # 6. Copy built artifacts, server code, Python services, Rust binary, Supervisord, and Entrypoint
 COPY --from=rust-builder /build/target/release/face_accel /app/bin/face_accel
 COPY --from=web-builder /app/dist /app/dist
-COPY server.ts ./server.ts
+COPY server.ts favicon.ico ./
 COPY src ./src
 COPY services/face-service ./services/face-service
 COPY services/wa-gateway/*.py services/wa-gateway/requirements.txt services/wa-gateway/README.md /app/services/wa-gateway/

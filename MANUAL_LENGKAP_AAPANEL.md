@@ -1,205 +1,189 @@
-# Manual Lengkap Instalasi aaPanel & Auto-Update GitHub (Untuk Pemula / Non-Programmer)
+# Manual Lengkap Instalasi All-in-One Docker + aaPanel (Reverse Proxy Domain)
 
-Panduan ini dibuat khusus agar siapa pun—**tanpa perlu paham pemrograman**—bisa memasang, menjalankan, dan memperbarui aplikasi **Absensi SMK Face AI** di VPS **aaPanel** (menggunakan **Node Project** non-Docker + **Docker pendamping untuk AI Wajah**).
+Panduan ini memakai **1 Container Docker All-in-One** (`docker-compose.yml`).
+Artinya: **Web Server (Node.js 24), AI Wajah (InsightFace `buffalo_l` 512-D + Rust), WhatsApp Gateway (Chromium), dan Suara Kiosk (Piper TTS)** semuanya berjalan **di dalam 1 container Docker yang terisolasi**.
 
----
-
-## 1. Apakah Cukup 1 Perintah `npm run setup:school` Saja?
-
-**Hampir semua berjalan otomatis dengan 1 perintah itu, KECUALI 2 hal di awal & di akhir:**
-1. **Sebelum perintah dijalankan (1x seumur hidup VPS)**: pastikan **Node.js (v22 atau v24)** dan **Docker** sudah terpasang di aaPanel.
-2. **Setelah perintah selesai**: Anda perlu **menyalakan aplikasi web-nya 1x di menu aaPanel → Website → Node project** (pilih folder, isi port yang muncul di layar, isi domain, klik Start).
-
-### Apa Saja yang Otomatis Dikerjakan oleh `npm run setup:school`?
-Saat Anda menjalankan `npm run setup:school`, skrip langsung mengerjakan semua pekerjaan teknis ini untuk Anda:
-- Mencari **port kosong otomatis** (misal web di `3001`, AI wajah di `8001`) supaya tidak bentrok dengan website lain.
-- Membuat file konfigurasi `.env` dan membuat **token keamanan acak otomatis** (`data/secrets/internal_token`) — Anda **tidak perlu** mengisi environment variable secara manual.
-- Menginstal dependensi Node.js dan membangun file web produksi (`dist/`).
-- Menginstal Python + Chromium untuk **WhatsApp Gateway** (scan QR multi-nomor / Round-Robin).
-- Membangun dan menyalakan **container Docker AI Wajah** (`docker-compose.face.yml` dengan InsightFace `buffalo_l` 512-D + Rust) di background secara otomatis (`restart: unless-stopped`).
-- Menyalakan **Auto-Update GitHub otomatis** (`AUTO_UPDATE_ENABLED=1` & `UPDATE_ONLY_NEW_VERSION=1`) jika folder berasal dari GitHub (`git clone`).
-- Mengatur kepemilikan folder ke user `www:www` agar Node Project di aaPanel bisa jalan tanpa error hak akses.
+> **Kenapa cara ini paling aman untuk VPS aaPanel?**
+> - **TIDAK menyentuh / merusak Nginx, Node.js, atau Python bawaan aaPanel.**
+> - **aaPanel hanya bertugas mengurus Domain, Reverse Proxy (`http://127.0.0.1:3080`), dan SSL (HTTPS).**
+> - Tidak perlu install Node Version Manager, Python, FFmpeg, atau Chromium di server utama.
+> - Tidak perlu `npm run setup:school` dan tidak perlu mengisi environment variable manual.
 
 ---
 
-## 2. Langkah 1 — Siapkan VPS aaPanel (Hanya 1 Kali di VPS Baru)
+## 1. Persiapan di VPS aaPanel (1x Saja di VPS Baru)
 
-Lakukan langkah ini hanya sekali saat VPS baru disiapkan:
+Pastikan di **aaPanel → App Store** sudah terpasang:
+1. **Nginx** (bawaan aaPanel — untuk domain & SSL)
+2. **Docker** (atau lewat menu **Docker** di sidebar kiri aaPanel → klik **Install Docker**)
 
-1. Login ke **aaPanel** lewat browser.
-2. Buka menu **App Store** di aaPanel, lalu install:
-   - **Node.js Version Manager** → di dalamnya klik install **Node v22.x** atau **v24.x** *(wajib minimal v22.18)*.
-   - **Docker** *(atau lewat menu Docker di sidebar kiri aaPanel → klik Install Docker + Docker Compose)*.
-3. Buka menu **Terminal** di aaPanel (atau login SSH sebagai `root`), lalu jalankan perintah ini untuk memasang alat bantu sistem:
-   ```bash
-   apt update && apt install -y git curl ffmpeg sqlite3
-   ```
-
----
-
-## 3. Langkah 2 — Download Aplikasi & Jalankan Setup (1 Perintah)
-
-Masuk ke Terminal aaPanel sebagai `root`, lalu ikuti persis langkah ini:
-
+*(Jika memakai VPS baru yang belum ada `git` / `curl`, buka Terminal SSH/aaPanel sebagai `root` dan jalankan 1x:)*
 ```bash
-# 1. Masuk ke folder website aaPanel
-cd /www/wwwroot
-
-# 2. Download source dari GitHub Anda (ganti dengan link repo GitHub Anda)
-git clone https://github.com/USERNAME/NAMA-REPO.git smkn1
-cd /www/wwwroot/smkn1
-
-# 3. Install modul dasar & jalankan setup lengkap satu pintu
-npm install --no-audit --no-fund
-npm run setup:school -- --domain absensi.sekolahanda.sch.id
+apt update && apt install -y git curl
 ```
 
-> **Catatan penting saat setup berjalan:**
-> - Tunggu 3–8 menit pada instalasi pertama karena Docker mengunduh & menyiapkan model AI wajah **InsightFace `buffalo_l`**.
-> - Di bagian paling bawah setelah selesai, perhatikan tulisan seperti ini:
->   ```text
->   Port Terpilih  : 3001
->   Face AI (Docker): SIAP (Docker InsightFace port 8001)
->   WA Gateway     : SIAP (port 8003)
->   ```
-> - **Catat angka `Port Terpilih`** (misalnya `3001`), atau `3002` kalau Anda pasang untuk sekolah kedua.
+---
+
+## 2. Jalankan 1 Container All-in-One Docker
+
+Masuk ke **Terminal** (SSH atau menu Terminal di aaPanel) sebagai `root`, lalu jalankan 3 langkah ini:
+
+```bash
+# 1. Buat / masuk ke folder project (contoh di /opt/absensi-smkn1)
+cd /opt
+git clone https://github.com/USERNAME/NAMA-REPO.git absensi-smkn1
+cd /opt/absensi-smkn1
+
+# 2. Build & nyalakan 1 container All-in-One di background
+docker compose up -d --build
+```
+
+> **Catatan Build Pertama (Sekali Saja):**
+> - Build pertama memakan waktu sekitar **5–10 menit** karena Docker mengkompilasi akselerasi Rust dan mengunduh model AI wajah **InsightFace `buffalo_l`** serta suara **Piper TTS Bahasa Indonesia** ke dalam image agar nantinya berjalan 100% offline.
+> - Selama proses ini, database `./data` dan sesi `./storage` tetap tersimpan aman di luar container (tidak hilang saat update/restart).
+
+### Cek Apakah Container Sudah Sehat
+
+Tunggu ±20–30 detik setelah build selesai, lalu cek:
+```bash
+docker compose ps
+curl -s http://127.0.0.1:3080/api/health
+```
+Pastikan status container **`Up (healthy)`** dan output `curl` menampilkan `"ok":true`.
+Jika masih loading model AI, tunggu 20 detik lalu ulangi `curl` di atas.
+
+Untuk melihat log langsung jika perlu:
+```bash
+docker compose logs -f --tail=50
+```
+*(Tekan `Ctrl + C` untuk keluar dari tampilan log tanpa mematikan container).*
 
 ---
 
-## 4. Langkah 3 — Nyalakan Web di aaPanel (Node Project)
+## 3. Pasang Domain & SSL Lewat aaPanel (Biarkan aaPanel yang Manage)
 
-Sekarang tinggal mendaftarkan aplikasi di panel aaPanel agar bisa diakses lewat domain/HTTPS:
+Container Docker sudah aktif di alamat lokal VPS: **`http://127.0.0.1:3080`** (hanya bisa diakses dari dalam VPS, aman dari akses langsung internet).
+Sekarang hubungkan domain sekolah Anda lewat UI aaPanel tanpa mengotak-atik file Nginx server secara manual:
 
-1. Di aaPanel, buka **Website → Node project → Add Node project**.
-2. Isi formulir **persis seperti tabel ini** (kolom yang tidak disebut biarkan standar):
+1. Login ke **aaPanel** → buka menu **Website** (tab **PHP Project** / standar).
+2. Klik **Add site** lalu isi:
+   - **Domain**: `absensi.sekolahanda.sch.id`
+   - **Database**: `No Database`
+   - **PHP version**: **`Pure static`** *(Static site biasa)*
+   - Klik **Submit / Confirm**.
+3. Klik nama website `absensi.sekolahanda.sch.id` yang baru dibuat untuk membuka pengaturannya:
+   - Buka tab **SSL** → pilih **Let's Encrypt** → centang domain Anda → klik **Apply** (opsional: aktifkan **Force HTTPS**).
+   - Buka tab **Reverse proxy** → klik **Add Reverse proxy**, isi:
+     - **Proxy name**: `absensi`
+     - **Target URL**: `http://127.0.0.1:3080`
+     - **Sent Domain**: `$host`
+     - Klik **Save**.
 
-   | Kolom di aaPanel | Isi dengan | Keterangan |
-   |---|---|---|
-   | **Path** | `/www/wwwroot/smkn1` | Folder project hasil clone |
-   | **Project Name** | `absensi-smkn1` | Bebas, tanpa spasi |
-   | **Run opt** | `start` *(dari package.json)* | **WAJIB `start`**, JANGAN pilih `dev`! |
-   | **Port** | `3001` | Samakan persis dengan `Port Terpilih` tadi |
-   | **Run user** | `www` | Jangan pakai `root` |
-   | **Node version** | `v22.x` atau `v24.x` | Pilih yang sudah di-install di Langkah 1 |
-   | **Domain name** | `absensi.sekolahanda.sch.id` | Isi domain sekolah Anda |
-   | **Mapping** | **Centang / Aktifkan** | Agar aaPanel otomatis membuatkan Nginx + WebSocket |
-
-   > **PENTING:** Jangan mengedit file konfigurasi Nginx secara manual jika Anda mengaktifkan **Mapping**. Setelah project statusnya **Running**, cukup klik tab **SSL** pada project tersebut untuk mengaktifkan HTTPS (Let's Encrypt).
+> **Catatan WebSocket (`/ws`) untuk Layar Kiosk `/panggil/1`:**
+> Jika layar Kiosk di gerbang belum memunculkan panggilan suara otomatis secara real-time melalui domain HTTPS, buka tab **Reverse proxy** pada situs tersebut → klik **Conf** pada proxy `absensi`, dan pastikan di dalam blok `location ^~ /` sudah terdapat 3 baris standar ini (jika belum ada, tambahkan di dalam `location`):
+> ```nginx
+> proxy_http_version 1.1;
+> proxy_set_header Upgrade $http_upgrade;
+> proxy_set_header Connection "upgrade";
+> ```
+> Jangan ubah file Nginx utama aaPanel di luar menu website ini.
 
 ---
 
-## 5. Langkah 4 — Pengaturan Awal di Browser & Menu Penting
+## 4. Pengaturan Awal di Browser
 
 1. Buka browser dan kunjungi **`https://absensi.sekolahanda.sch.id`**.
-2. Karena baru pertama kali dipasang, layar **Setup Awal Sistem Absensi Sekolah** akan muncul otomatis:
+2. Layar **Setup Awal Sistem Absensi Sekolah** muncul otomatis:
    - Isi **Nama Sekolah**
    - Isi **Nama Administrator** & **Email Login**
    - Buat **Password minimal 8 karakter**
    - Klik **Selesaikan Setup & Masuk Dashboard** *(halaman setup otomatis terkunci permanen setelah ini)*.
-3. Cek di Dashboard: kotak status harus bertuliskan **`INSIGHTFACE_PYTHON (512-D)`** dan **Model AI: SIAP**.
-
-### Ringkasan Pengaturan Kamera & Deteksi Wajah (Menu UI)
-- **Rentang Bounding Box Wajah (`Min` – `Max` px)**:
-  - Buka **Pengaturan & User** untuk mengatur batas global, atau **Gerbang & Kamera → Kalibrasi** untuk mengatur per kamera.
-  - Kotak **Hijau (`MIN`)** = ukuran wajah terkecil yang masih boleh dideteksi (misal `80 px`).
-  - Kotak **Kuning Putus-Putus (`MAX`)** = ukuran wajah terbesar (isi `0` jika bebas; isi misal `350 px` kalau kamera terlalu dekat agar wajah raksasa yang buram tidak ikut ter-capture).
-  - Untuk kamera CCTV yang kurang tajam/buram, naikkan `Minimal Wajah` (misalnya `120`–`160 px`) supaya hanya wajah dekat yang jelas yang di-capture AI.
-- **Kacamata & Masker**:
-  - **Kacamata** didukung otomatis oleh AI tanpa setting tambahan.
-  - **Masker** otomatis ditolak oleh gerbang (`DROP:landmark`) agar wajah tertutup tidak salah dikenali sebagai siswa lain.
+3. Cek di Dashboard:
+   - Engine AI otomatis terbaca **`INSIGHTFACE_PYTHON (512-D)`** dan **Model AI: SIAP** *(karena AI Wajah + Web Node sudah berada di dalam 1 container yang sama!)*.
+   - **WhatsApp Gateway Chromium** & **Piper TTS Offline** juga sudah langsung aktif tanpa setup terpisah.
 
 ---
 
-## 6. Panduan Auto-Update ke GitHub (Multi-Server Sekolah Otomatis Ikut Update)
+## 5. Cara Update dari GitHub (Manual Maupun Otomatis)
 
-Sistem ini sudah dilengkapi mekanisme **rilis berbasis nomor versi** (contoh: `1.0.0` → `1.0.1` → `1.1.0`):
-- Anda mengubah kode di repo pusat lalu menaikkan nomor versi dan push ke GitHub.
-- Semua server sekolah mengecek GitHub setiap **1 jam sekali**.
-- Server sekolah **hanya melakukan `git pull` & rebuild otomatis jika nomor versi di GitHub lebih tinggi** dari versi yang terpasang saat itu. Jadi jika Anda baru menyimpan draft/catatan ke GitHub tanpa menaikkan nomor versi, server sekolah tidak akan terganggu/restart mendadak.
+Database (`./data/absensi.sqlite`), foto siswa (`./data/snapshots`), dan sesi WhatsApp (`./storage`) disimpan di folder luar container (`volumes`), jadi **data tidak akan terhapus** saat container di-rebuild.
 
-### A. Di Komputer / Repo Pusat Anda (Cara Kirim Update ke Semua Sekolah)
+### Cara A: Update Manual Cepat (1 Perintah)
+Kapan pun Anda selesai push perubahan ke GitHub, jalankan di terminal VPS:
+```bash
+cd /opt/absensi-smkn1
+git pull
+docker compose up -d --build
+```
+Docker otomatis membangun image baru dan menukar container dengan downtime hanya beberapa detik.
 
-Setiap kali Anda selesai menambah fitur atau memperbaiki bug dan siap mengirimnya ke seluruh server sekolah, cukup jalankan **SATU** perintah sesuai jenis perubahannya:
+### Cara B: Auto-Update Otomatis Tiap 1 Jam Berdasarkan Nomor Versi
+Jika Anda ingin semua server sekolah otomatis menarik update saat nomor `version` di `package.json` GitHub naik:
 
-- **Jika perbaikan bug kecil** (`1.0.0` → `1.0.1`):
-  ```bash
-  npm run release:patch -- "Perbaikan akurasi deteksi kamera malam"
-  ```
-- **Jika menambah fitur baru** (`1.0.0` → `1.1.0`):
-  ```bash
-  npm run release:minor -- "Tambah filter kelas di laporan"
-  ```
-- **Jika perubahan besar/merombak sistem** (`1.0.0` → `2.0.0`):
-  ```bash
-  npm run release:major -- "Pembaruan besar sistem absensi"
-  ```
-
-**Apa yang dilakukan perintah di atas secara otomatis?**
-1. Mengecek kode dengan `npm run lint`, unit test, dan `npm run build` (jika ada error, proses dibatalkan sehingga kode rusak tidak pernah terkirim ke sekolah).
-2. Menaikkan nomor `version` di `package.json`.
-3. Membuat commit Git, memberi tag versi (`v1.0.1`), lalu langsung melakukan `git push` ke GitHub.
-
-### B. Di Setiap Server Sekolah (Otomatis Tarik Update)
-
-1. **Sudah Aktif Otomatis dari `setup:school`:**
-   - Saat Anda menjalankan `npm run setup:school` di folder hasil `git clone`, di `.env` otomatis tertulis `AUTO_UPDATE_ENABLED="1"` dan `UPDATE_ONLY_NEW_VERSION="1"`.
-   - Server akan mengecek GitHub setiap **60 menit**. Begitu terdeteksi versi baru (misal `v1.0.0` → `v1.0.1`), skrip otomatis:
-     1. Membackup database `data/absensi.sqlite` ke `data/backups/`.
-     2. Menarik update (`git pull --ff-only`).
-     3. Menginstal paket baru (hanya jika `package.json` berubah).
-     4. Menjalankan `npm run build`.
-     5. Membangun ulang Docker Face AI secara otomatis jika ada perubahan pada folder `services/face-service/` atau `services/rust-accel/`.
-     6. Menyelaraskan kepemilikan ke `www:www` & merestart **aaPanel Node Project**.
-     7. Memeriksa `/api/health` untuk memastikan web hidup normal kembali.
-
-2. **Opsional — Pasang Cron aaPanel (Cadangan Agar Tetap Update Walau Node Sempat Mati):**
-   Jalankan perintah ini 1x di terminal sekolah:
+1. **Di komputer/repo pusat Anda (saat mengirim update ke GitHub):**
    ```bash
-   cd /www/wwwroot/smkn1
-   npm run update:cron
+   npm run release:patch -- "Catatan perbaikan"   # 1.0.1 -> 1.0.2
    ```
-   *(Atau di menu **aaPanel → Cron**, buat tugas Shell Script tiap 1 jam berisi: `cd /www/wwwroot/smkn1 && bash scripts/auto-update.sh`)*
+   *(Atau `npm run release:minor -- "..."` untuk fitur baru, atau naikkan `version` di `package.json` lalu push).*
 
-3. **Perintah Cek / Update Manual Kapan Saja (Saat Ingin Cepat Tanpa Menunggu 1 Jam):**
+2. **Di setiap VPS sekolah (aktifkan cron 1x saja):**
    ```bash
-   cd /www/wwwroot/smkn1
-   npm run update:check    # Cek saja apakah ada versi baru (tidak mengubah file)
-   npm run update          # Tarik update sekarang jika versi baru tersedia
-   bash scripts/auto-update.sh --force   # Paksa tarik & rebuild meski nomor versi sama
-   bash scripts/auto-update.sh --status  # Lihat versi saat ini & status Git/Cron
+   cd /opt/absensi-smkn1
+   bash scripts/auto-update.sh --manager docker --install-cron
    ```
-   Untuk melihat riwayat log auto-update di server sekolah:
-   ```bash
-   tail -n 50 /www/wwwroot/smkn1/data/auto-update.log
-   ```
+   Setiap **1 jam sekali**, skrip akan:
+   - Mengecek apakah `version` di `package.json` GitHub lebih baru dari versi yang terpasang.
+   - Jika ada versi baru: membackup `./data/absensi.sqlite` → `git pull --ff-only` → `docker compose up -d --build` → cek `http://127.0.0.1:3080/api/health`.
+   - Untuk cek status atau test manual kapan saja:
+     ```bash
+     cd /opt/absensi-smkn1
+     bash scripts/auto-update.sh --manager docker --dry-run   # Cek saja tanpa rebuild
+     bash scripts/auto-update.sh --manager docker             # Update sekarang jika versi baru tersedia
+     tail -n 50 data/auto-update.log                          # Lihat log auto-update
+     ```
 
-> **Catatan Repo GitHub Private:** Jika repo GitHub Anda bersifat **Private**, simpan *GitHub Personal Access Token (Read-only Content)* 1x di tiap server sekolah agar `git pull` otomatis tidak meminta password:
+> **Jika Repo GitHub Bersifat Private:** simpan *GitHub Personal Access Token (Read-only)* 1x di VPS:
 > ```bash
 > git config --global credential.helper store
-> git fetch origin   # masukkan username GitHub & Personal Access Token saat diminta (sekali saja)
+> git fetch origin   # masukkan username GitHub & token saat diminta (sekali saja)
 > ```
 
 ---
 
-## 7. Memasang Banyak Sekolah di 1 VPS yang Sama
+## 6. Memasang Banyak Sekolah di 1 VPS yang Sama (Semua All-in-One Docker)
 
-Anda cukup ulangi Langkah 2 & 3 di folder berbeda (misalnya `/www/wwwroot/smkn2`):
-```bash
-cd /www/wwwroot
-git clone https://github.com/USERNAME/NAMA-REPO.git smkn2
-cd /www/wwwroot/smkn2
-npm install --no-audit --no-fund
-npm run setup:school -- --domain absensi.smkn2.sch.id
-```
-`setup:school` otomatis memindai folder sebelah sehingga sekolah kedua langsung mendapat port yang terpisah (misal Web `3002`, Face AI `8002`) tanpa bentrok database maupun sesi WhatsApp.
+Setiap sekolah tinggal ditaruh di folder terpisah dengan **`HOST_PORT`** berbeda (tidak bentrok dengan sekolah lain):
+
+- **Sekolah 1** (`/opt/absensi-smkn1` — default port **`3080`**):
+  ```bash
+  cd /opt && git clone https://github.com/USERNAME/NAMA-REPO.git absensi-smkn1
+  cd /opt/absensi-smkn1 && docker compose up -d --build
+  ```
+  → Di aaPanel Reverse Proxy arahkan ke `http://127.0.0.1:3080`.
+
+- **Sekolah 2** (`/opt/absensi-smkn2` — pakai port **`3081`**):
+  ```bash
+  cd /opt && git clone https://github.com/USERNAME/NAMA-REPO.git absensi-smkn2
+  cd /opt/absensi-smkn2
+  echo "HOST_PORT=3081" > .env
+  docker compose up -d --build
+  ```
+  → Di aaPanel Reverse Proxy arahkan ke `http://127.0.0.1:3081`.
 
 ---
 
-## 8. Pemecahan Masalah Cepat (Troubleshooting Pemula)
+## 7. Ringkasan Pengaturan Kamera & Pemecahan Masalah Cepat
 
-| Masalah | Penyebab Umum | Cara Mengatasi |
-|---|---|---|
-| **Banner kuning di Dashboard: `Engine AI Wajah Docker Belum Aktif`** | Docker belum menyala atau belum di-build saat setup | Di terminal masuk folder project lalu jalankan:<br>`docker compose -f docker-compose.face.yml up -d --build`<br>Tunggu ±1 menit lalu cek dengan `curl http://127.0.0.1:8001/health` |
-| **Web tidak bisa dibuka (`502 Bad Gateway`)** | Node Project di aaPanel belum di-Start atau port beda | Cek **aaPanel → Website → Node project**, pastikan status **Running**, `Run opt = start`, dan angkanya sama dengan `PORT=` di file `.env`. |
-| **Kamera gagal / Error `EACCES` FFmpeg** | Izin eksekusi file FFmpeg belum aktif | Jalankan `apt install -y ffmpeg` sebagai root, lalu restart Node Project di aaPanel. |
-| **Server sekolah tidak auto-pull setelah `git push` biasa** | Nomor `version` di `package.json` belum naik | Selalu push lewat `npm run release:patch -- "pesan"` (atau naikkan manual `version` di `package.json`), karena server sekolah menunggu versi lebih baru. |
+### Tips Deteksi Kamera Gerbang
+- **Wajah Tidak Masuk Anonim / Terlewat**:
+  - Cek di **Gerbang & Kamera → Uji Probe / Preview Live** apakah gambar kamera tampil jelas.
+  - Perhatikan **Bounding Wajah Minimal (`min_face_size`)**: jika di Pengaturan Anda mengisi `200 px`, wajah siswa yang berdiri agak jauh dari kamera (misal `90–150 px`) akan diabaikan oleh filter. Turunkan ke `80`–`120 px` jika jarak kamera ke gerbang agak jauh.
+  - **Masker** ditolak otomatis (`DROP:landmark`); **Kacamata** didukung otomatis.
+
+### Troubleshooting
+| Masalah | Cara Cek & Solusi |
+|---|---|
+| **Domain menampilkan `502 Bad Gateway` di browser** | Cek container dengan `docker compose ps` dan `curl -s http://127.0.0.1:3080/api/health`. Pastikan container sudah `healthy` dan Target URL di aaPanel Reverse Proxy adalah `http://127.0.0.1:3080`. |
+| **Ingin merestart seluruh layanan (Web + AI + WA)** | Jalankan `cd /opt/absensi-smkn1 && docker compose restart` |
+| **Melihat error Python AI / Node / WA Gateway** | Jalankan `cd /opt/absensi-smkn1 && docker compose logs -f --tail=100` |
+| **Perlu mem-backup database manual** | File database ada langsung di folder `./data/absensi.sqlite` atau unduh `.sqlite.gz` dari menu **Pengaturan → Backup & Restore**. |

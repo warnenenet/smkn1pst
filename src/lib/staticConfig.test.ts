@@ -5,12 +5,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildFfmpegLivePreviewArgs,
+  buildLocalWebBackendUrl,
   computeFrameMotionDeltaRatio,
   diagnoseFfmpegError,
   extractRgbaLumaSample,
   getStaticAssetContentType,
   getStaticCacheControl,
   isNonSpaResourcePath,
+  resolveCameraTelemetryConnected,
   resolveExecutableBinary,
   resolveListenConfig,
   shouldScanMotionFrame,
@@ -260,4 +262,22 @@ test('compareSemver and isNewerVersionAvailable detect new releases accurately',
   assert.equal(isNewerVersionAvailable('1.2.0', '1.1.9'), false);
   assert.equal(isNewerVersionAvailable('invalid', '1.0.1'), false);
 });
+
+test('buildLocalWebBackendUrl normalizes host bindings to reachable loopback URL', () => {
+  assert.equal(buildLocalWebBackendUrl(3000), 'http://127.0.0.1:3000');
+  assert.equal(buildLocalWebBackendUrl(3001, '0.0.0.0'), 'http://127.0.0.1:3001');
+  assert.equal(buildLocalWebBackendUrl(3002, '::'), 'http://127.0.0.1:3002');
+  assert.equal(buildLocalWebBackendUrl(3003, 'localhost'), 'http://127.0.0.1:3003');
+  assert.equal(buildLocalWebBackendUrl(3004, '::1'), 'http://[::1]:3004');
+  assert.equal(buildLocalWebBackendUrl(3005, '127.0.0.1'), 'http://127.0.0.1:3005');
+});
+
+test('resolveCameraTelemetryConnected never marks camera LIVE without active Python heartbeat telemetry', () => {
+  assert.equal(resolveCameraTelemetryConnected({ pyTelConnected: undefined, aktif: true, pythonActive: true }), false);
+  assert.equal(resolveCameraTelemetryConnected({ pyTelConnected: false, aktif: true, pythonActive: true }), false);
+  assert.equal(resolveCameraTelemetryConnected({ pyTelConnected: true, aktif: false, pythonActive: true }), false);
+  assert.equal(resolveCameraTelemetryConnected({ pyTelConnected: true, aktif: true, pythonActive: false }), false);
+  assert.equal(resolveCameraTelemetryConnected({ pyTelConnected: true, aktif: true, pythonActive: true }), true);
+});
+
 

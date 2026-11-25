@@ -393,6 +393,8 @@ export interface WorkerStatusResponse {
   capture_jpeg_quality?: number;
   active_workers: number;
   indexed_students?: number;
+  face_backend_url?: string | null;
+  face_backend_error?: string | null;
   storage_breakdown?: StorageBreakdown;
   detection_stats?: DetectionStatsWindow[];
   automation?: {

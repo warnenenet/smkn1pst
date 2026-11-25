@@ -461,26 +461,30 @@ Aplikasi dapat dijalankan untuk banyak sekolah di satu VPS dengan **database, se
 
 *(Script `setup-school.sh` otomatis memindai file `.env` di folder tetangga maupun port yang sedang terpakai agar tidak pernah memakai port kembar.)*
 
-### Mode Docker Compose per Sekolah
-Salin `docker-compose.yml` ke folder masing-masing sekolah dengan volume data & port host terpisah (`3081:80`, `3082:80`, dst.) lalu jalankan `docker compose up -d` tanpa perlu mengisi variabel environment apa pun.
+### Mode Docker Compose per Sekolah (All-in-One Terisolasi)
+Clone ke folder terpisah per sekolah, isi `HOST_PORT=3081` (dst.) di `.env` folder masing-masing, lalu jalankan `docker compose up -d --build`. Setiap container sudah berisi Node 24 + InsightFace AI + Rust + WA Gateway + Piper TTS tanpa menyentuh Nginx/Node bawaan aaPanel (cukup pasang Reverse Proxy di aaPanel ke `http://127.0.0.1:3081`, dst.).
 
 ---
 
-## 9. Deploy via Docker & Docker Hub (All-in-One Image)
+## 9. Deploy via Docker All-in-One (`docker-compose.yml`)
 
-Image All-in-One sudah mencakup **Node.js 22 + Python InsightFace `buffalo_l` + Rust `face_accel` + Piper TTS Offline + WA Gateway Chromium + Supervisord** dengan konfigurasi **Zero-Env** (tanpa perlu menambahkan `-e` apa pun):
+Image All-in-One sudah mencakup **Node.js 24 + Python InsightFace `buffalo_l` + Rust `face_accel` + Piper TTS Offline + WA Gateway Chromium + Supervisord** di dalam **1 container tunggal** dengan konfigurasi **Zero-Env** (tanpa perlu mengisi variabel environment manual):
 
 - Pada boot pertama, `entrypoint.sh` otomatis membangkitkan token internal acak (`openssl rand -hex 48`) ke `/app/storage/secrets/internal_token` (`chmod 600`) dan membuat `/app/storage/secrets/runtime.env` untuk koordinasi internal container (**bukan untuk diedit manusia**).
 - Seluruh layanan membaca token langsung dari file `/app/storage/secrets/internal_token`.
+- Host **aaPanel** cukup dipakai untuk **Domain + SSL + Reverse Proxy** mengarah ke `http://127.0.0.1:3080` (tanpa mengubah Nginx bawaan panel secara manual).
 
 ```bash
-docker run -d \
-  --name absensi-smk-face-ai \
-  --restart unless-stopped \
-  -p 127.0.0.1:3080:80 \
-  -v absensi_data:/app/data \
-  -v absensi_storage:/app/storage \
-  <username>/absensi-smk-face-ai:latest
+git clone https://github.com/USERNAME/NAMA-REPO.git absensi-smk
+cd absensi-smk
+docker compose up -d --build
+```
+
+Untuk update versi baru dari GitHub pada mode All-in-One Docker:
+```bash
+git pull && docker compose up -d --build
+# Atau otomatis per jam berdasar versi:
+bash scripts/auto-update.sh --manager docker --install-cron
 ```
 
 ---

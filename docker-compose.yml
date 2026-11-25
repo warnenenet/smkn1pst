@@ -1,10 +1,12 @@
 services:
   absensi-smk:
-    image: username/absensi-smk-face-ai:latest
-    container_name: absensi-smk-face-ai
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: absensi-smk-face-ai:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:3080:80"
+      - "127.0.0.1:${HOST_PORT:-3080}:80"
     volumes:
       - ./data:/app/data
       - ./storage:/app/storage

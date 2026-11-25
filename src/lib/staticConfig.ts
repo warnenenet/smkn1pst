@@ -125,6 +125,33 @@ export function resolveListenConfig(params: {
   return { port, host, autoPortFallback };
 }
 
+export function buildLocalWebBackendUrl(activePort: number, listenHost?: string): string {
+  const safePort = Number.isInteger(activePort) && activePort >= 1 && activePort <= 65535 ? activePort : 3000;
+  const rawHost = (listenHost ?? '').trim();
+  if (
+    !rawHost ||
+    rawHost === '0.0.0.0' ||
+    rawHost === '::' ||
+    rawHost === '127.0.0.1' ||
+    rawHost.toLowerCase() === 'localhost'
+  ) {
+    return `http://127.0.0.1:${safePort}`;
+  }
+  if (rawHost === '::1' || rawHost === '[::1]') {
+    return `http://[::1]:${safePort}`;
+  }
+  return `http://${rawHost}:${safePort}`;
+}
+
+export function resolveCameraTelemetryConnected(params: {
+  pyTelConnected?: boolean | null;
+  aktif: boolean;
+  pythonActive: boolean;
+}): boolean {
+  if (!params.aktif || !params.pythonActive) return false;
+  return Boolean(params.pyTelConnected);
+}
+
 export interface BinaryProbeOps {
   existsSync: (filePath: string) => boolean;
   isFileSync: (filePath: string) => boolean;

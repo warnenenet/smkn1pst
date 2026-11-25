@@ -19,11 +19,17 @@ def now_wib_str() -> str:
     return datetime.now(WIB_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
+_mpl_dir = os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+try:
+    Path(_mpl_dir).mkdir(parents=True, exist_ok=True)
+except OSError:
+    pass
+
 import cv2
 import httpx
 import numpy as np
 import onnxruntime as ort
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from insightface.app import FaceAnalysis
 from pydantic import BaseModel
 
@@ -35,6 +41,7 @@ from quality_gate import (
     evaluate_pre_embedding_gates,
     evaluate_top1_top2_margin,
     resolve_adaptive_recognition_threshold,
+    resolve_safe_loopback_backend_url,
 )
 from tracker import IoUTracker, TrackVoteBuffer
 
@@ -52,7 +59,50 @@ os.environ.setdefault("OMP_NUM_THREADS", str(_ORT_INTRA_THREADS))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|rw_timeout;5000000|fflags;nobuffer|flags;low_delay")
 
-WEB_BACKEND_URL = os.environ.get("WEB_BACKEND_URL", f"http://127.0.0.1:{os.environ.get('PORT', '3000')}")
+WEB_BACKEND_URL = (
+    resolve_safe_loopback_backend_url(os.environ.get("WEB_BACKEND_URL"))
+    or f"http://127.0.0.1:{os.environ.get('PORT', '3000')}"
+)
+backend_state_lock = threading.Lock()
+last_backend_sync_ok: Optional[bool] = None
+last_backend_error: Optional[str] = None
+last_backend_err_log_ts: float = 0.0
+
+
+def get_web_backend_url() -> str:
+    with backend_state_lock:
+        return WEB_BACKEND_URL
+
+
+def set_web_backend_url(raw_url: Optional[str]) -> bool:
+    global WEB_BACKEND_URL
+    validated = resolve_safe_loopback_backend_url(raw_url)
+    if not validated:
+        return False
+    with backend_state_lock:
+        if WEB_BACKEND_URL != validated:
+            print(f"[SYNC] Memperbarui WEB_BACKEND_URL: {WEB_BACKEND_URL} -> {validated}", flush=True)
+            WEB_BACKEND_URL = validated
+        return True
+
+
+def record_backend_sync_result(ok: bool, err: Optional[str] = None, log_prefix: Optional[str] = None) -> None:
+    global last_backend_sync_ok, last_backend_error, last_backend_err_log_ts
+    with backend_state_lock:
+        last_backend_sync_ok = ok
+        last_backend_error = None if ok else err
+        if not ok and err and log_prefix:
+            now_ts = time.time()
+            if now_ts - last_backend_err_log_ts >= 15.0:
+                last_backend_err_log_ts = now_ts
+                print(f"{log_prefix}: {err}", flush=True)
+
+
+def get_backend_sync_status() -> Tuple[str, Optional[bool], Optional[str]]:
+    with backend_state_lock:
+        return WEB_BACKEND_URL, last_backend_sync_ok, last_backend_error
+
+
 MODEL_DIR = os.environ.get("INSIGHTFACE_HOME", "/app/models/insightface")
 RUST_ACCEL_BIN = os.environ.get("RUST_ACCEL_BIN", "/app/bin/face_accel")
 DATA_DIR_PATH = Path(os.environ.get("DATA_DIR", "/app/data"))
@@ -516,9 +566,10 @@ def internal_headers() -> Dict[str, str]:
 
 def sync_gallery_and_settings() -> None:
     global gallery_cache, settings_cache
+    backend_url = get_web_backend_url()
     try:
         with httpx.Client(timeout=8.0) as client:
-            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/gallery", headers=internal_headers())
+            resp = client.get(f"{backend_url}/api/internal/gallery", headers=internal_headers())
             if resp.status_code == 200:
                 data = resp.json()
                 students = data.get("students", [])
@@ -527,8 +578,19 @@ def sync_gallery_and_settings() -> None:
                     rebuild_gallery_matrix_locked(students)
                     if isinstance(data.get("settings"), dict):
                         settings_cache.update(data["settings"])
-    except Exception:
-        pass
+                record_backend_sync_result(True)
+            else:
+                record_backend_sync_result(
+                    False,
+                    f"HTTP {resp.status_code} dari {backend_url}/api/internal/gallery",
+                    "[SYNC] Gagal sync gallery",
+                )
+    except Exception as exc:
+        record_backend_sync_result(
+            False,
+            f"Gagal fetch {backend_url}/api/internal/gallery: {exc}",
+            "[SYNC]",
+        )
 
 
 def send_heartbeat(
@@ -540,10 +602,11 @@ def send_heartbeat(
     payload: Dict[str, Any] = {"online": online, "error": error}
     if telemetry:
         payload.update(telemetry)
+    backend_url = get_web_backend_url()
     try:
         with httpx.Client(timeout=3.0) as client:
             resp = client.post(
-                f"{WEB_BACKEND_URL}/api/internal/cameras/{camera_id}/heartbeat",
+                f"{backend_url}/api/internal/cameras/{camera_id}/heartbeat",
                 json=payload,
                 headers=internal_headers(),
             )
@@ -553,7 +616,7 @@ def send_heartbeat(
                     flush=True,
                 )
     except Exception as exc:
-        print(f"[HEARTBEAT][Cam #{camera_id}] Gagal kirim heartbeat: {exc}", flush=True)
+        print(f"[HEARTBEAT][Cam #{camera_id}] Gagal kirim heartbeat ({backend_url}): {exc}", flush=True)
 
 
 def flush_detection_stats_if_due(
@@ -565,10 +628,11 @@ def flush_detection_stats_if_due(
     if not force and (now_ts - float(bucket["window_start_ts"])) < 300.0:
         return
     if int(bucket["total_raw"]) > 0:
+        backend_url = get_web_backend_url()
         try:
             with httpx.Client(timeout=4.0) as client:
                 client.post(
-                    f"{WEB_BACKEND_URL}/api/internal/detection-stats",
+                    f"{backend_url}/api/internal/detection-stats",
                     json={
                         "camera_id": camera_id,
                         "window_start": bucket["window_start"],
@@ -875,10 +939,11 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
                             crop_save = crop
                         cv2.imwrite(str(snap_path), crop_save, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_q])
 
+                    backend_url = get_web_backend_url()
                     try:
                         with httpx.Client(timeout=4.0) as client:
                             ev_resp = client.post(
-                                f"{WEB_BACKEND_URL}/api/internal/face-event",
+                                f"{backend_url}/api/internal/face-event",
                                 json={
                                     "camera_id": cam_id,
                                     "student_id": recognized_id,
@@ -909,14 +974,23 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
 
 def refresh_camera_workers() -> int:
+    backend_url = get_web_backend_url()
     try:
         with httpx.Client(timeout=5.0) as client:
-            resp = client.get(f"{WEB_BACKEND_URL}/api/internal/cameras", headers=internal_headers())
+            resp = client.get(f"{backend_url}/api/internal/cameras", headers=internal_headers())
             if resp.status_code != 200:
+                record_backend_sync_result(
+                    False,
+                    f"HTTP {resp.status_code} dari {backend_url}/api/internal/cameras",
+                    "[RTSP]",
+                )
                 return 0
             cams = resp.json().get("cameras", [])
+            record_backend_sync_result(True)
     except Exception as exc:
-        print(f"[RTSP] Gagal fetch /api/internal/cameras: {exc}", flush=True)
+        err_detail = f"Gagal fetch {backend_url}/api/internal/cameras: {exc}"
+        record_backend_sync_result(False, err_detail)
+        print(f"[RTSP] {err_detail}", flush=True)
         return 0
 
     active_ids = set()
@@ -978,8 +1052,13 @@ class CompareRequest(BaseModel):
     photo2DataUrl: str
 
 
+class ReloadCamerasRequest(BaseModel):
+    web_backend_url: Optional[str] = None
+
+
 @app.get("/health")
 def health() -> Dict[str, Any]:
+    backend_url, backend_ok, backend_err = get_backend_sync_status()
     return {
         "ok": True,
         "model": "buffalo_l",
@@ -994,14 +1073,27 @@ def health() -> Dict[str, Any]:
         "face_worker_instances": FACE_WORKER_INSTANCES,
         "active_camera_workers": len(camera_threads),
         "gallery_size": len(gallery_cache),
+        "web_backend_url": backend_url,
+        "backend_reachable": backend_ok,
+        "backend_error": backend_err,
     }
 
 
 @app.post("/cameras/reload")
-def reload_cameras() -> Dict[str, Any]:
+def reload_cameras(req: Optional[ReloadCamerasRequest] = Body(default=None)) -> Dict[str, Any]:
+    if req is not None and req.web_backend_url:
+        set_web_backend_url(req.web_backend_url)
     sync_gallery_and_settings()
     count = refresh_camera_workers()
-    return {"ok": True, "active_camera_workers": count}
+    backend_url, backend_ok, backend_err = get_backend_sync_status()
+    return {
+        "ok": True,
+        "active_camera_workers": count,
+        "gallery_size": len(gallery_cache),
+        "web_backend_url": backend_url,
+        "backend_reachable": backend_ok,
+        "backend_error": backend_err,
+    }
 
 
 @app.post("/enroll")

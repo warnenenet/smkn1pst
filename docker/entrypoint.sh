@@ -9,6 +9,7 @@ mkdir -p \
   "$SECRETS_DIR" \
   "$STORAGE_ROOT/wa_sessions" \
   "$STORAGE_ROOT/wa_qr" \
+  "$STORAGE_ROOT/debug" \
   "$DATA_ROOT/snapshots" \
   "$DATA_ROOT/tts_cache" \
   "$DATA_ROOT/backups" \
@@ -42,10 +43,7 @@ PIPER_MODEL="/app/models/piper/id_ID-news_tts-medium.onnx"
 CHROME_BIN="/usr/bin/chromium"
 CHROMEDRIVER_BIN="/usr/bin/chromedriver"
 ENABLE_XVFB_FALLBACK="1"
-OMP_NUM_THREADS="4"
-OPENBLAS_NUM_THREADS="4"
-ORT_INTRA_OP_NUM_THREADS="4"
-ORT_INTER_OP_NUM_THREADS="2"
+MPLCONFIGDIR="/tmp/matplotlib"
 EOF
 chmod 600 "$RUNTIME_ENV"
 

@@ -6,6 +6,7 @@ from quality_gate import (
     evaluate_pre_embedding_gates,
     evaluate_top1_top2_margin,
     resolve_adaptive_recognition_threshold,
+    resolve_safe_loopback_backend_url,
     validate_five_landmarks,
 )
 from tracker import IoUTracker, TrackVoteBuffer
@@ -198,6 +199,25 @@ class QualityGateTests(unittest.TestCase):
         self.assertEqual(res_masked.reason, "landmark")
         self.assertEqual(res_masked.detail, "incomplete_landmarks")
         self.assertEqual(calls["blur"], 1)
+
+    def test_safe_loopback_backend_url(self):
+        self.assertEqual(
+            resolve_safe_loopback_backend_url("http://127.0.0.1:3000/"),
+            "http://127.0.0.1:3000",
+        )
+        self.assertEqual(
+            resolve_safe_loopback_backend_url("http://localhost:3001"),
+            "http://localhost:3001",
+        )
+        self.assertEqual(
+            resolve_safe_loopback_backend_url("http://[::1]:3002"),
+            "http://[::1]:3002",
+        )
+        self.assertIsNone(resolve_safe_loopback_backend_url("http://example.com:3000"))
+        self.assertIsNone(resolve_safe_loopback_backend_url("http://192.168.1.10:3000"))
+        self.assertIsNone(resolve_safe_loopback_backend_url("ftp://127.0.0.1:3000"))
+        self.assertIsNone(resolve_safe_loopback_backend_url("http://127.0.0.1:99999"))
+        self.assertIsNone(resolve_safe_loopback_backend_url(""))
 
 
 if __name__ == "__main__":
