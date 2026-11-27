@@ -2,8 +2,10 @@ import { APP_ROOT } from './src/server/envBootstrap.ts';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
-import { execFile, spawn } from 'child_process';
+import { execFile, spawn, type ChildProcess } from 'child_process';
 import { promisify } from 'util';
+
+const activeFfmpegPreviews = new Set<ChildProcess>();
 import express from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import * as XLSX from 'xlsx';
@@ -2301,6 +2303,7 @@ app.get('/api/cameras/preview-stream', requireAuth(['ADMIN']), (req, res) => {
 
     const child = spawn(resolution.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     activeChild = child;
+    activeFfmpegPreviews.add(child);
     let remainder: Uint8Array = new Uint8Array(0);
     let stderrTail = '';
     let gotAnyFrame = false;
@@ -2329,6 +2332,7 @@ app.get('/api/cameras/preview-stream', requireAuth(['ADMIN']), (req, res) => {
     });
 
     child.on('error', (err: NodeJS.ErrnoException) => {
+      activeFfmpegPreviews.delete(child);
       if (closed) return;
       if (err.code === 'EACCES' || err.code === 'ENOENT') {
         const alt = resolveFfmpegDetails(new Set([...blockedBins, resolution.binary]));
@@ -2342,6 +2346,7 @@ app.get('/api/cameras/preview-stream', requireAuth(['ADMIN']), (req, res) => {
     });
 
     child.on('close', () => {
+      activeFfmpegPreviews.delete(child);
       if (closed) return;
       if (!gotAnyFrame && /Option stimeout not found/i.test(stderrTail) && timeoutFlag === '-stimeout') {
         timeoutFlag = '-rw_timeout';
@@ -4047,6 +4052,14 @@ process.on('uncaughtException', (err) => {
 
 const handleShutdown = () => {
   stopWaGatewayChild();
+  for (const child of activeFfmpegPreviews) {
+    try {
+      if (!child.killed) child.kill('SIGTERM');
+    } catch {
+      // ignore kill error
+    }
+  }
+  activeFfmpegPreviews.clear();
   process.exit(0);
 };
 process.once('SIGTERM', handleShutdown);

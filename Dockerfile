@@ -39,7 +39,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     RUST_ACCEL_BIN=/app/bin/face_accel \
     PIPER_BIN=/usr/local/piper/piper \
     PIPER_MODEL=/app/models/piper/id_ID-news_tts-medium.onnx \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    OMP_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    OMP_WAIT_POLICY=PASSIVE \
+    GOMP_SPINCOUNT=0 \
+    OPENCV_THREADS=2 \
+    FACE_WORKER_INSTANCES=2 \
+    ORT_INTRA_THREADS=2
 
 WORKDIR /app
 

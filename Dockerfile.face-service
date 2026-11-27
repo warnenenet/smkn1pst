@@ -21,7 +21,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     INSIGHTFACE_HOME=/app/models/insightface \
     RUST_ACCEL_BIN=/app/bin/face_accel \
     HOME=/tmp \
-    MPLCONFIGDIR=/tmp/matplotlib
+    MPLCONFIGDIR=/tmp/matplotlib \
+    OMP_NUM_THREADS=2 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    OMP_WAIT_POLICY=PASSIVE \
+    GOMP_SPINCOUNT=0 \
+    OPENCV_THREADS=2 \
+    FACE_WORKER_INSTANCES=2 \
+    ORT_INTRA_THREADS=2
 
 WORKDIR /app/services/face-service
 

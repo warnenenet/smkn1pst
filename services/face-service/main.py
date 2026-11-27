@@ -25,25 +25,8 @@ try:
 except OSError:
     pass
 
-import cv2
-import httpx
-import numpy as np
-import onnxruntime as ort
-from fastapi import Body, FastAPI, HTTPException
-from insightface.app import FaceAnalysis
-from pydantic import BaseModel
-
-from quality_gate import (
-    align_face_5pt_112,
-    compute_downscale_plan,
-    compute_laplacian_variance_bgr,
-    compute_ort_thread_budget,
-    evaluate_pre_embedding_gates,
-    evaluate_top1_top2_margin,
-    resolve_adaptive_recognition_threshold,
-    resolve_safe_loopback_backend_url,
-)
-from tracker import IoUTracker, TrackVoteBuffer
+# WAJIB diset SEBELUM import numpy / cv2 / onnxruntime agar OpenBLAS & OpenMP tidak membuat 48 thread busy-spin!
+from quality_gate import compute_ort_thread_budget
 
 _CPU_COUNT = os.cpu_count() or 4
 _ENV_WORKERS = os.environ.get("FACE_WORKER_INSTANCES")
@@ -54,10 +37,37 @@ FACE_WORKER_INSTANCES, _ORT_INTRA_THREADS, _ORT_INTER_THREADS = compute_ort_thre
     intra_override=int(_ENV_INTRA) if _ENV_INTRA else None,
 )
 
-# Optimasi thread CPU & FFmpeg untuk VPS 4-8 vCPU (sisakan 2-4 core untuk Node + SQLite + WA Gateway)
 os.environ.setdefault("OMP_NUM_THREADS", str(_ORT_INTRA_THREADS))
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+os.environ.setdefault("GOMP_SPINCOUNT", "0")
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp|rw_timeout;5000000|fflags;nobuffer|flags;low_delay")
+
+import cv2
+import httpx
+import numpy as np
+import onnxruntime as ort
+from fastapi import Body, FastAPI, HTTPException
+from insightface.app import FaceAnalysis
+from pydantic import BaseModel
+
+try:
+    cv2.setNumThreads(max(1, min(4, int(os.environ.get("OPENCV_THREADS", "2")))))
+except Exception:
+    pass
+
+from quality_gate import (
+    align_face_5pt_112,
+    compute_downscale_plan,
+    compute_laplacian_variance_bgr,
+    evaluate_pre_embedding_gates,
+    evaluate_top1_top2_margin,
+    resolve_adaptive_recognition_threshold,
+    resolve_safe_loopback_backend_url,
+)
+from tracker import IoUTracker, TrackVoteBuffer
 
 WEB_BACKEND_URL = (
     resolve_safe_loopback_backend_url(os.environ.get("WEB_BACKEND_URL"))
@@ -170,7 +180,7 @@ settings_cache: Dict[str, Any] = {
 
 camera_threads: Dict[int, threading.Event] = {}
 camera_mgr_lock = threading.Lock()
-inference_pool = ThreadPoolExecutor(max_workers=max(2, min(8, _CPU_COUNT)))
+inference_pool = ThreadPoolExecutor(max_workers=max(2, min(4, _CPU_COUNT)))
 last_debug_saved_by_cam: Dict[int, float] = {}
 debug_lock = threading.Lock()
 
@@ -750,8 +760,10 @@ def rtsp_camera_worker(cam: Dict[str, Any], stop_event: threading.Event) -> None
 
                 # Lewati decode BGR penuh untuk frame yang tidak diproses agar bebas lag buffer RTSP & hemat CPU
                 if frame_counter % PROCESS_EVERY_N_FRAMES != 0:
+                    stop_event.wait(0.005)
                     continue
                 if now - last_proc < frame_interval:
+                    stop_event.wait(0.005)
                     continue
 
                 ret, frame = cap.retrieve()

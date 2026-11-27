@@ -4,9 +4,32 @@ services:
       context: .
       dockerfile: Dockerfile
     image: absensi-smk-face-ai:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-absensi-smk-allinone}
     restart: unless-stopped
+    init: true
+    stop_grace_period: 15s
+    cpus: "${DOCKER_CPU_LIMIT:-6}"
+    mem_limit: "${DOCKER_MEM_LIMIT:-6g}"
+    pids_limit: ${DOCKER_PIDS_LIMIT:-256}
     ports:
       - "127.0.0.1:${HOST_PORT:-3080}:80"
+    environment:
+      TZ: "Asia/Jakarta"
+      OMP_NUM_THREADS: "${OMP_NUM_THREADS:-2}"
+      OPENBLAS_NUM_THREADS: "${OPENBLAS_NUM_THREADS:-1}"
+      MKL_NUM_THREADS: "${MKL_NUM_THREADS:-1}"
+      OMP_WAIT_POLICY: "${OMP_WAIT_POLICY:-PASSIVE}"
+      GOMP_SPINCOUNT: "${GOMP_SPINCOUNT:-0}"
+      OPENCV_THREADS: "${OPENCV_THREADS:-2}"
+      FACE_WORKER_INSTANCES: "${FACE_WORKER_INSTANCES:-2}"
+      ORT_INTRA_THREADS: "${ORT_INTRA_THREADS:-2}"
+      PROCESS_EVERY_N_FRAMES: "${PROCESS_EVERY_N_FRAMES:-2}"
     volumes:
       - ./data:/app/data
       - ./storage:/app/storage
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+

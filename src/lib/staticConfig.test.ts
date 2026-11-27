@@ -203,6 +203,8 @@ test('buildFfmpegLivePreviewArgs builds 5fps and native RTSP stream filters safe
     maxWidth: 1280,
   });
   assert.equal(res5.mode, '5');
+  assert.ok(res5.args.includes('-threads'));
+  assert.equal(res5.args[res5.args.indexOf('-threads') + 1], '2');
   assert.ok(res5.args.includes("fps=5,scale='min(1280,iw)':-2"));
   assert.ok(res5.args.includes('-stimeout'));
   assert.ok(res5.args.includes('image2pipe'));
@@ -214,6 +216,7 @@ test('buildFfmpegLivePreviewArgs builds 5fps and native RTSP stream filters safe
     maxWidth: 960,
   });
   assert.equal(resNative.mode, 'native');
+  assert.ok(resNative.args.includes('-threads'));
   assert.ok(resNative.args.includes("scale='min(960,iw)':-2"));
   assert.equal(resNative.args.some((a) => a.includes('fps=')), false);
   assert.ok(resNative.args.includes('-rw_timeout'));

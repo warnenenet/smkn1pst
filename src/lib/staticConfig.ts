@@ -304,6 +304,8 @@ export function buildFfmpegLivePreviewArgs(params: {
       '-hide_banner',
       '-loglevel',
       'error',
+      '-threads',
+      '2',
       '-rtsp_transport',
       'tcp',
       timeoutFlag,

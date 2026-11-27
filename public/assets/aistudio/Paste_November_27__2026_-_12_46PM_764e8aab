@@ -1,0 +1,1000 @@
+INFO:     127.0.0.1:58526 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51410 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=145 lolos5m=0 total_lolos=224 total_ditolak=95731
+INFO:     127.0.0.1:50366 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=28 lolos5m=0 total_lolos=1183 total_ditolak=366804
+[DETECT][Cam #2] raw5m=46 lolos5m=0 total_lolos=474 total_ditolak=218516
+INFO:     127.0.0.1:38084 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46258 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46258 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36054 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=2 lolos5m=0 total_lolos=224 total_ditolak=95733
+INFO:     127.0.0.1:56452 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=28 lolos5m=0 total_lolos=1183 total_ditolak=366804
+[DETECT][Cam #2] raw5m=91 lolos5m=0 total_lolos=474 total_ditolak=218561
+INFO:     127.0.0.1:55750 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40916 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40916 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44776 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=3 lolos5m=0 total_lolos=224 total_ditolak=95734
+INFO:     127.0.0.1:46960 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=28 lolos5m=0 total_lolos=1183 total_ditolak=366804
+[DETECT][Cam #2] raw5m=92 lolos5m=0 total_lolos=474 total_ditolak=218562
+INFO:     127.0.0.1:47682 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40892 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40892 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56062 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=3 lolos5m=0 total_lolos=224 total_ditolak=95734
+INFO:     127.0.0.1:47096 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=366804
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=474 total_ditolak=218564
+INFO:     127.0.0.1:49066 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38640 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42638 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=3 lolos5m=0 total_lolos=224 total_ditolak=95734
+INFO:     127.0.0.1:57278 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=1 lolos5m=0 total_lolos=1183 total_ditolak=366805
+[DETECT][Cam #2] raw5m=9 lolos5m=0 total_lolos=474 total_ditolak=218571
+INFO:     127.0.0.1:52556 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60838 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60838 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45726 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=10 lolos5m=0 total_lolos=224 total_ditolak=95741
+INFO:     127.0.0.1:57502 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=1 lolos5m=0 total_lolos=1183 total_ditolak=366805
+[DETECT][Cam #2] raw5m=286 lolos5m=0 total_lolos=474 total_ditolak=218848
+INFO:     127.0.0.1:40376 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44898 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44898 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38918 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=68 lolos5m=0 total_lolos=224 total_ditolak=95810
+INFO:     127.0.0.1:42572 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] Wajah diabaikan kualitas 70.0% < 80%
+[DETECT][Cam #1] raw5m=8 lolos5m=0 total_lolos=1183 total_ditolak=366812
+[DETECT][Cam #2] raw5m=286 lolos5m=0 total_lolos=474 total_ditolak=218848
+INFO:     127.0.0.1:58838 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41352 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41352 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41740 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=120 lolos5m=1 total_lolos=225 total_ditolak=95862
+INFO:     127.0.0.1:34730 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=9 lolos5m=0 total_lolos=1183 total_ditolak=366813
+[DETECT][Cam #2] raw5m=302 lolos5m=0 total_lolos=474 total_ditolak=218864
+INFO:     127.0.0.1:51000 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39140 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39140 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=174 lolos5m=1 total_lolos=225 total_ditolak=95916
+INFO:     127.0.0.1:51744 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45666 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=6 lolos5m=0 total_lolos=1183 total_ditolak=366819
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=218902
+INFO:     127.0.0.1:49662 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59314 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59314 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=212 lolos5m=1 total_lolos=225 total_ditolak=95954
+INFO:     127.0.0.1:59010 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45518 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=51 lolos5m=0 total_lolos=1183 total_ditolak=366864
+[DETECT][Cam #2] raw5m=137 lolos5m=0 total_lolos=474 total_ditolak=219039
+INFO:     127.0.0.1:48680 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38302 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38302 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=215 lolos5m=1 total_lolos=225 total_ditolak=95957
+INFO:     127.0.0.1:44240 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49616 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=51 lolos5m=0 total_lolos=1183 total_ditolak=366864
+[DETECT][Cam #2] raw5m=170 lolos5m=0 total_lolos=474 total_ditolak=219072
+INFO:     127.0.0.1:39334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56458 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56458 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=95957
+INFO:     127.0.0.1:40366 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb806ea3e40] reference picture missing during reorder
+[h264 @ 0x7bb806ea3e40] Missing reference picture, default is 4
+INFO:     127.0.0.1:55502 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=52 lolos5m=0 total_lolos=1183 total_ditolak=366865
+[DETECT][Cam #2] raw5m=170 lolos5m=0 total_lolos=474 total_ditolak=219072
+INFO:     127.0.0.1:44468 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb80483c100] cabac decode of qscale diff failed at 63 21
+[h264 @ 0x7bb80483c100] error while decoding MB 63 21, bytestream 24243
+[h264 @ 0x7bb801da8400] cabac decode of qscale diff failed at 43 38
+[h264 @ 0x7bb801da8400] error while decoding MB 43 38, bytestream 12526
+INFO:     127.0.0.1:34464 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34464 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=95957
+INFO:     127.0.0.1:33508 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb8043d9300] cabac decode of qscale diff failed at 94 59
+[h264 @ 0x7bb8043d9300] error while decoding MB 94 59, bytestream 19396
+INFO:     127.0.0.1:43276 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=54 lolos5m=0 total_lolos=1183 total_ditolak=366867
+[DETECT][Cam #2] raw5m=194 lolos5m=0 total_lolos=474 total_ditolak=219096
+INFO:     127.0.0.1:38520 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36872 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36872 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=24 lolos5m=0 total_lolos=225 total_ditolak=95981
+INFO:     127.0.0.1:34652 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45144 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=83 lolos5m=0 total_lolos=1183 total_ditolak=366951
+[DETECT][Cam #2] raw5m=3 lolos5m=0 total_lolos=474 total_ditolak=219099
+INFO:     127.0.0.1:56620 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50482 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50482 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=27 lolos5m=0 total_lolos=225 total_ditolak=95984
+INFO:     127.0.0.1:60122 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42058 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=83 lolos5m=0 total_lolos=1183 total_ditolak=366951
+[DETECT][Cam #2] raw5m=13 lolos5m=0 total_lolos=474 total_ditolak=219109
+INFO:     127.0.0.1:43556 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52606 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52606 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=27 lolos5m=0 total_lolos=225 total_ditolak=95984
+INFO:     127.0.0.1:36514 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45986 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=83 lolos5m=0 total_lolos=1183 total_ditolak=366951
+[DETECT][Cam #2] raw5m=13 lolos5m=0 total_lolos=474 total_ditolak=219109
+INFO:     127.0.0.1:38902 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44472 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44472 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=95984
+INFO:     127.0.0.1:46582 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51022 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=152 lolos5m=0 total_lolos=1183 total_ditolak=367020
+[DETECT][Cam #2] raw5m=21 lolos5m=0 total_lolos=474 total_ditolak=219117
+INFO:     127.0.0.1:33942 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41334 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=22 lolos5m=0 total_lolos=225 total_ditolak=96006
+INFO:     127.0.0.1:38680 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46194 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=189 lolos5m=0 total_lolos=1183 total_ditolak=367057
+[DETECT][Cam #2] raw5m=29 lolos5m=0 total_lolos=474 total_ditolak=219125
+INFO:     127.0.0.1:46780 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60294 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60294 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=88 lolos5m=0 total_lolos=225 total_ditolak=96072
+INFO:     127.0.0.1:51492 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41654 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=9 lolos5m=0 total_lolos=1183 total_ditolak=367066
+[DETECT][Cam #2] raw5m=59 lolos5m=0 total_lolos=474 total_ditolak=219184
+INFO:     127.0.0.1:56352 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40666 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40666 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=89 lolos5m=0 total_lolos=225 total_ditolak=96073
+INFO:     127.0.0.1:41604 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47686 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=29 lolos5m=0 total_lolos=1183 total_ditolak=367086
+[DETECT][Cam #2] raw5m=106 lolos5m=0 total_lolos=474 total_ditolak=219231
+INFO:     127.0.0.1:52560 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33258 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33258 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=158 lolos5m=0 total_lolos=225 total_ditolak=96142
+INFO:     127.0.0.1:45366 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45244 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=46 lolos5m=0 total_lolos=1183 total_ditolak=367103
+[DETECT][Cam #2] raw5m=291 lolos5m=0 total_lolos=474 total_ditolak=219416
+INFO:     127.0.0.1:52552 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50788 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=61 lolos5m=0 total_lolos=225 total_ditolak=96238
+INFO:     127.0.0.1:54412 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54516 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=113 lolos5m=0 total_lolos=1183 total_ditolak=367170
+[DETECT][Cam #2] raw5m=307 lolos5m=0 total_lolos=474 total_ditolak=219432
+INFO:     127.0.0.1:56986 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55868 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55868 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=61 lolos5m=0 total_lolos=225 total_ditolak=96238
+INFO:     127.0.0.1:42234 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34796 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=367189
+[DETECT][Cam #2] raw5m=309 lolos5m=0 total_lolos=474 total_ditolak=219434
+INFO:     127.0.0.1:43540 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42760 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42760 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=143 lolos5m=0 total_lolos=225 total_ditolak=96320
+INFO:     127.0.0.1:36720 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48108 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=62 lolos5m=0 total_lolos=1183 total_ditolak=367251
+[DETECT][Cam #2] raw5m=78 lolos5m=0 total_lolos=474 total_ditolak=219512
+INFO:     127.0.0.1:46800 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58532 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58532 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=207 lolos5m=0 total_lolos=225 total_ditolak=96384
+INFO:     127.0.0.1:50024 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51786 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=85 lolos5m=0 total_lolos=1183 total_ditolak=367274
+[DETECT][Cam #2] raw5m=101 lolos5m=0 total_lolos=474 total_ditolak=219535
+INFO:     127.0.0.1:48388 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58662 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58662 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=381 lolos5m=0 total_lolos=225 total_ditolak=96558
+INFO:     127.0.0.1:39584 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39666 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=176 lolos5m=0 total_lolos=1183 total_ditolak=367365
+[DETECT][Cam #2] raw5m=116 lolos5m=0 total_lolos=474 total_ditolak=219550
+INFO:     127.0.0.1:60268 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52250 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52250 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=62 lolos5m=0 total_lolos=225 total_ditolak=96936
+INFO:     127.0.0.1:58354 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53264 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=438 lolos5m=0 total_lolos=1183 total_ditolak=367627
+[DETECT][Cam #2] raw5m=487 lolos5m=0 total_lolos=474 total_ditolak=219921
+INFO:     127.0.0.1:51020 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51116 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51116 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=186 lolos5m=0 total_lolos=225 total_ditolak=97060
+INFO:     127.0.0.1:46706 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54282 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=5 lolos5m=0 total_lolos=1183 total_ditolak=367653
+[DETECT][Cam #2] raw5m=751 lolos5m=0 total_lolos=474 total_ditolak=220185
+INFO:     127.0.0.1:40136 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33446 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33446 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=189 lolos5m=0 total_lolos=225 total_ditolak=97063
+INFO:     127.0.0.1:37746 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40110 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=375 lolos5m=0 total_lolos=1183 total_ditolak=368023
+[DETECT][Cam #2] raw5m=178 lolos5m=0 total_lolos=474 total_ditolak=220364
+INFO:     127.0.0.1:57882 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36428 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36428 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=259 lolos5m=0 total_lolos=225 total_ditolak=97133
+INFO:     127.0.0.1:60428 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47570 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=883 lolos5m=0 total_lolos=1183 total_ditolak=368531
+[DETECT][Cam #2] raw5m=298 lolos5m=0 total_lolos=474 total_ditolak=220484
+INFO:     127.0.0.1:48716 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48716 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48716 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=424 lolos5m=0 total_lolos=225 total_ditolak=97298
+INFO:     127.0.0.1:35882 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35882 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=1520 lolos5m=0 total_lolos=1183 total_ditolak=369168
+[DETECT][Cam #2] raw5m=645 lolos5m=0 total_lolos=474 total_ditolak=220831
+INFO:     127.0.0.1:37068 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37068 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37068 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=98 lolos5m=0 total_lolos=225 total_ditolak=97445
+INFO:     127.0.0.1:57080 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57080 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=2193 lolos5m=0 total_lolos=1183 total_ditolak=369841
+[DETECT][Cam #2] raw5m=871 lolos5m=0 total_lolos=474 total_ditolak=221057
+INFO:     127.0.0.1:37306 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37306 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37306 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=227 lolos5m=0 total_lolos=225 total_ditolak=97574
+INFO:     127.0.0.1:55500 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55500 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=24 lolos5m=0 total_lolos=1183 total_ditolak=370611
+[DETECT][Cam #2] raw5m=1120 lolos5m=0 total_lolos=474 total_ditolak=221306
+INFO:     127.0.0.1:51242 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51242 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51242 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=432 lolos5m=0 total_lolos=225 total_ditolak=97779
+INFO:     127.0.0.1:41934 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41934 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=608 lolos5m=0 total_lolos=1183 total_ditolak=371195
+[DETECT][Cam #2] raw5m=241 lolos5m=0 total_lolos=474 total_ditolak=221555
+INFO:     127.0.0.1:49758 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49758 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49758 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=642 lolos5m=0 total_lolos=225 total_ditolak=97989
+INFO:     127.0.0.1:44250 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44250 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=1012 lolos5m=0 total_lolos=1183 total_ditolak=371599
+[DETECT][Cam #2] raw5m=360 lolos5m=0 total_lolos=474 total_ditolak=221674
+INFO:     127.0.0.1:37608 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37608 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37608 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=749 lolos5m=0 total_lolos=225 total_ditolak=98096
+INFO:     127.0.0.1:55528 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55528 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=1510 lolos5m=0 total_lolos=1183 total_ditolak=372097
+[DETECT][Cam #2] raw5m=383 lolos5m=0 total_lolos=474 total_ditolak=221697
+INFO:     127.0.0.1:59710 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59710 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59710 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=65 lolos5m=0 total_lolos=225 total_ditolak=98198
+INFO:     127.0.0.1:38004 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38004 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=2045 lolos5m=0 total_lolos=1183 total_ditolak=372632
+[DETECT][Cam #2] raw5m=524 lolos5m=0 total_lolos=474 total_ditolak=221838
+INFO:     127.0.0.1:40362 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40362 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40362 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=105 lolos5m=0 total_lolos=225 total_ditolak=98238
+INFO:     127.0.0.1:45916 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45916 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=19 lolos5m=0 total_lolos=1183 total_ditolak=372954
+[DETECT][Cam #2] raw5m=635 lolos5m=0 total_lolos=474 total_ditolak=221949
+INFO:     127.0.0.1:55138 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55138 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55138 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=236 lolos5m=0 total_lolos=225 total_ditolak=98369
+INFO:     127.0.0.1:44838 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44838 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=87 lolos5m=0 total_lolos=1183 total_ditolak=373022
+[DETECT][Cam #2] raw5m=23 lolos5m=0 total_lolos=474 total_ditolak=221972
+INFO:     127.0.0.1:51786 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51786 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51786 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=384 lolos5m=0 total_lolos=225 total_ditolak=98517
+INFO:     127.0.0.1:59486 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59486 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=257 lolos5m=0 total_lolos=1183 total_ditolak=373192
+[DETECT][Cam #2] raw5m=36 lolos5m=0 total_lolos=474 total_ditolak=221985
+INFO:     127.0.0.1:52984 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52984 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52984 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=604 lolos5m=0 total_lolos=225 total_ditolak=98737
+INFO:     127.0.0.1:57198 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57198 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=432 lolos5m=0 total_lolos=1183 total_ditolak=373367
+[DETECT][Cam #2] raw5m=45 lolos5m=0 total_lolos=474 total_ditolak=221994
+INFO:     127.0.0.1:56874 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56874 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56874 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=179 lolos5m=0 total_lolos=225 total_ditolak=98946
+INFO:     127.0.0.1:41810 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41810 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=189 lolos5m=0 total_lolos=474 total_ditolak=222138
+[DETECT][Cam #1] raw5m=570 lolos5m=0 total_lolos=1183 total_ditolak=373505
+INFO:     127.0.0.1:38048 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38048 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38048 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=356 lolos5m=0 total_lolos=225 total_ditolak=99123
+INFO:     127.0.0.1:51078 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51078 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=373606
+[DETECT][Cam #2] raw5m=210 lolos5m=0 total_lolos=474 total_ditolak=222159
+INFO:     127.0.0.1:47332 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47332 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47332 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=607 lolos5m=0 total_lolos=225 total_ditolak=99374
+INFO:     127.0.0.1:46010 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46010 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=170 lolos5m=0 total_lolos=1183 total_ditolak=373776
+[DETECT][Cam #2] raw5m=40 lolos5m=0 total_lolos=474 total_ditolak=222199
+INFO:     127.0.0.1:43228 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43228 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43228 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=880 lolos5m=0 total_lolos=225 total_ditolak=99647
+INFO:     127.0.0.1:60090 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60090 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=270 lolos5m=0 total_lolos=1183 total_ditolak=373876
+[DETECT][Cam #2] raw5m=255 lolos5m=0 total_lolos=474 total_ditolak=222414
+INFO:     127.0.0.1:51164 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51164 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51164 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=938 lolos5m=0 total_lolos=225 total_ditolak=99705
+INFO:     127.0.0.1:56580 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56580 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=434 lolos5m=0 total_lolos=1183 total_ditolak=374040
+[DETECT][Cam #2] raw5m=295 lolos5m=0 total_lolos=474 total_ditolak=222454
+INFO:     127.0.0.1:57974 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57974 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57974 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=25 lolos5m=0 total_lolos=225 total_ditolak=99781
+INFO:     127.0.0.1:56176 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56176 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=510 lolos5m=0 total_lolos=1183 total_ditolak=374116
+[DETECT][Cam #2] raw5m=368 lolos5m=0 total_lolos=474 total_ditolak=222527
+INFO:     127.0.0.1:53114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53114 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53114 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=26 lolos5m=0 total_lolos=225 total_ditolak=99782
+INFO:     127.0.0.1:39784 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39784 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=374116
+[DETECT][Cam #2] raw5m=560 lolos5m=0 total_lolos=474 total_ditolak=222719
+INFO:     127.0.0.1:43054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43054 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=28 lolos5m=0 total_lolos=225 total_ditolak=99784
+INFO:     127.0.0.1:40200 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40200 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=28 lolos5m=0 total_lolos=1183 total_ditolak=374144
+[DETECT][Cam #2] raw5m=52 lolos5m=0 total_lolos=474 total_ditolak=222771
+INFO:     127.0.0.1:58826 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58826 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58828 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=120 lolos5m=0 total_lolos=225 total_ditolak=99876
+INFO:     127.0.0.1:60700 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60704 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=69 lolos5m=0 total_lolos=1183 total_ditolak=374185
+[DETECT][Cam #2] raw5m=85 lolos5m=0 total_lolos=474 total_ditolak=222804
+INFO:     127.0.0.1:54054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54056 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=128 lolos5m=0 total_lolos=225 total_ditolak=99884
+INFO:     127.0.0.1:33952 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33964 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=127 lolos5m=0 total_lolos=1183 total_ditolak=374243
+[DETECT][Cam #2] raw5m=158 lolos5m=0 total_lolos=474 total_ditolak=222877
+INFO:     127.0.0.1:38180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38192 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=10 lolos5m=0 total_lolos=225 total_ditolak=99944
+INFO:     127.0.0.1:46050 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46052 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=236 lolos5m=0 total_lolos=1183 total_ditolak=374352
+[DETECT][Cam #2] raw5m=218 lolos5m=0 total_lolos=474 total_ditolak=222937
+INFO:     127.0.0.1:43110 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43110 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51814 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=33 lolos5m=0 total_lolos=225 total_ditolak=99967
+INFO:     127.0.0.1:33696 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36704 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=12 lolos5m=0 total_lolos=1183 total_ditolak=374367
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=222976
+INFO:     127.0.0.1:48052 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48052 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36586 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=171 lolos5m=0 total_lolos=225 total_ditolak=100105
+INFO:     127.0.0.1:58900 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38004 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=97 lolos5m=0 total_lolos=1183 total_ditolak=374452
+[DETECT][Cam #2] raw5m=65 lolos5m=0 total_lolos=474 total_ditolak=223041
+INFO:     127.0.0.1:47604 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47604 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45914 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=218 lolos5m=0 total_lolos=225 total_ditolak=100152
+INFO:     127.0.0.1:41980 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57976 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=117 lolos5m=0 total_lolos=1183 total_ditolak=374472
+[DETECT][Cam #2] raw5m=123 lolos5m=0 total_lolos=474 total_ditolak=223099
+INFO:     127.0.0.1:34146 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34146 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57748 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=218 lolos5m=0 total_lolos=225 total_ditolak=100152
+INFO:     127.0.0.1:50946 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35256 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=118 lolos5m=0 total_lolos=1183 total_ditolak=374473
+[DETECT][Cam #2] raw5m=173 lolos5m=0 total_lolos=474 total_ditolak=223149
+INFO:     127.0.0.1:42050 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42050 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45118 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=6 lolos5m=0 total_lolos=225 total_ditolak=100161
+INFO:     127.0.0.1:44300 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46154 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=213 lolos5m=0 total_lolos=1183 total_ditolak=374568
+[DETECT][Cam #2] raw5m=336 lolos5m=0 total_lolos=474 total_ditolak=223312
+INFO:     127.0.0.1:60028 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60028 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48822 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=73 lolos5m=0 total_lolos=225 total_ditolak=100228
+INFO:     127.0.0.1:47654 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45064 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=374605
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=474 total_ditolak=223406
+INFO:     127.0.0.1:38972 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38972 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41718 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=122 lolos5m=0 total_lolos=225 total_ditolak=100277
+INFO:     127.0.0.1:37786 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45420 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=76 lolos5m=0 total_lolos=1183 total_ditolak=374681
+[DETECT][Cam #2] raw5m=117 lolos5m=0 total_lolos=474 total_ditolak=223521
+INFO:     127.0.0.1:41476 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41476 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42826 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=194 lolos5m=0 total_lolos=225 total_ditolak=100349
+INFO:     127.0.0.1:59762 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60146 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=131 lolos5m=0 total_lolos=1183 total_ditolak=374736
+[DETECT][Cam #2] raw5m=314 lolos5m=0 total_lolos=474 total_ditolak=223718
+INFO:     127.0.0.1:58296 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58296 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51970 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=333 lolos5m=0 total_lolos=225 total_ditolak=100488
+INFO:     127.0.0.1:44780 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48252 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=162 lolos5m=0 total_lolos=1183 total_ditolak=374767
+[DETECT][Cam #2] raw5m=319 lolos5m=0 total_lolos=474 total_ditolak=223723
+INFO:     127.0.0.1:51108 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51108 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43060 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=100488
+INFO:     127.0.0.1:57430 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55918 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=165 lolos5m=0 total_lolos=1183 total_ditolak=374770
+[DETECT][Cam #2] raw5m=345 lolos5m=0 total_lolos=474 total_ditolak=223749
+INFO:     127.0.0.1:58288 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58288 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34522 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=55 lolos5m=0 total_lolos=225 total_ditolak=100543
+INFO:     127.0.0.1:39154 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48608 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=374904
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=223805
+INFO:     127.0.0.1:42240 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42240 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38876 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=61 lolos5m=0 total_lolos=225 total_ditolak=100549
+INFO:     127.0.0.1:33384 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48416 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=7 lolos5m=0 total_lolos=1183 total_ditolak=374911
+[DETECT][Cam #2] raw5m=28 lolos5m=0 total_lolos=474 total_ditolak=223833
+INFO:     127.0.0.1:37630 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37630 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34576 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=194 lolos5m=0 total_lolos=225 total_ditolak=100682
+INFO:     127.0.0.1:51690 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59490 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=11 lolos5m=0 total_lolos=1183 total_ditolak=374915
+[DETECT][Cam #2] raw5m=540 lolos5m=0 total_lolos=474 total_ditolak=224345
+INFO:     127.0.0.1:40690 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40690 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40994 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=202 lolos5m=0 total_lolos=225 total_ditolak=100690
+INFO:     127.0.0.1:60272 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52262 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=55 lolos5m=0 total_lolos=1183 total_ditolak=374959
+[DETECT][Cam #2] raw5m=908 lolos5m=0 total_lolos=474 total_ditolak=224713
+INFO:     127.0.0.1:50492 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50492 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43576 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=100730
+INFO:     127.0.0.1:42344 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53216 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=63 lolos5m=0 total_lolos=1183 total_ditolak=374967
+[DETECT][Cam #2] raw5m=976 lolos5m=0 total_lolos=474 total_ditolak=224781
+INFO:     127.0.0.1:43554 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43554 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60776 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=34 lolos5m=0 total_lolos=225 total_ditolak=100764
+INFO:     127.0.0.1:45568 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=23 lolos5m=0 total_lolos=1183 total_ditolak=375024
+INFO:     127.0.0.1:52702 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=10 lolos5m=0 total_lolos=474 total_ditolak=224827
+INFO:     127.0.0.1:35660 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35660 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46316 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=44 lolos5m=0 total_lolos=225 total_ditolak=100774
+INFO:     127.0.0.1:46758 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=27 lolos5m=0 total_lolos=1183 total_ditolak=375028
+INFO:     127.0.0.1:44436 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=122 lolos5m=0 total_lolos=474 total_ditolak=224939
+INFO:     127.0.0.1:47566 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47566 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55106 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=54 lolos5m=0 total_lolos=225 total_ditolak=100784
+INFO:     127.0.0.1:55826 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=29 lolos5m=0 total_lolos=1183 total_ditolak=375030
+INFO:     127.0.0.1:32854 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=158 lolos5m=0 total_lolos=474 total_ditolak=224975
+INFO:     127.0.0.1:55852 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55852 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48574 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=54 lolos5m=0 total_lolos=225 total_ditolak=100784
+INFO:     127.0.0.1:58450 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=29 lolos5m=0 total_lolos=1183 total_ditolak=375030
+INFO:     127.0.0.1:36410 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=225 lolos5m=0 total_lolos=474 total_ditolak=225042
+INFO:     127.0.0.1:40926 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40926 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38814 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=5 lolos5m=0 total_lolos=225 total_ditolak=100789
+INFO:     127.0.0.1:48948 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=29 lolos5m=0 total_lolos=1183 total_ditolak=375030
+INFO:     127.0.0.1:59780 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=253 lolos5m=0 total_lolos=474 total_ditolak=225070
+INFO:     127.0.0.1:53240 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53240 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46598 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=13 lolos5m=0 total_lolos=225 total_ditolak=100797
+INFO:     127.0.0.1:48878 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375041
+INFO:     127.0.0.1:50932 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #2] raw5m=10 lolos5m=0 total_lolos=474 total_ditolak=225138
+INFO:     127.0.0.1:38734 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38734 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59088 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=18 lolos5m=0 total_lolos=225 total_ditolak=100802
+INFO:     127.0.0.1:38154 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375041
+[DETECT][Cam #2] raw5m=88 lolos5m=0 total_lolos=474 total_ditolak=225216
+INFO:     127.0.0.1:35344 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40732 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40732 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43250 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=56 lolos5m=0 total_lolos=225 total_ditolak=100840
+INFO:     127.0.0.1:55424 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=23 lolos5m=0 total_lolos=1183 total_ditolak=375064
+[DETECT][Cam #2] raw5m=152 lolos5m=0 total_lolos=474 total_ditolak=225280
+INFO:     127.0.0.1:41732 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36530 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36530 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53048 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=141 lolos5m=0 total_lolos=225 total_ditolak=100925
+INFO:     127.0.0.1:41612 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=60 lolos5m=0 total_lolos=1183 total_ditolak=375101
+[DETECT][Cam #2] raw5m=164 lolos5m=0 total_lolos=474 total_ditolak=225292
+INFO:     127.0.0.1:44360 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34464 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34464 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37986 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=155 lolos5m=0 total_lolos=225 total_ditolak=101099
+INFO:     127.0.0.1:53528 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=97 lolos5m=0 total_lolos=1183 total_ditolak=375138
+[DETECT][Cam #2] raw5m=305 lolos5m=0 total_lolos=474 total_ditolak=225433
+INFO:     127.0.0.1:50276 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33402 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33402 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33428 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=303 lolos5m=0 total_lolos=225 total_ditolak=101247
+INFO:     127.0.0.1:40710 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375253
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=225436
+INFO:     127.0.0.1:51054 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52136 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52136 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb805b33580] cabac decode of qscale diff failed at 105 24
+[h264 @ 0x7bb805b33580] error while decoding MB 105 24, bytestream 19791
+INFO:     127.0.0.1:59188 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb805fe6480] left block unavailable for requested intra mode
+[h264 @ 0x7bb805fe6480] error while decoding MB 0 5, bytestream 18665
+[DETECT][Cam #3] raw5m=329 lolos5m=0 total_lolos=225 total_ditolak=101273
+INFO:     127.0.0.1:58764 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb807f03fc0] left block unavailable for requested intra4x4 mode -1
+[h264 @ 0x7bb807f03fc0] error while decoding MB 0 31, bytestream 23288
+[h264 @ 0x7bb804eef140] error while decoding MB 109 46, bytestream -20
+[DETECT][Cam #1] raw5m=3 lolos5m=0 total_lolos=1183 total_ditolak=375256
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=225436
+INFO:     127.0.0.1:40592 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48618 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=359 lolos5m=0 total_lolos=225 total_ditolak=101303
+INFO:     127.0.0.1:47272 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=49 lolos5m=0 total_lolos=1183 total_ditolak=375302
+[DETECT][Cam #2] raw5m=178 lolos5m=0 total_lolos=474 total_ditolak=225614
+INFO:     127.0.0.1:38704 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32948 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32948 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50650 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=455 lolos5m=0 total_lolos=225 total_ditolak=101399
+INFO:     127.0.0.1:38316 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=57 lolos5m=0 total_lolos=1183 total_ditolak=375310
+[DETECT][Cam #2] raw5m=288 lolos5m=0 total_lolos=474 total_ditolak=225724
+INFO:     127.0.0.1:60186 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60426 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60426 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40200 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=11 lolos5m=0 total_lolos=225 total_ditolak=101410
+INFO:     127.0.0.1:53438 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=68 lolos5m=0 total_lolos=1183 total_ditolak=375321
+[DETECT][Cam #2] raw5m=312 lolos5m=0 total_lolos=474 total_ditolak=225748
+INFO:     127.0.0.1:59636 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57140 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57140 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47224 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=35 lolos5m=0 total_lolos=225 total_ditolak=101434
+INFO:     127.0.0.1:35232 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375359
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=225766
+INFO:     127.0.0.1:53584 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47294 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47294 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58942 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=42 lolos5m=0 total_lolos=225 total_ditolak=101441
+INFO:     127.0.0.1:34062 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375359
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=225766
+INFO:     127.0.0.1:57314 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57192 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57192 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39798 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=45 lolos5m=0 total_lolos=225 total_ditolak=101444
+INFO:     127.0.0.1:40564 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=15 lolos5m=0 total_lolos=1183 total_ditolak=375374
+[DETECT][Cam #2] raw5m=92 lolos5m=0 total_lolos=474 total_ditolak=225858
+INFO:     127.0.0.1:44664 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35128 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35128 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54152 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=75 lolos5m=0 total_lolos=225 total_ditolak=101474
+INFO:     127.0.0.1:54918 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=15 lolos5m=0 total_lolos=1183 total_ditolak=375374
+[DETECT][Cam #2] raw5m=93 lolos5m=0 total_lolos=474 total_ditolak=225859
+INFO:     127.0.0.1:49040 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48752 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48752 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32924 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=12 lolos5m=0 total_lolos=225 total_ditolak=101486
+INFO:     127.0.0.1:41110 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=42 lolos5m=0 total_lolos=1183 total_ditolak=375401
+[DETECT][Cam #2] raw5m=93 lolos5m=0 total_lolos=474 total_ditolak=225859
+INFO:     127.0.0.1:50768 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38742 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38742 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38470 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=12 lolos5m=0 total_lolos=225 total_ditolak=101486
+INFO:     127.0.0.1:41680 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375401
+[DETECT][Cam #2] raw5m=15 lolos5m=0 total_lolos=474 total_ditolak=225941
+INFO:     127.0.0.1:46380 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37334 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37872 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=39 lolos5m=0 total_lolos=225 total_ditolak=101513
+INFO:     127.0.0.1:60584 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=37 lolos5m=0 total_lolos=1183 total_ditolak=375438
+[DETECT][Cam #2] raw5m=145 lolos5m=0 total_lolos=474 total_ditolak=226071
+INFO:     127.0.0.1:34280 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54280 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54280 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=154 lolos5m=0 total_lolos=225 total_ditolak=101628
+INFO:     127.0.0.1:34102 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51570 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=233 lolos5m=0 total_lolos=1183 total_ditolak=375634
+[DETECT][Cam #2] raw5m=153 lolos5m=0 total_lolos=474 total_ditolak=226079
+INFO:     127.0.0.1:50052 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47024 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47024 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=212 lolos5m=0 total_lolos=225 total_ditolak=101686
+INFO:     127.0.0.1:40196 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58078 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=233 lolos5m=0 total_lolos=1183 total_ditolak=375634
+[DETECT][Cam #2] raw5m=191 lolos5m=0 total_lolos=474 total_ditolak=226117
+INFO:     127.0.0.1:57330 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49728 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49728 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=7 lolos5m=0 total_lolos=225 total_ditolak=101693
+INFO:     127.0.0.1:46446 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45344 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=233 lolos5m=0 total_lolos=1183 total_ditolak=375634
+[DETECT][Cam #2] raw5m=191 lolos5m=0 total_lolos=474 total_ditolak=226117
+INFO:     127.0.0.1:42604 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55706 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55706 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=133 lolos5m=0 total_lolos=225 total_ditolak=101819
+INFO:     127.0.0.1:38420 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40602 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=31 lolos5m=0 total_lolos=1183 total_ditolak=375786
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=226122
+INFO:     127.0.0.1:44816 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50408 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=173 lolos5m=0 total_lolos=225 total_ditolak=101859
+INFO:     127.0.0.1:50696 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53166 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=65 lolos5m=0 total_lolos=1183 total_ditolak=375820
+[DETECT][Cam #2] raw5m=58 lolos5m=0 total_lolos=474 total_ditolak=226180
+INFO:     127.0.0.1:47972 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38350 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38350 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=228 lolos5m=0 total_lolos=225 total_ditolak=101914
+INFO:     127.0.0.1:33120 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56642 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=85 lolos5m=0 total_lolos=1183 total_ditolak=375840
+[DETECT][Cam #2] raw5m=177 lolos5m=0 total_lolos=474 total_ditolak=226299
+INFO:     127.0.0.1:36394 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34978 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34978 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=289 lolos5m=0 total_lolos=225 total_ditolak=101975
+INFO:     127.0.0.1:53754 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36154 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=153 lolos5m=0 total_lolos=1183 total_ditolak=375908
+[DETECT][Cam #2] raw5m=207 lolos5m=0 total_lolos=474 total_ditolak=226329
+INFO:     127.0.0.1:36558 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36558 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36558 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=43 lolos5m=0 total_lolos=225 total_ditolak=102021
+INFO:     127.0.0.1:47470 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47484 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=154 lolos5m=0 total_lolos=1183 total_ditolak=375909
+[DETECT][Cam #2] raw5m=382 lolos5m=0 total_lolos=474 total_ditolak=226504
+INFO:     127.0.0.1:52686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52686 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=97 lolos5m=0 total_lolos=225 total_ditolak=102075
+INFO:     127.0.0.1:55110 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55110 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=375926
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=226559
+INFO:     127.0.0.1:41264 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41264 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41264 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=103 lolos5m=0 total_lolos=225 total_ditolak=102081
+INFO:     127.0.0.1:44552 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44552 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=73 lolos5m=0 total_lolos=1183 total_ditolak=375999
+[DETECT][Cam #2] raw5m=44 lolos5m=0 total_lolos=474 total_ditolak=226603
+INFO:     127.0.0.1:58462 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58462 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58462 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=124 lolos5m=0 total_lolos=225 total_ditolak=102102
+INFO:     127.0.0.1:57360 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57360 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=197 lolos5m=0 total_lolos=1183 total_ditolak=376123
+[DETECT][Cam #2] raw5m=44 lolos5m=0 total_lolos=474 total_ditolak=226603
+INFO:     127.0.0.1:45038 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45038 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45038 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=124 lolos5m=0 total_lolos=225 total_ditolak=102102
+INFO:     127.0.0.1:32946 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:32946 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=197 lolos5m=0 total_lolos=1183 total_ditolak=376123
+[DETECT][Cam #2] raw5m=61 lolos5m=0 total_lolos=474 total_ditolak=226620
+INFO:     127.0.0.1:38814 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38814 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38814 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=20 lolos5m=0 total_lolos=225 total_ditolak=102122
+INFO:     127.0.0.1:51914 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51914 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=200 lolos5m=0 total_lolos=1183 total_ditolak=376126
+[DETECT][Cam #2] raw5m=70 lolos5m=0 total_lolos=474 total_ditolak=226629
+INFO:     127.0.0.1:37790 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37790 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37790 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=44 lolos5m=0 total_lolos=225 total_ditolak=102146
+INFO:     127.0.0.1:54592 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54592 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=3 lolos5m=0 total_lolos=1183 total_ditolak=376169
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=226669
+INFO:     127.0.0.1:39744 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39744 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39744 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=64 lolos5m=0 total_lolos=225 total_ditolak=102166
+INFO:     127.0.0.1:53788 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53788 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=44 lolos5m=0 total_lolos=1183 total_ditolak=376210
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=226669
+INFO:     127.0.0.1:51018 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51018 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51018 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=78 lolos5m=0 total_lolos=225 total_ditolak=102180
+INFO:     127.0.0.1:54322 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54322 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=116 lolos5m=0 total_lolos=1183 total_ditolak=376282
+[DETECT][Cam #2] raw5m=77 lolos5m=0 total_lolos=474 total_ditolak=226746
+INFO:     127.0.0.1:37042 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37042 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37042 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=121 lolos5m=0 total_lolos=225 total_ditolak=102223
+INFO:     127.0.0.1:50076 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50076 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=276 lolos5m=0 total_lolos=1183 total_ditolak=376442
+[DETECT][Cam #2] raw5m=264 lolos5m=0 total_lolos=474 total_ditolak=226933
+INFO:     127.0.0.1:38752 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38752 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38752 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=7 lolos5m=0 total_lolos=225 total_ditolak=102233
+INFO:     127.0.0.1:36130 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36130 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=303 lolos5m=0 total_lolos=1183 total_ditolak=376469
+[DETECT][Cam #2] raw5m=264 lolos5m=0 total_lolos=474 total_ditolak=226933
+INFO:     127.0.0.1:57782 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57782 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57782 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=35 lolos5m=0 total_lolos=225 total_ditolak=102261
+INFO:     127.0.0.1:58652 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58652 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=0 lolos5m=0 total_lolos=1183 total_ditolak=376533
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=226967
+INFO:     127.0.0.1:41096 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41096 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41096 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=91 lolos5m=0 total_lolos=225 total_ditolak=102317
+INFO:     127.0.0.1:40524 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40524 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=5 lolos5m=0 total_lolos=1183 total_ditolak=376538
+[DETECT][Cam #2] raw5m=3 lolos5m=0 total_lolos=474 total_ditolak=226970
+INFO:     127.0.0.1:60686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60686 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60686 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=91 lolos5m=0 total_lolos=225 total_ditolak=102317
+INFO:     127.0.0.1:55576 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55576 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=5 lolos5m=0 total_lolos=1183 total_ditolak=376538
+[DETECT][Cam #2] raw5m=3 lolos5m=0 total_lolos=474 total_ditolak=226970
+[h264 @ 0x7bb801daa980] cabac decode of qscale diff failed at 80 1
+[h264 @ 0x7bb801daa980] error while decoding MB 80 1, bytestream 11527
+[h264 @ 0x7bb8005b7480] left block unavailable for requested intra mode
+[h264 @ 0x7bb8005b7480] error while decoding MB 0 63, bytestream 12637
+INFO:     127.0.0.1:50372 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50372 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50372 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=91 lolos5m=0 total_lolos=225 total_ditolak=102317
+INFO:     127.0.0.1:39224 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39224 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=5 lolos5m=0 total_lolos=1183 total_ditolak=376538
+[DETECT][Cam #2] raw5m=47 lolos5m=0 total_lolos=474 total_ditolak=227014
+INFO:     127.0.0.1:53336 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53336 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53336 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=10 lolos5m=0 total_lolos=225 total_ditolak=102327
+INFO:     127.0.0.1:56946 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56946 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=63 lolos5m=0 total_lolos=1183 total_ditolak=376596
+[DETECT][Cam #2] raw5m=60 lolos5m=0 total_lolos=474 total_ditolak=227027
+INFO:     127.0.0.1:38426 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38426 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38426 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=82 lolos5m=0 total_lolos=225 total_ditolak=102399
+INFO:     127.0.0.1:55396 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55396 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=15 lolos5m=0 total_lolos=1183 total_ditolak=376624
+[DETECT][Cam #2] raw5m=0 lolos5m=0 total_lolos=474 total_ditolak=227030
+INFO:     127.0.0.1:59610 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59610 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59610 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=103 lolos5m=0 total_lolos=225 total_ditolak=102420
+INFO:     127.0.0.1:47446 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:47446 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=15 lolos5m=0 total_lolos=1183 total_ditolak=376624
+[DETECT][Cam #2] raw5m=2 lolos5m=0 total_lolos=474 total_ditolak=227032
+INFO:     127.0.0.1:35528 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35528 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35528 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=103 lolos5m=0 total_lolos=225 total_ditolak=102420
+INFO:     127.0.0.1:49748 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49748 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=15 lolos5m=0 total_lolos=1183 total_ditolak=376624
+[DETECT][Cam #2] raw5m=130 lolos5m=0 total_lolos=474 total_ditolak=227160
+INFO:     127.0.0.1:34020 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34020 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34020 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=116 lolos5m=0 total_lolos=225 total_ditolak=102433
+INFO:     127.0.0.1:55030 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55030 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #1] raw5m=53 lolos5m=0 total_lolos=1183 total_ditolak=376662
+[DETECT][Cam #2] raw5m=161 lolos5m=0 total_lolos=474 total_ditolak=227191
+INFO:     127.0.0.1:40642 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40642 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40652 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50058 - "GET /health HTTP/1.1" 200 OK
+[DETECT][Cam #3] raw5m=0 lolos5m=0 total_lolos=225 total_ditolak=102433
+INFO:     127.0.0.1:55710 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59206 - "GET /health HTTP/1.1" 200 OK
+[h264 @ 0x7bb800276a00] cabac decode of qscale diff failed at 74 22
+[h264 @ 0x7bb800276a00] error while decoding MB 74 22, bytestream 13459
+2026-11-27 12:41:53,635 WARN received SIGTERM indicating exit request
+2026-11-27 12:41:53,652 INFO waiting for node-web, python-face-service, python-wa-gateway to die
+[2026-11-27 12:41:53 +0700] [14] [INFO] Handling signal: term
+[2026-11-27 12:41:54 +0700] [21] [INFO] Worker exiting (pid: 21)
+[2026-11-27 12:41:55 +0700] [14] [INFO] Shutting down: Master
+2026-11-27 12:41:55,068 INFO reaped unknown pid 2193 (exit status 0)
+2026-11-27 12:41:55,069 INFO reaped unknown pid 2090 (exit status 0)
+2026-11-27 12:41:55,069 INFO reaped unknown pid 2091 (exit status 0)
+2026-11-27 12:41:55,069 INFO reaped unknown pid 2246 (exit status 0)
+2026-11-27 12:41:55,069 INFO reaped unknown pid 2283 (exit status 0)
+2026-11-27 12:41:55,069 INFO reaped unknown pid 2187 (exit status 0)
+2026-11-27 12:41:55,070 INFO reaped unknown pid 2013 (exit status 0)
+2026-11-27 12:41:55,070 INFO reaped unknown pid 2014 (exit status 0)
+2026-11-27 12:41:55,070 INFO reaped unknown pid 2068 (exit status 0)
+2026-11-27 12:41:55,070 INFO reaped unknown pid 2092 (exit status 0)
+2026-11-27 12:41:55,070 INFO reaped unknown pid 2110 (exit status 0)
+2026-11-27 12:41:55,071 INFO reaped unknown pid 2066 (exit status 0)
+2026-11-27 12:41:55,071 INFO reaped unknown pid 2044 (exit status 0)
+2026-11-27 12:41:55,071 INFO reaped unknown pid 2045 (exit status 0)
+2026-11-27 12:41:55,071 INFO reaped unknown pid 2201 (exit status 0)
+2026-11-27 12:41:55,072 INFO reaped unknown pid 2247 (exit status 0)
+2026-11-27 12:41:55,072 INFO reaped unknown pid 2284 (exit status 0)
+2026-11-27 12:41:55,072 INFO reaped unknown pid 2198 (exit status 0)
+2026-11-27 12:41:55,072 INFO reaped unknown pid 1079 (exit status 0)
+2026-11-27 12:41:55,072 INFO reaped unknown pid 1951 (exit status 0)
+2026-11-27 12:41:55,073 INFO reaped unknown pid 1071 (exit status 0)
+2026-11-27 12:41:55,073 INFO reaped unknown pid 1950 (exit status 0)
+2026-11-27 12:41:55,073 INFO reaped unknown pid 1078 (exit status 0)
+2026-11-27 12:41:55,073 INFO reaped unknown pid 2015 (exit status 0)
+2026-11-27 12:41:55,194 INFO stopped: python-wa-gateway (exit status 0)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [13]
+2026-11-27 12:41:55,586 WARN stopped: python-face-service (terminated by SIGTERM)
+2026-11-27 12:41:55,586 INFO reaped unknown pid 2002 (exit status 0)
+2026-11-27 12:41:55,586 INFO reaped unknown pid 2004 (exit status 0)
+2026-11-27 12:41:55,586 INFO reaped unknown pid 2008 (exit status 0)
+2026-11-27 12:41:55,586 INFO reaped unknown pid 2010 (exit status 0)
+2026-11-27 12:41:55,587 INFO reaped unknown pid 2038 (exit status 0)
+2026-11-27 12:41:55,587 INFO reaped unknown pid 2040 (exit status 0)
+2026-11-27 12:41:55,587 INFO reaped unknown pid 2421 (exit status 0)
+2026-11-27 12:41:55,587 INFO reaped unknown pid 2412 (exit status 0)
+2026-11-27 12:41:56,589 INFO reaped unknown pid 2401 (exit status 0)
+2026-11-27 12:41:57,591 INFO waiting for node-web to die
+2026-11-27 12:41:59,010 INFO stopped: node-web (exit status 0)
