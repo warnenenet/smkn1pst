@@ -172,7 +172,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </section>
       )}
 
-      {workerStatus && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
+      {workerStatus && workerStatus.engine !== 'FACE_ENGINE_RUST' && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
         <section
           role="alert"
           className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3"
@@ -181,19 +181,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
               <div className="font-semibold">
-                Engine AI Wajah Docker (InsightFace buffalo_l 512-D) belum aktif
+                Engine AI Wajah Rust (SCRFD + ArcFace 512-D) belum aktif
               </div>
               <p className="text-amber-900 mt-0.5">
-                Deteksi RTSP, pendaftaran foto, dan pencocokan wajah membutuhkan container{' '}
-                <span className="font-mono font-semibold">docker-compose.face.yml</span>. Jalankan{' '}
-                <span className="font-mono font-semibold">npm run setup:school</span> di server agar container aktif otomatis.
+                Deteksi RTSP, pendaftaran foto, dan pencocokan wajah membutuhkan layanan{' '}
+                <span className="font-mono font-semibold">face-engine</span> di dalam container Docker all-in-one.
               </p>
             </div>
           </div>
         </section>
       )}
 
-      {workerStatus?.engine === 'INSIGHTFACE_PYTHON' && workerStatus.face_backend_error && (
+      {(workerStatus?.engine === 'FACE_ENGINE_RUST' || workerStatus?.engine === 'INSIGHTFACE_PYTHON') && workerStatus.face_backend_error && (
         <section
           role="alert"
           className="bg-red-50 border border-red-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3"

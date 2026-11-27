@@ -263,7 +263,7 @@ async function callFaceServiceWithStatus<T>(endpoint: string, body?: unknown): P
       reachable: false,
       ok: false,
       status: 0,
-      error: err instanceof Error ? err.message : 'Python face service tidak terjangkau',
+      error: err instanceof Error ? err.message : 'Rust face-engine tidak terjangkau',
     };
   } finally {
     clearTimeout(timer);
@@ -1237,13 +1237,20 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
 
   let qScore: number;
   let emb: number[];
+  let pipelineVersion: string | null = null;
+  let modelSha256: string | null = null;
   if (photoDataUrl) {
-    const pyCall = await callFaceServiceWithStatus<{ quality_score: number; embedding: number[] }>('/enroll', {
+    const pyCall = await callFaceServiceWithStatus<{
+      quality_score: number;
+      embedding: number[];
+      pipeline_version?: string;
+      model_sha256?: string;
+    }>('/enroll', {
       photoDataUrl,
     });
     if (!pyCall.reachable) {
       res.status(503).json({
-        error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
+        error: 'Engine AI Wajah Rust (face-engine) sedang offline. Periksa container Docker all-in-one.',
       });
       return;
     }
@@ -1253,6 +1260,8 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
     }
     qScore = pyCall.data.quality_score;
     emb = pyCall.data.embedding;
+    pipelineVersion = pyCall.data.pipeline_version ?? null;
+    modelSha256 = pyCall.data.model_sha256 ?? null;
   } else {
     if (Number(confidence) < db.settings.threshold_confidence) {
       res.status(422).json({ error: `Confidence ${confidence} < threshold ${db.settings.threshold_confidence}. Wajah diabaikan.` });
@@ -1269,6 +1278,8 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
   st.embedding = emb;
   st.embedding_quality_score = qScore;
   st.embedding_updated_at = nowStr;
+  st.pipeline_version = pipelineVersion;
+  st.model_sha256 = modelSha256;
   if (photoDataUrl) {
     const compactPath = persistCompactPhotoDataUrl(String(photoDataUrl), `stu_${st.id}_profile`);
     if (compactPath) {
@@ -1290,6 +1301,8 @@ app.post('/api/students/:id/enroll', requireAuth(['ADMIN', 'BK']), async (req, r
     approved_by: 1,
     approved_at: nowStr,
     is_canonical: true,
+    pipeline_version: pipelineVersion,
+    model_sha256: modelSha256,
   });
 
   saveDb(db);
@@ -1312,15 +1325,25 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
       continue;
     }
 
-    let aiRes: { quality_score: number; embedding: number[] } | null = null;
+    let aiRes: {
+      quality_score: number;
+      embedding: number[];
+      pipeline_version?: string;
+      model_sha256?: string;
+    } | null = null;
     if (item.photoDataUrl) {
-      const pyCall = await callFaceServiceWithStatus<{ quality_score: number; embedding: number[] }>('/enroll', {
+      const pyCall = await callFaceServiceWithStatus<{
+        quality_score: number;
+        embedding: number[];
+        pipeline_version?: string;
+        model_sha256?: string;
+      }>('/enroll', {
         photoDataUrl: item.photoDataUrl,
       });
       if (!pyCall.reachable) {
         failed.push({
           file: item.filename,
-          error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
+          error: 'Engine AI Wajah Rust (face-engine) sedang offline. Periksa container Docker all-in-one.',
         });
         continue;
       }
@@ -1337,6 +1360,10 @@ app.post('/api/students/enroll-batch', requireAuth(['ADMIN', 'BK']), async (req,
     st.embedding = aiRes?.embedding ?? deterministicVecFromSeed(`${st.nisn}:${item.filename}`);
     st.embedding_quality_score = qScore;
     st.embedding_updated_at = nowStr;
+    if (aiRes) {
+      st.pipeline_version = aiRes.pipeline_version ?? null;
+      st.model_sha256 = aiRes.model_sha256 ?? null;
+    }
     if (item.photoDataUrl) {
       const compactPath = persistCompactPhotoDataUrl(String(item.photoDataUrl), `stu_${st.id}_profile`);
       if (compactPath) {
@@ -1371,7 +1398,7 @@ app.post('/api/compare-face', requireAuth(), async (req, res) => {
     }>('/compare', { photo1DataUrl, photo2DataUrl });
     if (!pyCompare.reachable) {
       res.status(503).json({
-        error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml.',
+        error: 'Engine AI Wajah Rust (face-engine) sedang offline. Periksa container Docker all-in-one.',
       });
       return;
     }
@@ -3103,11 +3130,11 @@ function readLocalPhotoAsDataUrl(relOrData: string | null | undefined): string |
 
 app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, res) => {
   const db = loadDb();
-  const faceHealth = await callFaceService<{ ok?: boolean }>('/health');
-  const pythonOnline = Boolean(faceHealth?.ok);
-  if (!pythonOnline) {
+  const engineHealth = await callFaceService<{ ok?: boolean }>('/health');
+  const engineOnline = Boolean(engineHealth?.ok);
+  if (!engineOnline) {
     res.status(503).json({
-      error: 'Engine AI Wajah Docker (InsightFace) sedang offline. Jalankan "npm run setup:school" atau aktifkan docker-compose.face.yml sebelum menyinkronkan ke 512-D.',
+      error: 'Engine AI Wajah (face-engine) sedang offline. Pastikan container All-in-One Docker aktif sebelum menyinkronkan ke 512-D.',
     });
     return;
   }
@@ -3120,7 +3147,12 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
   const errors: string[] = [];
 
   const extractWithActiveEngine = async (dataUrl: string) =>
-    callFaceService<{ quality_score: number; embedding: number[] }>('/enroll', { photoDataUrl: dataUrl });
+    callFaceService<{
+      quality_score: number;
+      embedding: number[];
+      pipeline_version?: string;
+      model_sha256?: string;
+    }>('/enroll', { photoDataUrl: dataUrl });
 
   for (const st of db.students) {
     if (st.status === 'LULUS') continue;
@@ -3137,6 +3169,8 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
         st.embedding = extracted.embedding;
         st.embedding_quality_score = Math.max(st.embedding_quality_score || 0, extracted.quality_score);
         st.embedding_updated_at = nowStr;
+        st.pipeline_version = extracted.pipeline_version ?? null;
+        st.model_sha256 = extracted.model_sha256 ?? null;
         migratedStudents += 1;
       } else {
         errors.push(`Siswa #${st.id} (${st.nama}): wajah tidak terbaca pada foto_ref`);
@@ -3177,7 +3211,7 @@ app.post('/api/system/migrate-embeddings', requireAuth(['ADMIN']), async (_req, 
 
   res.json({
     ok: true,
-    engine: 'INSIGHTFACE_PYTHON',
+    engine: 'FACE_ENGINE_RUST',
     expected_dims: expectedDims,
     migrated_students: migratedStudents,
     migrated_clusters: migratedClusters,

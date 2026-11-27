@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 # ==============================================================================
-# Setup 100% All-in-One Docker (Node.js + Python Face AI + Rust + WA Gateway + Piper)
-# Seluruh proses berjalan di dalam 1 container Docker dengan batas CPU/RAM/Thread.
+# Setup 100% All-in-One Docker (Rust face-engine + Node.js + Baileys WA + Piper)
+# Seluruh proses berjalan di dalam 1 container Docker dengan s6-overlay PID 1.
 # Juga menyediakan --cleanup-host untuk membersihkan proses lama di host VPS
 # (mis. /opt/mediamtx, ffmpeg testsrc, /var/www/face_engine/face_engine.py).
 # ==============================================================================

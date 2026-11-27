@@ -130,9 +130,9 @@ async function callWaGateway<T = Record<string, unknown>>(
     const rawMsg = err instanceof Error ? err.message : '';
     const msg =
       err instanceof Error && err.name === 'AbortError'
-        ? 'Timeout menghubungi layanan Python WA Gateway.'
+        ? 'Timeout menghubungi layanan WA Gateway (Baileys).'
         : isTransientGatewayFetchError(rawMsg) || !rawMsg
-          ? 'Layanan Python WA Gateway (127.0.0.1:8003) belum aktif.'
+          ? 'Layanan WA Gateway Baileys (127.0.0.1:8003) belum aktif.'
           : rawMsg;
     return {
       status: 0,
@@ -201,61 +201,45 @@ export async function ensureWaGatewayRunning(): Promise<void> {
     return;
   }
 
-  const serviceDir = path.join(APP_ROOT, 'services', 'wa-gateway');
-  if (!fs.existsSync(path.join(serviceDir, 'app.py'))) {
-    return;
-  }
-
-  const venvGunicorn = path.join(serviceDir, '.venv', 'bin', 'gunicorn');
-  const venvPython = path.join(serviceDir, '.venv', 'bin', 'python3');
-  const useGunicorn = fs.existsSync(venvGunicorn);
-  const pythonBin = fs.existsSync(venvPython) ? venvPython : null;
-
-  clearStaleFetchErrorsInDb();
-  if (!useGunicorn && !pythonBin) {
-    console.log(
-      '[WA-Gateway] Virtualenv Python belum terpasang (services/wa-gateway/.venv); mengaktifkan engine WhatsApp Web Node.js bawaan.'
-    );
+  const nodeGatewayEntry = path.join(APP_ROOT, 'services', 'wa-gateway-node', 'server.mjs');
+  if (!fs.existsSync(nodeGatewayEntry)) {
     void bootstrapSavedNodeSessions();
     return;
   }
+
+  clearStaleFetchErrorsInDb();
 
   const port = DEFAULT_WA_GATEWAY_PORT;
   getOrCreateInternalToken({ dataDir: DATA_DIR });
 
   const waStorageDir = path.join(DATA_DIR, 'wa_gateway');
-  fs.mkdirSync(path.join(waStorageDir, 'wa_sessions'), { recursive: true });
-  fs.mkdirSync(path.join(waStorageDir, 'wa_qr'), { recursive: true });
+  fs.mkdirSync(path.join(waStorageDir, 'baileys_auth'), { recursive: true });
   const logFile = path.join(waStorageDir, 'process.log');
   capLogFileSize(logFile, 2 * 1024 * 1024);
   const outFd = fs.openSync(logFile, 'a');
 
-  const cmd = useGunicorn ? venvGunicorn : pythonBin!;
-  const args = useGunicorn
-    ? ['--bind', `127.0.0.1:${port}`, '--workers', '1', '--threads', '4', '--timeout', '120', 'app:app']
-    : ['app.py'];
-
   gatewayStopping = false;
-  const child = spawn(cmd, args, {
-    cwd: serviceDir,
+  const child = spawn(process.execPath, [nodeGatewayEntry], {
+    cwd: APP_ROOT,
     stdio: ['ignore', outFd, outFd],
     env: {
       ...process.env,
-      PYTHONUNBUFFERED: '1',
+      WA_GATEWAY_PORT: String(port),
+      DATA_DIR,
       WA_STORAGE_DIR: waStorageDir,
     },
   });
   fs.closeSync(outFd);
   gatewayChild = child;
 
-  console.log(`[WA-Gateway] Menjalankan Python WA Gateway pada http://127.0.0.1:${port} (storage=${waStorageDir})`);
+  console.log(`[WA-Gateway] Menjalankan Baileys WA Gateway pada http://127.0.0.1:${port} (storage=${waStorageDir})`);
 
   child.once('exit', (code, signal) => {
     if (gatewayChild === child) {
       gatewayChild = null;
     }
     if (!gatewayStopping && process.env.WA_GATEWAY_AUTO_SPAWN !== '0') {
-      console.warn(`[WA-Gateway] Proses Python berhenti (code=${code ?? '-'}, signal=${signal ?? '-'}); coba hidupkan ulang dalam 8 dtk...`);
+      console.warn(`[WA-Gateway] Proses Baileys berhenti (code=${code ?? '-'}, signal=${signal ?? '-'}); coba hidupkan ulang dalam 8 dtk...`);
       if (gatewayRestartTimer) clearTimeout(gatewayRestartTimer);
       gatewayRestartTimer = setTimeout(() => {
         gatewayRestartTimer = null;

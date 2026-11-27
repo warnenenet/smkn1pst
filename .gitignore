@@ -9,4 +9,13 @@ coverage/
 data/
 storage/
 .playwright-cli/
+target/
+**/target/
+verify_report.md
+verify_report.json
+verify_reports/
+__pycache__/
+*.pyc
+models/
+.aistudio/
 

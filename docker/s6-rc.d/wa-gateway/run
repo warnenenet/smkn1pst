@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+if [ -f /app/storage/secrets/runtime.env ]; then
+  set -a
+  . /app/storage/secrets/runtime.env
+  set +a
+fi
+exec node /app/services/wa-gateway-node/server.mjs

@@ -427,9 +427,13 @@ if [[ -n "$TARGET_OWNER" ]]; then
   fi
 fi
 
-# Setup Docker InsightFace Face AI Service (SCRFD + ArcFace 512-D + Rust accel)
+# Setup Docker Face AI Service (All-in-One Pure Rust face-engine atau legacy)
 FACE_AI_READY="TIDAK_AKTIF"
-if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1; then
+if [[ -f "$APP_DIR/docker-compose.yml" ]] && command -v docker >/dev/null 2>&1; then
+  echo "[setup-school] Terdeteksi konfigurasi Docker All-in-One (Rust face-engine + Node.js + Baileys WA)."
+  echo "[setup-school] Untuk menyalakan 100% di dalam Docker All-in-One, jalankan: npm run setup:docker"
+  FACE_AI_READY="SIAP_DIJALANKAN (jalankan: npm run setup:docker)"
+elif [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2>&1; then
   if ! docker info >/dev/null 2>&1 && [[ "$(id -u)" -eq 0 ]]; then
     systemctl start docker >/dev/null 2>&1 || service docker start >/dev/null 2>&1 || true
     sleep 2
@@ -446,31 +450,15 @@ if [[ -f "$APP_DIR/docker-compose.face.yml" ]] && command -v docker >/dev/null 2
     echo "[setup-school] PERINGATAN: Docker ditemukan tetapi plugin 'docker compose' belum terpasang."
   elif ! docker info >/dev/null 2>&1; then
     FACE_AI_READY="BELUM_AKTIF (Docker daemon mati atau butuh akses root/grup docker)"
-    echo "[setup-school] PERINGATAN: Docker daemon tidak dapat diakses saat ini (jalankan setup sebagai root/sudo atau jalankan: sudo systemctl start docker)."
+    echo "[setup-school] PERINGATAN: Docker daemon tidak dapat diakses saat ini."
   else
-    echo "[setup-school] Membangun & menyalakan Docker InsightFace Face AI (port ${CHOSEN_FACE_PORT})..."
+    echo "[setup-school] Membangun & menyalakan Docker Face AI..."
     if $COMPOSE_CMD -f "$APP_DIR/docker-compose.face.yml" up -d --build; then
-      FACE_HEALTH_OK=0
-      for _ in $(seq 1 30); do
-        if curl -sf "http://127.0.0.1:${CHOSEN_FACE_PORT}/health" >/dev/null 2>&1; then
-          FACE_HEALTH_OK=1
-          break
-        fi
-        sleep 2
-      done
-      if [[ "$FACE_HEALTH_OK" -eq 1 ]]; then
-        FACE_AI_READY="SIAP (Docker InsightFace port ${CHOSEN_FACE_PORT})"
-      else
-        FACE_AI_READY="SEDANG_STARTUP (cek: docker compose -f docker-compose.face.yml logs -f)"
-      fi
+      FACE_AI_READY="SIAP (Docker port ${CHOSEN_FACE_PORT})"
     else
-      FACE_AI_READY="GAGAL_BUILD (cek: docker compose -f docker-compose.face.yml up -d --build)"
-      echo "[setup-school] PERINGATAN: Gagal build/start container Docker InsightFace."
+      FACE_AI_READY="GAGAL_BUILD"
     fi
   fi
-else
-  FACE_AI_READY="DOCKER_BELUM_TERPASANG (install Docker lalu jalankan ulang npm run setup:school)"
-  echo "[setup-school] PERINGATAN: Docker belum terpasang. Install Docker terlebih dahulu agar Face AI InsightFace 512-D aktif otomatis."
 fi
 
 DOMAIN_LABEL="${DOMAIN:-domain-sekolah-anda.sch.id}"

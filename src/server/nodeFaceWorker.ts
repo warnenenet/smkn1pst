@@ -155,7 +155,7 @@ export function getAppVersion(): string {
 
 export function getNodeWorkerStatus(db: AppDatabase): {
   app_version: string;
-  engine: 'INSIGHTFACE_PYTHON' | 'IDLE';
+  engine: 'FACE_ENGINE_RUST' | 'INSIGHTFACE_PYTHON' | 'IDLE';
   node_env: string;
   timezone: string;
   server_time_wib: string;
@@ -170,7 +170,7 @@ export function getNodeWorkerStatus(db: AppDatabase): {
   face_backend_error: string | null;
   cameras: WorkerCameraStat[];
 } {
-  const engine: 'INSIGHTFACE_PYTHON' | 'IDLE' = pythonActive ? 'INSIGHTFACE_PYTHON' : 'IDLE';
+  const engine: 'FACE_ENGINE_RUST' | 'INSIGHTFACE_PYTHON' | 'IDLE' = pythonActive ? 'FACE_ENGINE_RUST' : 'IDLE';
   const indexedStudents = getCachedStudentFaceIndex(db.students).totalIndexed;
   const captureMaxWidth = normalizeCaptureMaxWidth(db.settings.capture_max_width);
   const captureJpegQuality = normalizeCaptureJpegQuality(db.settings.capture_jpeg_quality);

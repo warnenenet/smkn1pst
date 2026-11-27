@@ -1,0 +1,16 @@
+# Contoh override untuk uji coba side-by-side (staging) tanpa mengganggu container produksi.
+# Salin menjadi docker-compose.override.staging.yml lalu jalankan:
+#   docker compose -f docker-compose.yml -f docker-compose.override.staging.yml -p absensi-smk-staging up -d --build
+#
+# Sebelum menyalakan staging, salin database ke folder staging terpisah:
+#   mkdir -p ./staging-data ./staging-storage
+#   cp ./data/absensi.sqlite ./staging-data/absensi.sqlite
+
+services:
+  absensi-smk:
+    container_name: absensi-smk-staging
+    ports:
+      - "127.0.0.1:3081:80"
+    volumes:
+      - ./staging-data:/app/data
+      - ./staging-storage:/app/storage

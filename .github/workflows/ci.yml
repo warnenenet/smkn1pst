@@ -25,13 +25,16 @@ jobs:
         run: npm run lint
 
       - name: Run domain & server logic unit tests
-        run: npx tsx --test src/lib/attendanceEngine.test.ts src/lib/staticConfig.test.ts
+        run: npx tsx --test src/lib/*.test.ts
+
+      - name: Validate Baileys WA gateway syntax
+        run: node --check services/wa-gateway-node/server.mjs
 
       - name: Build production frontend bundle
         run: npm run build
 
-      - name: Check Python syntax
-        run: python3 -m py_compile services/face-service/tracker.py services/face-service/main.py
-
-      - name: Test Rust cosine matcher
-        run: cargo test --manifest-path services/rust-accel/Cargo.toml
+      - name: Install Rust dependencies & test face-engine
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            pkg-config libavcodec-dev libavformat-dev libavutil-dev libswscale-dev clang libclang-dev
+          cargo test --manifest-path services/face-engine/Cargo.toml

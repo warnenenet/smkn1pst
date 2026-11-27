@@ -57,6 +57,8 @@ export interface Student {
   foto_ref: string | null;
   wa_ortu: string;
   created_at: string;
+  pipeline_version?: string | null;
+  model_sha256?: string | null;
 }
 
 export interface Gate {
@@ -186,6 +188,8 @@ export interface FaceUpdateHistory {
   approved_by: number | null;
   approved_at: string | null;
   is_canonical: boolean;
+  pipeline_version?: string | null;
+  model_sha256?: string | null;
 }
 
 export interface FaceUpdateReview {
@@ -280,10 +284,12 @@ export interface SettingsMap {
   threshold_high_quality?: number;
   threshold_mid_quality?: number;
   min_face_size: number;
+  embed_min_face_px?: number;
   max_face_size?: number;
   blur_threshold?: number;
   max_yaw_deg?: number;
   max_pitch_deg?: number;
+  dedup_cooldown_sec?: number;
   debug_detection?: boolean;
   min_snapshot_quality: number;
   capture_max_width: number;
@@ -382,7 +388,7 @@ export interface DebugDetectionFileEntry {
 
 export interface WorkerStatusResponse {
   app_version?: string;
-  engine: 'INSIGHTFACE_PYTHON' | 'IDLE';
+  engine: 'FACE_ENGINE_RUST' | 'INSIGHTFACE_PYTHON' | 'IDLE';
   node_env: string;
   timezone: string;
   server_time_wib: string;

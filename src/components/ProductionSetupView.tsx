@@ -237,12 +237,11 @@ export const ProductionSetupView: React.FC<ProductionSetupViewProps> = ({
         </div>
       )}
 
-      {workerStatus && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
+      {workerStatus && workerStatus.engine !== 'FACE_ENGINE_RUST' && workerStatus.engine !== 'INSIGHTFACE_PYTHON' && (
         <div role="alert" className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-xs text-amber-950">
-          <div className="font-semibold">Engine AI Wajah Docker (InsightFace buffalo_l 512-D) Belum Aktif</div>
+          <div className="font-semibold">Engine AI Wajah Rust (SCRFD + ArcFace 512-D) Belum Aktif</div>
           <p className="mt-1">
-            Jalankan <span className="font-mono font-semibold">npm run setup:school</span> (atau{' '}
-            <span className="font-mono font-semibold">docker compose -f docker-compose.face.yml up -d --build</span>) agar worker RTSP &amp; enrollment 512-D aktif.
+            Pastikan layanan <span className="font-mono font-semibold">face-engine</span> berjalan di Docker all-in-one (<span className="font-mono font-semibold">docker compose up -d --build</span>) agar worker RTSP &amp; enrollment 512-D aktif.
           </p>
         </div>
       )}

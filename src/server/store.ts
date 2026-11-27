@@ -6,6 +6,7 @@ import zlib from 'zlib';
 import jpeg from 'jpeg-js';
 import { DatabaseSync } from 'node:sqlite';
 import { computeDropRatio, isCameraDropAlert } from '../lib/faceQualityGate.ts';
+import { decodeEmbeddingBlobLe, encodeEmbeddingBlobLe } from '../lib/faceInterop.ts';
 import type {
   AnonymousCluster,
   AppDatabase,
@@ -130,7 +131,7 @@ function resetPersistedTrackers(): void {
 }
 
 function studentSignature(s: Student): string {
-  return `${s.nis}|${s.nisn}|${s.nama}|${s.nickname}|${s.kelas_id}|${s.tanggal_lahir}|${s.status}|${getEmbeddingTag(s.embedding)}|${s.embedding_quality_score}|${s.embedding_updated_at ?? ''}|${s.foto_ref ?? ''}|${s.wa_ortu ?? ''}`;
+  return `${s.nis}|${s.nisn}|${s.nama}|${s.nickname}|${s.kelas_id}|${s.tanggal_lahir}|${s.status}|${getEmbeddingTag(s.embedding)}|${s.embedding_quality_score}|${s.embedding_updated_at ?? ''}|${s.foto_ref ?? ''}|${s.wa_ortu ?? ''}|${s.pipeline_version ?? ''}|${s.model_sha256 ?? ''}`;
 }
 
 function clusterSignature(c: AnonymousCluster): string {
@@ -139,7 +140,7 @@ function clusterSignature(c: AnonymousCluster): string {
 }
 
 function historySignature(h: FaceUpdateHistory): string {
-  return `${h.student_id}|${h.version}|${getEmbeddingTag(h.embedding)}|${h.quality_score}|${h.snapshot_path}|${h.approved_by ?? ''}|${h.approved_at ?? ''}|${h.is_canonical ? 1 : 0}`;
+  return `${h.student_id}|${h.version}|${getEmbeddingTag(h.embedding)}|${h.quality_score}|${h.snapshot_path}|${h.approved_by ?? ''}|${h.approved_at ?? ''}|${h.is_canonical ? 1 : 0}|${h.pipeline_version ?? ''}|${h.model_sha256 ?? ''}`;
 }
 
 function reviewSignature(r: FaceUpdateReview): string {
@@ -274,25 +275,11 @@ export function verifyPassword(password: string, storedHash: string | undefined)
 }
 
 function encodeEmbeddingBlob(vec: number[] | null | undefined): Uint8Array | null {
-  if (!Array.isArray(vec) || vec.length === 0) return null;
-  const f32 = new Float32Array(vec.length);
-  for (let i = 0; i < vec.length; i++) {
-    f32[i] = Number(vec[i]) || 0;
-  }
-  return new Uint8Array(f32.buffer, f32.byteOffset, f32.byteLength);
+  return encodeEmbeddingBlobLe(vec);
 }
 
 function decodeEmbeddingBlob(raw: unknown): number[] | null {
-  if (!raw || !(raw instanceof Uint8Array) || raw.byteLength < 4 || raw.byteLength % 4 !== 0) {
-    return null;
-  }
-  const buf = Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
-  const count = buf.byteLength / 4;
-  const out = new Array<number>(count);
-  for (let i = 0; i < count; i++) {
-    out[i] = Math.round(buf.readFloatLE(i * 4) * 100000) / 100000;
-  }
-  return out;
+  return decodeEmbeddingBlobLe(raw);
 }
 
 function getSqlite(): DatabaseSync {
@@ -308,6 +295,7 @@ function getSqlite(): DatabaseSync {
   if (!schemaInitialized) {
     sqliteDb.exec(`
       PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
       PRAGMA synchronous = NORMAL;
       PRAGMA wal_autocheckpoint = 200;
       PRAGMA journal_size_limit = 8388608;
@@ -595,6 +583,10 @@ function getSqlite(): DatabaseSync {
     ensureColumn('wa_accounts', 'label', "TEXT NOT NULL DEFAULT ''");
     ensureColumn('wa_accounts', 'gateway_account_id', 'INTEGER');
     ensureColumn('wa_accounts', 'last_error', 'TEXT');
+    ensureColumn('students', 'pipeline_version', 'TEXT');
+    ensureColumn('students', 'model_sha256', 'TEXT');
+    ensureColumn('face_update_history', 'pipeline_version', 'TEXT');
+    ensureColumn('face_update_history', 'model_sha256', 'TEXT');
     schemaInitialized = true;
   }
   return sqliteDb;
@@ -896,10 +888,12 @@ export function createInitialSeed(): AppDatabase {
       threshold_high_quality: 0.60,
       threshold_mid_quality: 0.75,
       min_face_size: 60,
+      embed_min_face_px: 80,
       max_face_size: 0,
       blur_threshold: 100,
       max_yaw_deg: 30,
-      max_pitch_deg: 25,
+      max_pitch_deg: 30,
+      dedup_cooldown_sec: 6,
       debug_detection: false,
       min_snapshot_quality: 0.70,
       capture_max_width: 1280,
@@ -1046,6 +1040,8 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     foto_ref: r.foto_ref ? String(r.foto_ref) : null,
     wa_ortu: String(r.wa_ortu ?? ''),
     created_at: String(r.created_at),
+    pipeline_version: r.pipeline_version ? String(r.pipeline_version) : null,
+    model_sha256: r.model_sha256 ? String(r.model_sha256) : null,
   }));
 
   const gates = (sqlite.prepare('SELECT * FROM gates ORDER BY id').all() as Array<Record<string, unknown>>).map((r) => ({
@@ -1194,6 +1190,8 @@ function readRelationalDb(sqlite: DatabaseSync): AppDatabase {
     approved_by: r.approved_by !== null && r.approved_by !== undefined ? Number(r.approved_by) : null,
     approved_at: r.approved_at ? String(r.approved_at) : null,
     is_canonical: Boolean(r.is_canonical),
+    pipeline_version: r.pipeline_version ? String(r.pipeline_version) : null,
+    model_sha256: r.model_sha256 ? String(r.model_sha256) : null,
   })) as FaceUpdateHistory[];
 
   const face_update_reviews = (sqlite.prepare('SELECT * FROM face_update_reviews ORDER BY id DESC').all() as Array<Record<string, unknown>>).map((r) => ({
@@ -1619,8 +1617,9 @@ export function saveDb(db: AppDatabase): void {
     const upsertStudent = sqlite.prepare(`
       INSERT INTO students (
         id, nis, nisn, nama, nickname, kelas_id, tanggal_lahir, status,
-        embedding, embedding_quality_score, embedding_updated_at, foto_ref, wa_ortu, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        embedding, embedding_quality_score, embedding_updated_at, foto_ref, wa_ortu, created_at,
+        pipeline_version, model_sha256
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         nis = excluded.nis,
         nisn = excluded.nisn,
@@ -1633,7 +1632,9 @@ export function saveDb(db: AppDatabase): void {
         embedding_quality_score = excluded.embedding_quality_score,
         embedding_updated_at = excluded.embedding_updated_at,
         foto_ref = excluded.foto_ref,
-        wa_ortu = excluded.wa_ortu
+        wa_ortu = excluded.wa_ortu,
+        pipeline_version = excluded.pipeline_version,
+        model_sha256 = excluded.model_sha256
     `);
     for (const s of db.students) {
       const sig = studentSignature(s);
@@ -1642,7 +1643,8 @@ export function saveDb(db: AppDatabase): void {
         upsertStudent.run(
           s.id, s.nis, s.nisn, s.nama, s.nickname, s.kelas_id, s.tanggal_lahir, s.status,
           encodeEmbeddingBlob(s.embedding), s.embedding_quality_score, s.embedding_updated_at ?? null,
-          s.foto_ref ?? null, s.wa_ortu ?? '', s.created_at
+          s.foto_ref ?? null, s.wa_ortu ?? '', s.created_at,
+          s.pipeline_version ?? null, s.model_sha256 ?? null
         );
       }
     }
@@ -1692,12 +1694,14 @@ export function saveDb(db: AppDatabase): void {
     // Incremental Face History
     const nextHist = new Map<number, string>();
     const upsertHist = sqlite.prepare(`
-      INSERT INTO face_update_history (id, student_id, version, embedding, quality_score, snapshot_path, created_at, approved_by, approved_at, is_canonical)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO face_update_history (id, student_id, version, embedding, quality_score, snapshot_path, created_at, approved_by, approved_at, is_canonical, pipeline_version, model_sha256)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         approved_by = excluded.approved_by,
         approved_at = excluded.approved_at,
-        is_canonical = excluded.is_canonical
+        is_canonical = excluded.is_canonical,
+        pipeline_version = excluded.pipeline_version,
+        model_sha256 = excluded.model_sha256
     `);
     for (const h of db.face_update_history) {
       const sig = historySignature(h);
@@ -1705,7 +1709,8 @@ export function saveDb(db: AppDatabase): void {
       if (persisted.history.get(h.id) !== sig) {
         upsertHist.run(
           h.id, h.student_id, h.version, encodeEmbeddingBlob(h.embedding), h.quality_score,
-          h.snapshot_path, h.created_at, h.approved_by ?? null, h.approved_at ?? null, h.is_canonical ? 1 : 0
+          h.snapshot_path, h.created_at, h.approved_by ?? null, h.approved_at ?? null, h.is_canonical ? 1 : 0,
+          h.pipeline_version ?? null, h.model_sha256 ?? null
         );
       }
     }
@@ -1891,8 +1896,9 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
     const insStudent = sqlite.prepare(`
       INSERT INTO students (
         id, nis, nisn, nama, nickname, kelas_id, tanggal_lahir, status,
-        embedding, embedding_quality_score, embedding_updated_at, foto_ref, wa_ortu, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        embedding, embedding_quality_score, embedding_updated_at, foto_ref, wa_ortu, created_at,
+        pipeline_version, model_sha256
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const s of db.students) {
       insStudent.run(
@@ -1909,7 +1915,9 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
         s.embedding_updated_at ?? null,
         s.foto_ref ?? null,
         s.wa_ortu ?? '',
-        s.created_at
+        s.created_at,
+        s.pipeline_version ?? null,
+        s.model_sha256 ?? null
       );
     }
 
@@ -2039,11 +2047,15 @@ function saveDbFull(sqlite: DatabaseSync, db: AppDatabase): void {
     }
 
     const insHist = sqlite.prepare(`
-      INSERT INTO face_update_history (id, student_id, version, embedding, quality_score, snapshot_path, created_at, approved_by, approved_at, is_canonical)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO face_update_history (id, student_id, version, embedding, quality_score, snapshot_path, created_at, approved_by, approved_at, is_canonical, pipeline_version, model_sha256)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const h of db.face_update_history) {
-      insHist.run(h.id, h.student_id, h.version, encodeEmbeddingBlob(h.embedding), h.quality_score, h.snapshot_path, h.created_at, h.approved_by ?? null, h.approved_at ?? null, h.is_canonical ? 1 : 0);
+      insHist.run(
+        h.id, h.student_id, h.version, encodeEmbeddingBlob(h.embedding), h.quality_score,
+        h.snapshot_path, h.created_at, h.approved_by ?? null, h.approved_at ?? null, h.is_canonical ? 1 : 0,
+        h.pipeline_version ?? null, h.model_sha256 ?? null
+      );
     }
 
     const insRev = sqlite.prepare(`
